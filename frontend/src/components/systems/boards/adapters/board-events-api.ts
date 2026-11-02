@@ -1,9 +1,10 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   ApiError,
   apiFetch,
   type ApiRequestInit,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 
 import {
@@ -86,31 +87,44 @@ const safeCodes = new Map<string, { status: number; message: string }>([
   ["event_invalid", { status: 409, message: "The saved event is not valid" }],
 ]);
 
-function throwSafeEventError(status: number, detail: unknown): never {
+function throwSafeEventError(
+  status: number,
+  detail: unknown,
+  source: unknown,
+): never {
   if (
     status === 404 &&
     (detail === "Board not found" || detail === "Board event not found")
   )
-    throw new ApiError(status, detail);
+    throw keepRequestId(new ApiError(status, detail), source);
   const parsed = z.object({ code: z.string() }).passthrough().safeParse(detail);
   if (parsed.success) {
     const safe = safeCodes.get(parsed.data.code);
     if (safe?.status === status)
-      throw new ApiError(
-        status,
-        safe.message,
-        { code: parsed.data.code, message: safe.message },
-        parsed.data.code,
+      throw keepRequestId(
+        new ApiError(
+          status,
+          safe.message,
+          { code: parsed.data.code, message: safe.message },
+          parsed.data.code,
+        ),
+        source,
       );
     if (status === 422 && parsed.data.code === "event_invalid")
-      throw new ApiError(
-        status,
-        "Event fields are invalid",
-        { code: "event_invalid", message: "Event fields are invalid" },
-        "event_invalid",
+      throw keepRequestId(
+        new ApiError(
+          status,
+          "Event fields are invalid",
+          { code: "event_invalid", message: "Event fields are invalid" },
+          "event_invalid",
+        ),
+        source,
       );
   }
-  throw new ApiError(status, "Request could not be completed");
+  throw keepRequestId(
+    new ApiError(status, "Request could not be completed"),
+    source,
+  );
 }
 
 async function eventJson<Schema extends z.ZodType>(
@@ -122,7 +136,7 @@ async function eventJson<Schema extends z.ZodType>(
     return await apiFetch(path, schema, { cache: "no-store", ...init });
   } catch (error) {
     if (error instanceof ApiError)
-      return throwSafeEventError(error.status, error.details);
+      return throwSafeEventError(error.status, error.details, error);
     throw error;
   }
 }
@@ -153,7 +167,7 @@ export async function listBoardEvents(
     eventListWire,
   );
   if (page.items.some((item) => item.boardId !== boardId))
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 
@@ -180,7 +194,7 @@ export async function readBoardEvent(
     eventWire,
   );
   if (event.id !== eventId || event.boardId !== boardId)
-    throw new ApiContractError();
+    throw apiContractError(event);
   return event;
 }
 
@@ -251,7 +265,7 @@ export async function updateBoardEvent(
       body: JSON.stringify(body),
     },
   );
-  if (result.id !== eventId) throw new ApiContractError();
+  if (result.id !== eventId) throw apiContractError(result);
   return result;
 }
 
@@ -277,7 +291,7 @@ async function lifecyclePost(
       }),
     },
   );
-  if (result.id !== eventId) throw new ApiContractError();
+  if (result.id !== eventId) throw apiContractError(result);
   return result;
 }
 
@@ -369,6 +383,6 @@ export async function listBoardEventOccurrences(
     occurrenceListWire,
   );
   if (page.items.some((item) => item.event.boardId !== boardId))
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }

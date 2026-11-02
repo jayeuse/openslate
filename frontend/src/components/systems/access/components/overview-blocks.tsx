@@ -53,17 +53,26 @@ import {
 /** A block's state: its reads are loading, one failed, or it is ready. */
 export type BlockState<Data> =
   | { status: "loading" }
-  | { status: "error"; retry: () => void }
+  | { status: "error"; retry: () => void; reference?: string }
   | { status: "ready"; data: Data };
 
 function BlockError({
   message,
   retry,
+  reference,
 }: {
   message: string;
   retry: () => void;
+  reference?: string;
 }) {
-  return <ReadError className="m-3" message={message} retry={retry} />;
+  return (
+    <ReadError
+      className="m-3"
+      message={message}
+      retry={retry}
+      reference={reference}
+    />
+  );
 }
 
 /**
@@ -223,6 +232,7 @@ export function WhoIsHere({
         <ReadError
           message="Who's here could not be loaded."
           retry={state.retry}
+          reference={state.reference}
         />
       ) : (
         <LoadingRegion
@@ -522,6 +532,7 @@ export function RecentSignIns({
         <BlockError
           message="Sign-ins could not be loaded."
           retry={state.retry}
+          reference={state.reference}
         />
       ) : (
         <LoadingRegion
@@ -641,6 +652,7 @@ export function NeedsAttention({
         <BlockError
           message="Needs attention could not be loaded."
           retry={state.retry}
+          reference={state.reference}
         />
       ) : (
         <LoadingRegion
@@ -791,6 +803,7 @@ export function AccessByDepartment({
         <BlockError
           message="Access by department could not be loaded."
           retry={state.retry}
+          reference={state.reference}
         />
       ) : (
         <LoadingRegion

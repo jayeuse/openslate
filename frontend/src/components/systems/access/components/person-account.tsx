@@ -15,6 +15,7 @@ import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
 import { peopleErrorMessage, personName, personState } from "../helpers/people";
@@ -29,6 +30,7 @@ import {
 } from "../state/api";
 import { useAccessVerifying, verifyingReason } from "../state/draft-navigation";
 import { ActionError } from "./editor-conflicts";
+import { useErrorText } from "@/lib/use-error-text";
 
 type AccountAction =
   | "reconcile"
@@ -200,7 +202,8 @@ export function PersonAccount({
   const verifying = useAccessVerifying();
   const [action, setAction] = useState<AccountAction | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [now] = useState(() => Date.now());
   const mounted = useRef(false);
   const pendingRef = useRef(false);
@@ -252,6 +255,7 @@ export function PersonAccount({
     } catch (caught) {
       reportError(
         peopleErrorMessage(caught, `${name} could not be restored. Try again.`),
+        apiErrorReference(caught),
       );
     } finally {
       void afterAccessUserChange(client);
@@ -296,6 +300,7 @@ export function PersonAccount({
       if (!mounted.current) return;
       setError(
         peopleErrorMessage(caught, "The change could not be made. Try again."),
+        caught,
       );
       // A refused change may mean this person changed elsewhere.
       void afterAccessUserChange(client);
@@ -409,7 +414,7 @@ export function PersonAccount({
             <AlertDialogTitle>{copy?.title}</AlertDialogTitle>
             <AlertDialogDescription>{copy?.description}</AlertDialogDescription>
           </AlertDialogHeader>
-          <ActionError message={error} />
+          <ActionError message={error} reference={errorFailure?.reference} />
           <AlertDialogFooter>
             <Button
               variant="outline"

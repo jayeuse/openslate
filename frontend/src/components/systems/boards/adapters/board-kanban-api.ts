@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import {
   cardDatesResultsWire,
   cardDetailWire,
@@ -93,7 +100,7 @@ export async function listKanbanStages(
     { cache: "no-store" },
   );
   if (page.items.some((stage) => stage.boardId !== boardId))
-    throw new ApiContractError();
+    throw apiContractError(page);
   return [...page.items].sort((left, right) => left.position - right.position);
 }
 
@@ -107,7 +114,7 @@ export async function listKanbanLabels(
     { cache: "no-store" },
   );
   if (page.items.some((label) => label.boardId !== boardId))
-    throw new ApiContractError();
+    throw apiContractError(page);
   return [...page.items].sort((left, right) => left.position - right.position);
 }
 
@@ -134,9 +141,10 @@ export async function listBoardCards(
       cardsPage,
       { cache: "no-store" },
     );
-    if (result.pagination.offset !== cards.length) throw new ApiContractError();
+    if (result.pagination.offset !== cards.length)
+      throw apiContractError(result);
     for (const card of result.items) {
-      if (card.boardId !== boardId) throw new ApiContractError();
+      if (card.boardId !== boardId) throw apiContractError(result);
       cards.push(card);
     }
     if (!result.pagination.has_more) return cards;
@@ -145,7 +153,7 @@ export async function listBoardCards(
 }
 
 function checkCard(boardId: string, card: KanbanCard): KanbanCard {
-  if (card.boardId !== boardId) throw new ApiContractError();
+  if (card.boardId !== boardId) throw apiContractError(card);
   return card;
 }
 
@@ -287,7 +295,7 @@ export async function saveCardDates(
     }[];
   },
 ): Promise<CardDatesResult[]> {
-  const { results } = await apiFetch(
+  const answer = await apiFetch(
     boardPath(boardId, "/cards/batch-dates"),
     cardDatesResultsWire,
     {
@@ -302,9 +310,9 @@ export async function saveCardDates(
     },
   );
   const sent = payload.items.map((item) => item.card_id).sort();
-  const answered = results.map((result) => result.cardId).sort();
-  if (sent.join() !== answered.join()) throw new ApiContractError();
-  return results;
+  const answered = answer.results.map((result) => result.cardId).sort();
+  if (sent.join() !== answered.join()) throw apiContractError(answer);
+  return answer.results;
 }
 
 /**
@@ -430,17 +438,20 @@ export async function deleteKanbanLabel(
     },
   );
   if (response.status === 204) return;
-  if (response.ok) throw new ApiContractError();
+  if (response.ok) throw apiContractError(response);
   const body: unknown = await response.json().catch(() => null);
   const detail =
     body && typeof body === "object" && "detail" in body ? body.detail : null;
   const code = z.object({ code: z.string() }).passthrough().safeParse(detail)
     .data?.code;
-  throw new ApiError(
-    response.status,
-    "Request could not be completed",
-    detail,
-    code as ApiError["code"],
+  throw keepRequestId(
+    new ApiError(
+      response.status,
+      "Request could not be completed",
+      detail,
+      code as ApiError["code"],
+    ),
+    response,
   );
 }
 
@@ -456,6 +467,6 @@ export async function readKanbanRecordValues(
     recordSchema,
     { cache: "no-store" },
   );
-  if (record.id !== recordId) throw new ApiContractError();
+  if (record.id !== recordId) throw apiContractError(record);
   return record.data;
 }

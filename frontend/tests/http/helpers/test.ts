@@ -2,6 +2,7 @@ import {
   expect as baseExpect,
   test as base,
   type BrowserContext,
+  type Locator,
   type Page,
   type Route,
 } from "@playwright/test";
@@ -240,6 +241,19 @@ export async function controlledSession(
 
 export const test = base.extend({
   context: async ({ context }, provide) => {
+    // Registered first, so every other route wins: a request no route answers
+    // gets the server's own 500, with its request ID. The synthetic server's
+    // plain 500 has none, which means "the server did not answer" and shows
+    // the shell banner (D3.2); only a spec's explicit abort or header-less
+    // 500, 502 or 504 does that now.
+    await context.route("**/api/**", (route) =>
+      route.fulfill({
+        status: 500,
+        headers: answeredHeaders,
+        contentType: "text/plain",
+        body: "Internal Server Error",
+      }),
+    );
     await context.route("**/api/auth/session", (route) =>
       route.fulfill({
         json: {
@@ -526,6 +540,59 @@ export function heldResponse() {
     enter: () => enter(),
     release: () => release(),
   };
+}
+
+/**
+ * Every response of Slate Operations' server carries `X-Request-ID`, of any
+ * status; a 500, 502 or 504 without it came from something in front of the
+ * server, and the shell shows its banner (D3.2, docs/specs/system-health.md).
+ * The default context route answers an unmocked `/api` request as the server
+ * does, with this ID. A mock of an error that the server answered sends
+ * `answeredHeaders`; its message then shows the reference `answeredReference`
+ * (S1).
+ */
+export const answeredRequestId = "019a4a3c-7d2e-7b10-8c4f-5e6d7f8a9b0c";
+export const answeredHeaders = { "X-Request-ID": answeredRequestId } as const;
+/** The last eight characters of `answeredRequestId`, as the message shows them. */
+export const answeredReference = "7f8a9b0c";
+
+/**
+ * The announcer every modal dialog, sheet and alert dialog holds
+ * (ServerConnectionAnnouncer, D4 item 11): an `sr-only` atomic status span
+ * that speaks the banner's changes while the shell is inert.
+ */
+const connectionAnnouncer = 'span.sr-only[role="status"][aria-atomic="true"]';
+
+/**
+ * The status messages of a modal dialog or sheet, without its connection
+ * announcer, so a check reads the modal's own message.
+ */
+export function modalStatus(modal: Locator): Locator {
+  return modal
+    .getByRole("status")
+    .and(modal.locator(`:not(${connectionAnnouncer})`));
+}
+
+/**
+ * The shell banner while the server does not answer (D3.1). Found by its role
+ * attribute, not the accessibility tree: an open modal sheet hides the shell
+ * from assistive technology, and the banner still shows on screen. The
+ * modal's announcer says the same words and is left out.
+ */
+export function serverBanner(page: Page) {
+  return page.locator(`[role="status"]:not(${connectionAnnouncer})`).filter({
+    hasText:
+      "Slate Operations cannot reach its server. Changes you make now may not save. It tries again on its own.",
+  });
+}
+
+/** `container` ends with the reference of the answered request (S1-C4). */
+export async function expectAnsweredReference(
+  container: Locator,
+): Promise<void> {
+  await baseExpect(
+    container.getByTitle(answeredRequestId, { exact: true }),
+  ).toHaveText(answeredReference);
 }
 
 /** The page does not scroll sideways at the current viewport. */

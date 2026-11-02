@@ -6,12 +6,15 @@ import { useDisplayRegion } from "@/components/use-display-region";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { manageWorkspaceOptions } from "@/components/systems/manage/adapters/manage-queries";
 import { isIanaTimezone, type WorkspaceRegion } from "@/lib/date-time-display";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export type SettingsRegion = {
   /** The person's formats, or undefined until they can be known. */
   display: WorkspaceRegion | undefined;
   /** "loading" or "failed" only for the organization read. */
   state: "ready" | "loading" | "failed";
+  /** The failed organization read's request ID (D1.4). */
+  reference?: string;
   retry: () => void;
   /** The organization's own timezone, for "Organization timezone (<zone>)". */
   organizationZone: string | null;
@@ -42,6 +45,7 @@ export function useSettingsRegion(): SettingsRegion {
         : workspace.isLoading
           ? "loading"
           : "ready",
+      reference: apiErrorReference(workspace.error),
       retry: () => void workspace.refetch(),
       organizationZone: workspace.data?.timezone ?? null,
       currency: workspace.data?.currency ?? null,

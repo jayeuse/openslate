@@ -46,6 +46,7 @@ import type {
   SandboxVersionPage,
   SandboxVersionDetail,
 } from "../state/api";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 
 // History (docs/specs/sandbox-relayout.md S8 to S10): the version list and
 // one version's detail. The detail holds Restore in its head, the facts as
@@ -342,7 +343,11 @@ export function VersionsWorkspace({
     );
   }
   const [comparing, setComparing] = useState(false);
-  const [actionError, setActionError] = useState("");
+  // Each message keeps its failed request's reference (D1.6).
+  const [actionFailure, setActionFailure] = useState<ApiErrorText | null>(null);
+  const actionError = actionFailure?.message ?? "";
+  const setActionError = (message: string, reference?: string) =>
+    setActionFailure(message ? { message, reference } : null);
   const [checkpointLabelEdit, setCheckpointLabelEdit] =
     useState<CheckpointLabelEdit | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -370,7 +375,12 @@ export function VersionsWorkspace({
     setCompareError("");
   }
   const [comparePending, setComparePending] = useState(false);
-  const [compareError, setCompareError] = useState("");
+  const [compareFailure, setCompareFailure] = useState<ApiErrorText | null>(
+    null,
+  );
+  const compareError = compareFailure?.message ?? "";
+  const setCompareError = (message: string, reference?: string) =>
+    setCompareFailure(message ? { message, reference } : null);
   const comparisonHeading = useRef<HTMLHeadingElement | null>(null);
   const comparisonShown =
     comparing &&
@@ -389,8 +399,8 @@ export function VersionsWorkspace({
       getVersion(secondId),
     ]);
     setComparePending(false);
-    if (!first.ok) setCompareError(first.error);
-    else if (!second.ok) setCompareError(second.error);
+    if (!first.ok) setCompareError(first.error, first.reference);
+    else if (!second.ok) setCompareError(second.error, second.reference);
     else {
       setComparison({ first: first.value, second: second.value });
       setComparing(true);
@@ -457,7 +467,7 @@ export function VersionsWorkspace({
     if (action.kind === "delete") {
       const result = await deleteVersion(action.id);
       if (!result.ok) {
-        setActionError(result.error);
+        setActionError(result.error, result.reference);
         return;
       }
       setRetainedVersions((items) =>
@@ -475,7 +485,7 @@ export function VersionsWorkspace({
     } else {
       const result = await restoreVersion(action.id);
       if (!result.ok) {
-        setActionError(result.error);
+        setActionError(result.error, result.reference);
         return;
       }
       notifyDone("Draft restored · checkpoint saved");
@@ -536,6 +546,9 @@ export function VersionsWorkspace({
                 ? "unavailable"
                 : null
           }
+          failureReference={apiErrorReference(
+            history.error ?? targetReads.find((read) => read.isError)?.error,
+          )}
           onRetry={() => {
             void history.refetch();
             void historyTotal.refetch();
@@ -651,6 +664,7 @@ export function VersionsWorkspace({
             disabled={pending}
             comparing={comparePending}
             error={compareError}
+            errorReference={compareFailure?.reference}
             result={
               comparisonShown && comparison
                 ? {
@@ -708,7 +722,9 @@ export function VersionsWorkspace({
                 : "Your current draft is saved as a checkpoint first. Live data stays as it is."}
             </AlertDialogDescription>
             {actionError ? (
-              <Alert variant="destructive">{actionError}</Alert>
+              <Alert variant="destructive" reference={actionFailure?.reference}>
+                {actionError}
+              </Alert>
             ) : null}
             <DialogFrameFooter>
               <AlertDialogFooter className="mt-0">

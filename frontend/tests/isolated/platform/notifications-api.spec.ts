@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { ApiContractError } from "../../../src/lib/api";
+import { ApiContractError, ApiError } from "../../../src/lib/api";
+import { apiErrorReference } from "../../../src/lib/api-errors";
 import {
   getNotificationUnreadCount,
   listNotifications,
@@ -81,6 +82,29 @@ for (const row of refusedReadAll)
       mock.restore();
     }
   });
+
+test("a refused read-all keeps no server text but keeps its error reference", async () => {
+  // docs/specs/system-health.md S1-C3: the sanitized error keeps the ID.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const mock = installFetch(() =>
+    Response.json(
+      { detail: "Private server detail", request_id: requestId },
+      { status: 500 },
+    ),
+  );
+  try {
+    const failure = await markAllNotificationsRead().catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).message).toBe(
+      "Request could not be completed",
+    );
+    expect(apiErrorReference(failure)).toBe(requestId);
+  } finally {
+    mock.restore();
+  }
+});
 
 test("read-all sends one body-less command and returns the confirmed count", async () => {
   const mock = installFetch(() => Response.json({ updated_count: 8 }));

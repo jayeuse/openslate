@@ -30,6 +30,8 @@ import {
 } from "../state/api";
 import { ActionError } from "./editor-conflicts";
 import { ReadError } from "./read-error";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Revoke = { kind: "one"; session: AccessSession } | { kind: "all" };
 
@@ -53,7 +55,8 @@ export function PersonSessions({
   );
   const [revoke, setRevoke] = useState<Revoke | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const items = sessions.data?.items ?? [];
   const total = sessions.data?.pagination.total ?? 0;
   useEffect(() => {
@@ -89,6 +92,7 @@ export function PersonSessions({
           caught,
           "The session could not be ended. Try again.",
         ),
+        caught,
       );
     } finally {
       setPending(false);
@@ -132,6 +136,7 @@ export function PersonSessions({
       {sessions.isError ? (
         <ReadError
           message="Sessions could not be loaded."
+          reference={apiErrorReference(sessions.error)}
           retry={() => void sessions.refetch()}
         />
       ) : (
@@ -223,7 +228,7 @@ export function PersonSessions({
                   : "Every device will need to sign in again."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <ActionError message={error} />
+          <ActionError message={error} reference={errorFailure?.reference} />
           <AlertDialogFooter>
             <Button
               variant="outline"

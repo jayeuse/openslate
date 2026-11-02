@@ -314,6 +314,7 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "session_retention_ignored",
         "event_retention_ignored",
         "retention_restore_lost",
+        "system_status_shape",
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
@@ -332,7 +333,9 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
             original.user_id, credentials[other].email, original.password
         )
     operation = (
-        "review_mfa_status"
+        "review_system_status"
+        if problem == "system_status_shape"
+        else "review_mfa_status"
         if problem == "mfa_identity"
         else "update_workspace_security"
         if problem
@@ -362,6 +365,7 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "session_retention_ignored": "Workspace security update was not persisted",
         "event_retention_ignored": "Workspace security update was not persisted",
         "retention_restore_lost": "Workspace security policy was not restored",
+        "system_status_shape": "System status differs from the four parts in order",
     }
     expected_error = (
         SampleWriteOutcomeUnknown if problem == "bulk_unknown" else SamplePhaseActionError

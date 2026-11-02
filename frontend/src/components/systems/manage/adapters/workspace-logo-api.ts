@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import {
   fileWireSchema,
   reserveFile,
@@ -80,12 +87,15 @@ async function requireSuccess(response: Response): Promise<Response> {
     typeof detail.code === "string"
       ? detail.code
       : undefined;
-  throw new ApiError(
-    response.status,
-    message,
-    detail,
-    code,
-    retryAfterSeconds(response),
+  throw keepRequestId(
+    new ApiError(
+      response.status,
+      message,
+      detail,
+      code,
+      retryAfterSeconds(response),
+    ),
+    response,
   );
 }
 
@@ -124,7 +134,7 @@ export async function getWorkspaceLogoFile(
     cache: "no-store",
     signal,
   });
-  if (file.id !== id) throw new ApiContractError();
+  if (file.id !== id) throw apiContractError(file);
   return file;
 }
 
@@ -138,7 +148,7 @@ export async function reconcileWorkspaceLogo(
     workspaceLogoFileSchema,
     { method: "POST", signal },
   );
-  if (file.id !== id) throw new ApiContractError();
+  if (file.id !== id) throw apiContractError(file);
   return file;
 }
 
@@ -234,7 +244,7 @@ export async function getWorkspaceLogo(
     response.body === null
   ) {
     await response.body?.cancel().catch(() => undefined);
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -245,11 +255,11 @@ export async function getWorkspaceLogo(
       const next = await reader.read();
       if (next.done) break;
       total += next.value.byteLength;
-      if (total > MAX_LOGO_BYTES) throw new ApiContractError();
+      if (total > MAX_LOGO_BYTES) throw apiContractError(response);
       // A copied buffer is Blob-compatible and owns no mutable provider stream data.
       chunks.push(new Uint8Array(next.value));
     }
-    if (total === 0) throw new ApiContractError();
+    if (total === 0) throw apiContractError(response);
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     throw error;

@@ -25,6 +25,8 @@ export type CheckpointLabelEdit = {
   id: string;
   value: string;
   error: string;
+  /** The failed save's request ID, shown as its reference (D1.6). */
+  reference?: string;
 };
 
 export function VersionDetail({
@@ -168,6 +170,7 @@ export function VersionDetail({
                       onLabelEdit({
                         ...labelEdit,
                         error: "Checkpoint label is required",
+                        reference: undefined,
                       });
                       return;
                     }
@@ -176,6 +179,7 @@ export function VersionDetail({
                         ...labelEdit,
                         error:
                           "Checkpoint label must be 80 characters or fewer",
+                        reference: undefined,
                       });
                       return;
                     }
@@ -184,6 +188,7 @@ export function VersionDetail({
                       onLabelEdit({
                         ...labelEdit,
                         error: result.error,
+                        reference: result.reference,
                       });
                       return;
                     }
@@ -217,7 +222,11 @@ export function VersionDetail({
                     )}
                   </LabeledField>
                   {labelEdit.error ? (
-                    <Alert variant="destructive" role="alert">
+                    <Alert
+                      variant="destructive"
+                      role="alert"
+                      reference={labelEdit.reference}
+                    >
                       {labelEdit.error}
                     </Alert>
                   ) : null}

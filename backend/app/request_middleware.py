@@ -28,6 +28,7 @@ from app.core.middleware.file_transfers import (
 from app.core.middleware.request_context import (
     RequestContext,
     bind_request_context,
+    error_content,
     reset_request_context,
 )
 from app.core.observability import failure_cause, log_event
@@ -64,7 +65,7 @@ def _database_unavailable_response(
     )
     return JSONResponse(
         status_code=503,
-        content={"detail": "Database unavailable"},
+        content=error_content(request, "Database unavailable"),
         headers=_request_headers(context),
     )
 
@@ -80,7 +81,7 @@ def _unexpected_error_response(request: Request, context: RequestContext) -> JSO
     )
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content=error_content(request, "Internal server error"),
         headers=_request_headers(context),
     )
 
@@ -140,7 +141,7 @@ def install_request_middleware(
             ):
                 response = JSONResponse(
                     status_code=413,
-                    content={"detail": body_refusal},
+                    content=error_content(request, body_refusal),
                 )
             else:
                 async with asyncio.timeout(
@@ -149,7 +150,7 @@ def install_request_middleware(
                     if body_limit is not None and not await read_bounded_body(request, body_limit):
                         response = JSONResponse(
                             status_code=413,
-                            content={"detail": body_refusal},
+                            content=error_content(request, body_refusal),
                         )
                     else:
                         await wait_for_processing_slot(request)
@@ -158,21 +159,22 @@ def install_request_middleware(
         except HTTPException as error:
             response = JSONResponse(
                 status_code=error.status_code,
-                content={"detail": error.detail},
+                content=error_content(request, error.detail),
                 headers=error.headers,
             )
         except TimeoutError:
             if transfer is not None and deadline is not None and deadline.expired():
                 response = JSONResponse(
                     status_code=504,
-                    content={
-                        "detail": {
+                    content=error_content(
+                        request,
+                        {
                             "code": "file_timeout",
                             "message": (
                                 "File operation timed out; inspect its state before retrying"
                             ),
-                        }
-                    },
+                        },
+                    ),
                 )
             else:
                 response = _unexpected_error_response(request, context)

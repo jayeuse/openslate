@@ -277,7 +277,7 @@ export function ThreadPanel({
                 </p>
               )}
               {history.error && (
-                <Alert variant="destructive">
+                <Alert variant="destructive" reference={history.reference}>
                   {history.error}
                   <Action onClick={history.retry}>Retry replies</Action>
                 </Alert>

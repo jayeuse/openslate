@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   apiFetchWithMetadata,
   type ApiFetchMetadata,
+  apiContractError,
 } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
@@ -17,7 +17,7 @@ export function versionedResponse<Schema extends z.ZodType>(
     result.etag === null ||
     !S.preconditionSchema.safeParse({ if_match: result.etag }).success
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return { data: result.data, etag: result.etag };
 }
 

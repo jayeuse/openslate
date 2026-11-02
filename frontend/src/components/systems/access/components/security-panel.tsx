@@ -70,7 +70,13 @@ const SESSION_PAGE_SIZES = TABLE_PAGE_SIZE_OPTIONS;
 type SecurityPanelProps = {
   sessions:
     | { status: "loading" }
-    | { status: "error"; message: string; page?: AccessAdminSessions }
+    | {
+        status: "error";
+        message: string;
+        /** The failed read's request ID; a refusal has none (D1.4). */
+        reference?: string;
+        page?: AccessAdminSessions;
+      }
     | { status: "ready"; page: AccessAdminSessions };
   request: AccessSessionsRequest;
   onRequestChange: (request: AccessSessionsRequest) => void;
@@ -341,7 +347,11 @@ export function SecurityPanel({
       </AccessToolbar>
 
       {sessions.status === "error" ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={sessions.reference}
+        >
           <p>{sessions.message}</p>
           <Button type="button" variant="outline" onClick={onRetry}>
             Retry sessions

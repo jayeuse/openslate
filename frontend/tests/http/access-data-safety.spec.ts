@@ -7,6 +7,8 @@ import {
   settleReact,
   test,
   type Page,
+  answeredHeaders,
+  serverBanner,
 } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import {
@@ -390,6 +392,8 @@ async function saveThatMayHaveCompleted(page: Page) {
   await expect(ben.getByRole("alert")).toContainText(
     "This change to the person may have completed.",
   );
+  // No answer at all: the shell says the server cannot be reached.
+  await expect(serverBanner(page)).toBeVisible();
   return api;
 }
 
@@ -508,7 +512,11 @@ test("a save that fails after the editor closed keeps the draft for the return",
   api.on("PATCH", `/api/users/${ids.ben}`, async (route) => {
     save.enter();
     await save.released;
-    await route.fulfill({ status: 500, json: { detail: "Unavailable" } });
+    await route.fulfill({
+      status: 500,
+      headers: answeredHeaders,
+      json: { detail: "Unavailable" },
+    });
   });
   await page.goto("/access?view=overview");
   await sideLink(page, "People").click();

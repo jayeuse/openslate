@@ -98,7 +98,10 @@ def test_mfa_account_budget_cooldown_and_success_reset(budget_world):
     world.calls.clear()
     response = verify(world, second, slot=4)
     assert response.status_code == 429
-    assert response.json() == {"detail": "Too many attempts"}
+    assert response.json() == {
+        "detail": "Too many attempts",
+        "request_id": response.headers["X-Request-ID"],
+    }
     assert response.headers["Retry-After"] == "900"
     assert response.headers.get_list("set-cookie") == []
     assert provider_mutations(world) == []

@@ -3,7 +3,7 @@
 import { ArrowLeft, MoreHorizontal, Plus } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import {
   formatWorkspaceClockTime,
   type WorkspaceRegion,
@@ -45,6 +45,7 @@ import {
 } from "./report-purge-dialog";
 import { ReportScheduleControls } from "./report-schedule-controls";
 import { ReportSteps } from "./report-steps";
+import { useErrorText } from "@/lib/use-error-text";
 
 export type ReportDetailProps = {
   report: OpenViewReport;
@@ -106,7 +107,8 @@ export function ReportDetail({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [making, setMaking] = useState(false);
-  const [copyError, setCopyError] = useState("");
+  const [copyErrorFailure, setCopyError] = useErrorText();
+  const copyError = copyErrorFailure?.message ?? "";
   const [copyStatus, setCopyStatus] = useState("");
   // A retried copy reuses its request key, so one click makes one copy.
   const retryKey = useRef<{ reportId: string; key: string } | null>(null);
@@ -151,6 +153,7 @@ export function ReportDetail({
     } catch (reason) {
       setCopyError(
         apiErrorMessage(reason, "The copy was not made. Try again."),
+        reason,
       );
     } finally {
       setMaking(false);
@@ -334,7 +337,11 @@ export function ReportDetail({
       <div className="flex flex-col gap-3 px-4 pb-3">
         <ReportSteps steps={steps} label="How this report works" />
         {copyError ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={copyErrorFailure?.reference}
+          >
             {copyError}
           </Alert>
         ) : null}
@@ -361,6 +368,7 @@ export function ReportDetail({
               role="alert"
               variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
+              reference={apiErrorReference(schedule.error)}
             >
               <span>The schedule could not be loaded. Try again.</span>
               <Button
@@ -388,6 +396,7 @@ export function ReportDetail({
           copies={copies.data}
           copiesPending={copies.isPending}
           copiesFailed={copies.isError}
+          copiesReference={apiErrorReference(copies.error)}
           onRetryCopies={() => void copies.refetch()}
           copyId={copyId}
           region={region}

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { currentOrganizationId } from "@/lib/organization-context";
+import { noteServerFailure, noteServerResponse } from "@/lib/server-connection";
 
 export type Pagination = {
   limit: number;
@@ -226,6 +227,8 @@ export class ApiError extends Error {
     public details?: unknown,
     public code?: LifecycleErrorCode,
     public retryAfter?: number,
+    /** The server's ID for the failed request, shown as its error reference. */
+    public requestId?: string,
   ) {
     super(message);
   }
@@ -235,14 +238,71 @@ const SAFE_API_CONTRACT_ERROR_MESSAGE =
   "The server returned an invalid response";
 
 export class ApiContractError extends Error {
-  constructor() {
+  /** The `X-Request-ID` of the response that was rejected, if it had one. */
+  readonly requestId: string | undefined;
+  constructor(requestId?: string) {
     super(SAFE_API_CONTRACT_ERROR_MESSAGE);
     this.name = "ApiContractError";
+    this.requestId = requestId;
   }
 }
 
-function safeApiContractError(): ApiContractError {
-  return new ApiContractError();
+function safeApiContractError(response?: Response): ApiContractError {
+  return new ApiContractError(
+    response ? requestIdFrom(response.headers.get("X-Request-ID")) : undefined,
+  );
+}
+
+// The request ID of the response that each `apiFetch` result came from, so a
+// contract check in an adapter can keep it after `apiFetch` returns.
+const resultRequestIds = new WeakMap<object, string>();
+
+/**
+ * The one way an adapter rejects a response that parsed but breaks its
+ * contract (an ID that does not match, a wrong status). Pass the `Response`,
+ * the `apiFetchWithMetadata` result, or the object that `apiFetch` returned,
+ * so the error keeps that response's `X-Request-ID` (S1-C3, D4.5,
+ * docs/specs/system-health.md). A check with no request behind it passes
+ * nothing and keeps no reference.
+ */
+export function apiContractError(source?: unknown): ApiContractError {
+  if (source instanceof Response) return safeApiContractError(source);
+  if (typeof source !== "object" || source === null)
+    return new ApiContractError();
+  if ("response" in source && source.response instanceof Response)
+    return safeApiContractError(source.response);
+  return new ApiContractError(resultRequestIds.get(source));
+}
+
+// A request ID is the server's uuid7 in the canonical UUID form (8-4-4-4-12
+// hex). Anything else (for example text from a proxy in front of the server)
+// is not shown, so a reference never carries a host, a port or other server
+// text.
+const REQUEST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requestIdFrom(value: unknown): string | undefined {
+  return typeof value === "string" && REQUEST_ID_PATTERN.test(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * The one way an adapter rebuilds a sanitized `ApiError`: it keeps the request
+ * ID of the caught error or the response it came from, so the error reference
+ * survives (S1-C3, docs/specs/system-health.md). A local refusal with no
+ * request behind it passes `null` and keeps no reference.
+ */
+export function keepRequestId<T extends ApiError>(
+  error: T,
+  source: unknown,
+): T {
+  if (error.requestId) return error;
+  if (source instanceof ApiError || source instanceof ApiContractError)
+    error.requestId = source.requestId;
+  else if (source instanceof Response)
+    error.requestId = requestIdFrom(source.headers.get("X-Request-ID"));
+  return error;
 }
 
 export type ApiFieldErrors = Record<string, string[]>;
@@ -423,11 +483,39 @@ async function sendApiRequest(
   path: string,
   init: RequestInit,
 ): Promise<Response> {
-  return fetch(`/api${path}`, {
-    ...init,
-    credentials: "same-origin",
-    headers: requestHeaders(init),
-  });
+  // Every request of apiFetch and the session refresh passes here, so the
+  // shell banner learns at once whether the server answers (D3).
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...init,
+      credentials: "same-origin",
+      headers: requestHeaders(init),
+    });
+  } catch (error) {
+    noteServerFailure(error, init.signal?.aborted === true);
+    throw error;
+  }
+  noteServerResponse(response);
+  return response;
+}
+
+/**
+ * Asks the unauthenticated `/api/health`, which probes nothing, whether the
+ * server answers. The shell banner retries with it; the answer updates the
+ * banner through `sendApiRequest`.
+ */
+export async function probeServerHealth(): Promise<void> {
+  try {
+    const response = await requestServerHealth();
+    await response.body?.cancel();
+  } catch {
+    // Still unreachable; the banner stays and the retry asks again.
+  }
+}
+
+function requestServerHealth(): Promise<Response> {
+  return sendApiRequest("/health", { cache: "no-store" });
 }
 
 async function checkedSession(activity?: ActivityRenewal): Promise<unknown> {
@@ -556,7 +644,7 @@ async function parseResponse(
       !(error instanceof SyntaxError)
     )
       throw error;
-    if (response.ok) throw safeApiContractError();
+    if (response.ok) throw safeApiContractError(response);
     body = null;
   }
   if (!response.ok) {
@@ -570,6 +658,10 @@ async function parseResponse(
       retryHeader && /^\d+$/.test(retryHeader)
         ? Number(retryHeader)
         : undefined;
+    const bodyRequestId =
+      typeof body === "object" && body !== null && "request_id" in body
+        ? requestIdFrom(body.request_id)
+        : undefined;
     throw new ApiError(
       response.status,
       typeof detail === "string"
@@ -582,6 +674,7 @@ async function parseResponse(
       retryAfter !== undefined && Number.isSafeInteger(retryAfter)
         ? retryAfter
         : undefined,
+      bodyRequestId ?? requestIdFrom(response.headers.get("X-Request-ID")),
     );
   }
   return body;
@@ -604,7 +697,10 @@ export async function apiFetchWithMetadata<Schema extends z.ZodType>(
     const body = await parseResponse(response, init.signal);
     try {
       const result = schema.safeParse(body);
-      if (!result.success) throw safeApiContractError();
+      if (!result.success) throw safeApiContractError(response);
+      const requestId = requestIdFrom(response.headers.get("X-Request-ID"));
+      if (requestId && typeof result.data === "object" && result.data !== null)
+        resultRequestIds.set(result.data, requestId);
       return {
         data: result.data,
         response,
@@ -612,7 +708,7 @@ export async function apiFetchWithMetadata<Schema extends z.ZodType>(
       };
     } catch (error) {
       if (error instanceof ApiContractError) throw error;
-      throw safeApiContractError();
+      throw safeApiContractError(response);
     }
   } catch (error) {
     if (

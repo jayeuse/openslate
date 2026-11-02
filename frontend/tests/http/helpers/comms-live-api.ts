@@ -11,7 +11,11 @@ import type {
   LiveMessage,
   SettingsScope,
 } from "../../../src/components/systems/comms/contract/types";
-import { defaultOrganization, defaultSignedInIdentity } from "./test";
+import {
+  defaultOrganization,
+  defaultSignedInIdentity,
+  answeredHeaders,
+} from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
 import { commsToolRoute } from "./comms-tool-routes";
 
@@ -355,6 +359,8 @@ export async function installCommsLiveApi(
           ETag: etag,
           "Cache-Control": "private, no-store",
           ...(location ? { Location: location } : {}),
+          // A server error this world answers came from the server (D3.2).
+          ...(status >= 500 ? answeredHeaders : {}),
         },
       });
     const version = async (value: Promise<{ data: unknown; etag: string }>) => {

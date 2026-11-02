@@ -19,6 +19,7 @@ import {
   type AccountSecurity,
 } from "../hooks/use-account-security";
 import { DialogRows } from "./dialog-rows";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /**
  * Change password (PD12): the framed dialog with a named close, the 12 to 128
@@ -145,9 +146,12 @@ export function PasswordDialog({
             ]}
           />
           {password.formError && (
-            <p role="alert" className="text-destructive text-sm">
-              {password.formError}
-            </p>
+            <div>
+              <p role="alert" className="text-destructive text-sm">
+                {password.formError}
+              </p>
+              <ErrorReference id={password.formReference} />
+            </div>
           )}
           {password.feedback && (
             <p role="status" className="bg-muted rounded-lg p-3 text-sm">

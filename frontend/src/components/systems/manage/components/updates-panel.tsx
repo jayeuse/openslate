@@ -15,6 +15,7 @@ import {
 } from "../domain/updates-rules";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const linkClassName =
   "text-action-text inline-flex min-h-11 items-center gap-1 text-sm underline-offset-4 hover:underline xl:min-h-0";
@@ -119,7 +120,16 @@ export function UpdatesPanel({
       </div>
       <div className="px-4 py-2">
         {maintenance.versionRefused || maintenance.version.isError ? (
-          <Alert role="alert" variant="destructive" className="my-1.5">
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="my-1.5"
+            reference={
+              maintenance.versionRefused
+                ? null
+                : apiErrorReference(maintenance.version.error)
+            }
+          >
             {maintenance.versionRefused
               ? "Only the installation owner can review version status."
               : "Version status could not be loaded. Try again."}

@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { currentOrganizationId } from "@/lib/organization-context";
 import {
-  ApiContractError,
   ApiError,
   apiFetch,
   type ApiRequestInit,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 
 const uuidSchema = z.string().uuid();
@@ -258,11 +259,13 @@ const listOptionsSchema = z
 export type Notification = z.output<typeof wireNotificationSchema>;
 export type NotificationListOptions = z.input<typeof listOptionsSchema>;
 
-function throwSafeNotificationError(status: number, detail: unknown): never {
-  if (status === 404 && detail === "Notification not found") {
-    throw new ApiError(status, "Notification not found");
-  }
-  throw new ApiError(status, "Request could not be completed");
+/** Drops the server's words but keeps the request ID for the error reference. */
+function throwSafeNotificationError(error: ApiError): never {
+  const message =
+    error.status === 404 && error.details === "Notification not found"
+      ? "Notification not found"
+      : "Request could not be completed";
+  throw keepRequestId(new ApiError(error.status, message), error);
 }
 
 async function safeNotificationJson<Schema extends z.ZodType>(
@@ -274,7 +277,7 @@ async function safeNotificationJson<Schema extends z.ZodType>(
     return await apiFetch(path, schema, init);
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
-    return throwSafeNotificationError(error.status, error.details);
+    return throwSafeNotificationError(error);
   }
 }
 
@@ -315,7 +318,7 @@ export async function listNotifications(
           organizationId !== currentOrganizationId()),
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 
@@ -337,7 +340,7 @@ export async function markNotificationRead(
       (notification.orgId !== organizationId ||
         organizationId !== currentOrganizationId()))
   )
-    throw new ApiContractError();
+    throw apiContractError(notification);
   return notification;
 }
 

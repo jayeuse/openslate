@@ -12,9 +12,16 @@ const QUIET_MILLISECONDS = 5000;
  * Shows "Reconnecting…" while the session refresh waits for Auth to answer again.
  *
  * It is a status, not a curtain: the page stays usable, actions wait for the
- * session, and the status clears itself when the refresh succeeds.
+ * session, and the status clears itself when the refresh succeeds. While the
+ * server banner shows, it stays hidden: the banner names the larger problem
+ * (D3.7, docs/specs/system-health.md). After the banner clears, the quiet
+ * period starts again.
  */
-export function SessionConnectionStatus() {
+export function SessionConnectionStatus({
+  serverBannerShown,
+}: {
+  serverBannerShown: boolean;
+}) {
   const connection = useSyncExternalStore(
     subscribeSessionConnection,
     getSessionConnection,
@@ -22,14 +29,15 @@ export function SessionConnectionStatus() {
   );
   const [delayed, setDelayed] = useState(false);
   useEffect(() => {
-    if (connection !== "reconnecting") return;
+    if (connection !== "reconnecting" || serverBannerShown) return;
     const timer = setTimeout(() => setDelayed(true), QUIET_MILLISECONDS);
     return () => {
       clearTimeout(timer);
       setDelayed(false);
     };
-  }, [connection]);
-  const visible = connection === "reconnecting" && delayed;
+  }, [connection, serverBannerShown]);
+  const visible =
+    connection === "reconnecting" && delayed && !serverBannerShown;
   return (
     <div
       role="status"

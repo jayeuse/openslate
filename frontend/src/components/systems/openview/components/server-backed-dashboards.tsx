@@ -54,7 +54,7 @@ import {
   departmentNavigation,
 } from "@/components/department-navigation-model";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 import {
   dashboardKeys,
@@ -109,6 +109,8 @@ import {
   type BuilderResult,
 } from "./dashboard-chart-builder";
 import { DashboardLayout, type LayoutSpace } from "./dashboard-layout";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 const WIDE_QUERY = "(min-width: 64rem)";
 const NARROW_QUERY = "(max-width: 47.99rem)";
@@ -274,7 +276,8 @@ export default function ServerBackedDashboards() {
     | null
   >(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState("");
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -587,6 +590,7 @@ export default function ServerBackedDashboards() {
             failure,
             "The layout could not be saved. Your changes are still here.",
           ),
+          failure,
         );
     } finally {
       setSaving(false);
@@ -816,7 +820,16 @@ export default function ServerBackedDashboards() {
         </Alert>
       ) : null}
       {error || resource.error ? (
-        <Alert role="alert" variant="destructive" className="mb-3">
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="mb-3"
+          reference={
+            error
+              ? errorFailure?.reference
+              : apiErrorReference(resource.errorObject)
+          }
+        >
           {error || resource.error}
           {resource.error ? (
             <Button
@@ -1267,7 +1280,8 @@ function SettingsDialog(props: {
   const [name, setName] = useState(props.dashboard.name);
   const [cadence, setCadence] = useState(props.dashboard.refreshCadence);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   async function save() {
     setPending(true);
     setError("");
@@ -1286,6 +1300,7 @@ function SettingsDialog(props: {
         conflict?.code === "stale_revision"
           ? "Someone changed this dashboard. Close and open Settings again."
           : apiErrorMessage(failure, "The settings could not be saved."),
+        failure,
       );
       setPending(false);
     }
@@ -1331,9 +1346,12 @@ function SettingsDialog(props: {
             </Select>
           </Field>
           {error ? (
-            <p role="alert" className="text-danger-text text-sm">
-              {error}
-            </p>
+            <>
+              <p role="alert" className="text-danger-text text-sm">
+                {error}
+              </p>
+              <ErrorReference id={errorFailure?.reference} />
+            </>
           ) : null}
           <DialogFrameFooter>
             <DialogFooter className="mt-0">
@@ -1374,7 +1392,8 @@ function ArchiveDialog(props: {
   onArchived: () => void;
 }) {
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   return (
     <AlertDialog
       open={props.open}
@@ -1391,9 +1410,12 @@ function ArchiveDialog(props: {
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? (
-          <p role="alert" className="text-danger-text text-sm">
-            {error}
-          </p>
+          <>
+            <p role="alert" className="text-danger-text text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorFailure?.reference} />
+          </>
         ) : null}
         <AlertDialogFooter>
           <Button
@@ -1427,6 +1449,7 @@ function ArchiveDialog(props: {
                         failure,
                         "The dashboard could not be archived.",
                       ),
+                    failure,
                   );
                 });
             }}
@@ -1447,7 +1470,8 @@ function ArchivedDashboards(props: {
 }) {
   const list = useQuery(dashboardListOptions(props.departmentId, true));
   const [pendingId, setPendingId] = useState("");
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const items = list.data?.items ?? [];
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
@@ -1496,6 +1520,7 @@ function ArchivedDashboards(props: {
                               failure,
                               "The dashboard could not be restored.",
                             ),
+                          failure,
                         ),
                       )
                       .finally(() => setPendingId(""));
@@ -1508,9 +1533,12 @@ function ArchivedDashboards(props: {
           </ul>
         )}
         {error ? (
-          <p role="alert" className="text-danger-text text-sm">
-            {error}
-          </p>
+          <>
+            <p role="alert" className="text-danger-text text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorFailure?.reference} />
+          </>
         ) : null}
       </DialogContent>
     </Dialog>

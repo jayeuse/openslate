@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { apiErrorReference } from "@/lib/api-errors";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/toast";
 import {
@@ -198,7 +199,11 @@ export function useBoardPostActions({
     setPendingPostId(null);
     setConfirmation(null);
     const failure = postActionFailure(error);
-    toast.add({ title: failure.message, type: "error" });
+    toast.add({
+      title: failure.message,
+      type: "error",
+      reference: apiErrorReference(error),
+    });
     // A conflict refreshes the list and the pane, so the next try is current.
     if (failure.conflict) latest.current.onChanged(null);
     if (failure.denied)

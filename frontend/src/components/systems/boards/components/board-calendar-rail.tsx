@@ -36,6 +36,7 @@ import {
 } from "../domain/calendar-dates";
 import type { CalendarReadStatus } from "../hooks/use-board-calendar-data";
 import { CalendarSwatch, dayLabel } from "./board-calendar-chips";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 export type CalendarListRow = {
   id: string;
@@ -50,6 +51,8 @@ export type CalendarListRow = {
 export type CalendarListActions = {
   hidden: ReadonlySet<string>;
   statuses: ReadonlyMap<string, CalendarReadStatus>;
+  /** Each failed read's request ID, by calendar (D1.4). */
+  references?: ReadonlyMap<string, string>;
   canManage: boolean;
   onToggle: (id: string) => void;
   onRetry: (id: string) => void;
@@ -169,7 +172,7 @@ function CalendarListItem({
   const failed = status === "error";
   const shown = !actions.hidden.has(row.id);
   return (
-    <li className="flex min-h-11 items-center gap-2 rounded-md px-1 xl:min-h-8">
+    <li className="flex min-h-11 flex-wrap items-center gap-x-2 rounded-md px-1 xl:min-h-8">
       <Checkbox
         id={checkboxId}
         checked={shown}
@@ -208,6 +211,12 @@ function CalendarListItem({
       ) : null}
       {row.source ? (
         <SourceMenu row={row} actions={actions} shown={shown} />
+      ) : null}
+      {failed ? (
+        <ErrorReference
+          id={actions.references?.get(row.id)}
+          className="basis-full pb-1"
+        />
       ) : null}
     </li>
   );

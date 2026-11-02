@@ -1,7 +1,7 @@
 "use client";
 
 import { createElement, useEffect, useMemo, useRef, useState } from "react";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiContractError, ApiError, apiContractError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FilePickerButton } from "@/components/ui/file-picker-button";
@@ -19,6 +19,8 @@ import {
   type BoardAttachmentTarget,
   type BoardAttachmentVersions,
 } from "../adapters/board-files-api";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 type EventAttachmentTarget = {
   kind: "event" | "card";
@@ -100,7 +102,7 @@ function uploadFailure(file: BoardAttachmentFile): Error | null {
     return new AttachmentFileError(
       "This file is no longer available to attach.",
     );
-  return new ApiContractError();
+  return apiContractError(file);
 }
 
 export function ServerBoardAttachments(props: Props) {
@@ -112,13 +114,15 @@ export function ServerBoardAttachments(props: Props) {
   const [listStatus, setListStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
+  const [listReference, setListReference] = useState<string>();
   const [items, setItems] = useState<BoardAttachmentFile[]>([]);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [listRevision, setListRevision] = useState(0);
   const [operation, setOperation] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [notice, setNotice] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   // The active download waits for file capacity on the server.
@@ -191,6 +195,7 @@ export function ServerBoardAttachments(props: Props) {
       .catch((loadError: unknown) => {
         if (!active || isAbort(loadError)) return;
         setListStatus("error");
+        setListReference(apiErrorReference(loadError));
       });
     return () => {
       active = false;
@@ -237,12 +242,13 @@ export function ServerBoardAttachments(props: Props) {
           setPendingFile(file);
           setError(
             "The content changed. Reload it before attaching this file.",
+            attachError,
           );
           return;
         }
       }
       setPendingFile(file);
-      setError(fileErrorMessage(attachError, "attach the file"));
+      setError(fileErrorMessage(attachError, "attach the file"), attachError);
     } finally {
       setOperation(null);
     }
@@ -295,7 +301,7 @@ export function ServerBoardAttachments(props: Props) {
         // Keep the reservation so the user can finish; attach refuses a file that
         // never became ready.
         setPendingFile({ id: reserved.id, filename: reserved.filename });
-        setError(UNCLEAR_UPLOAD);
+        setError(UNCLEAR_UPLOAD, uploadError);
         return;
       }
       setError(
@@ -304,6 +310,7 @@ export function ServerBoardAttachments(props: Props) {
           : uploadError instanceof ApiError && uploadError.status === 422
             ? REJECTED_UPLOAD
             : fileErrorMessage(uploadError, "upload the file"),
+        uploadError,
       );
     } finally {
       operationController.current = null;
@@ -338,11 +345,12 @@ export function ServerBoardAttachments(props: Props) {
         } catch {
           setError(
             "The content changed. Reload it before changing attachments.",
+            detachError,
           );
           return;
         }
       }
-      setError(fileErrorMessage(detachError, "remove the file"));
+      setError(fileErrorMessage(detachError, "remove the file"), detachError);
       await refreshList();
     } finally {
       operationController.current = null;
@@ -367,8 +375,9 @@ export function ServerBoardAttachments(props: Props) {
       setOffset(page.offset + page.items.length);
       setHasMore(page.hasMore);
       setListStatus("ready");
-    } catch {
+    } catch (moreError) {
       setListStatus("error");
+      setListReference(apiErrorReference(moreError));
     }
   }
 
@@ -394,7 +403,10 @@ export function ServerBoardAttachments(props: Props) {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (downloadError) {
-      setError(fileErrorMessage(downloadError, "download the file"));
+      setError(
+        fileErrorMessage(downloadError, "download the file"),
+        downloadError,
+      );
     } finally {
       setDownloadingId(null);
     }
@@ -411,7 +423,11 @@ export function ServerBoardAttachments(props: Props) {
   const feedback = (
     <>
       {error ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={errorFailure?.reference}
+        >
           {error}
         </Alert>
       ) : null}
@@ -462,6 +478,7 @@ export function ServerBoardAttachments(props: Props) {
             <Alert
               variant="destructive"
               className="flex flex-wrap items-center gap-2"
+              reference={listReference}
             >
               <p className="text-sm">
                 Attachments are unavailable for this content.

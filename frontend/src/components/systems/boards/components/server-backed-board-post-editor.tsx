@@ -52,6 +52,8 @@ export type PostEditorView = {
   conflict: boolean;
   pending: boolean;
   error: string | null;
+  /** The failed request's ID behind `error` (D1.4). */
+  errorReference?: string;
   notice: string | null;
 };
 
@@ -161,6 +163,9 @@ export function ServerBoardPostEditorDisplay({
         <Alert
           variant="destructive"
           className="flex flex-wrap items-center gap-3"
+          // A failed region read has its reference in the page's Regional
+          // settings alert: one reference for each failed request (D1.4).
+          reference={view.regionFailed ? undefined : view.errorReference}
         >
           <span>
             {view.regionFailed
@@ -227,7 +232,11 @@ export function ServerBoardPostEditorDisplay({
           Your text is kept. Copy it, then close and edit the latest version.
         </Alert>
       ) : view.error ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={view.errorReference}
+        >
           {view.error}
         </Alert>
       ) : null}

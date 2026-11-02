@@ -24,7 +24,7 @@ function ActivityView({ navigation }: { navigation: NavigationState }) {
   );
   if (activity.error)
     return (
-      <Alert role="alert" variant="destructive">
+      <Alert role="alert" variant="destructive" reference={activity.reference}>
         {activity.error}
         <Button variant="outline" onClick={activity.reload}>
           Retry
@@ -97,7 +97,11 @@ function BrowseView({ select }: { select: (id: string) => void }) {
         className="mb-4"
       />
       {resource.error ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={resource.reference}
+        >
           {resource.error}
           <Button onClick={resource.reload}>Retry</Button>
         </Alert>

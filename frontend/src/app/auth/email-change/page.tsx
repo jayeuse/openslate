@@ -12,6 +12,7 @@ import {
   signOut,
 } from "@/lib/auth-api";
 import { emailChangeFailure } from "@/lib/email-change-failure";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Context = "checking" | "signed-out" | "occupied" | "unavailable";
 const invalidLink =
@@ -26,7 +27,8 @@ export default function EmailChangePage() {
   const [context, setContext] = useState<Context>("checking");
   const [valid, setValid] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
@@ -59,11 +61,12 @@ export default function EmailChangePage() {
         const session = await probeEmailConfirmationSession(controller.signal);
         if (current === version.current && !controller.signal.aborted)
           setContext(session.authenticated ? "occupied" : "signed-out");
-      } catch {
+      } catch (failure) {
         if (current === version.current && !controller.signal.aborted) {
           setContext("unavailable");
           setError(
             "The browser sign-in context could not be checked. Reopen the email link when the service is available.",
+            failure,
           );
         }
       }
@@ -101,12 +104,12 @@ export default function EmailChangePage() {
       const outcome = emailChangeFailure(failure);
       if (outcome.signOutRequired) {
         setContext("occupied");
-        setError(outcome.message);
+        setError(outcome.message, failure);
       } else {
         // A failed/unknown one-time command is never replayed, including after 401.
         proof.current = null;
         setValid(false);
-        setError(outcome.message);
+        setError(outcome.message, failure);
       }
     } finally {
       if (current === version.current && !controller.signal.aborted)
@@ -129,10 +132,11 @@ export default function EmailChangePage() {
         setError(
           "Sign-out could not be confirmed. The email link has not been used.",
         );
-    } catch {
+    } catch (failure) {
       if (current === version.current)
         setError(
           "Sign-out could not be confirmed. Try signing out again; the email link has not been used.",
+          failure,
         );
     } finally {
       if (current === version.current) setPending(false);
@@ -171,7 +175,11 @@ export default function EmailChangePage() {
             </p>
           )}
           {error && (
-            <Alert variant="destructive" role="alert">
+            <Alert
+              variant="destructive"
+              role="alert"
+              reference={errorFailure?.reference}
+            >
               {error}
             </Alert>
           )}

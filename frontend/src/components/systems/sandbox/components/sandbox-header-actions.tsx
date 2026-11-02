@@ -51,6 +51,7 @@ import {
   VersionCapacityBanner,
   type VersionCapacityActions,
 } from "./version-capacity-banner";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 
 type Props = {
   versionsRefreshKey: number;
@@ -127,7 +128,11 @@ export function SandboxHeaderActions({
   const [note, setNote] = useState("");
   const [staged, setStaged] = useState<SandboxDocumentV4 | null>(null);
   const [stagedName, setStagedName] = useState("");
-  const [error, setError] = useState("");
+  // The message and its failed request's reference stay together (D1.6).
+  const [failure, setFailure] = useState<ApiErrorText | null>(null);
+  const error = failure?.message ?? "";
+  const setError = (message: string, reference?: string) =>
+    setFailure(message ? { message, reference } : null);
   const [busy, setBusy] = useState(false);
   const [includeVersions, setIncludeVersions] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
@@ -179,7 +184,7 @@ export function SandboxHeaderActions({
     const result = await onCreateCheckpoint(label.trim(), note.trim());
     setBusy(false);
     if (!result.ok) {
-      setError(result.error);
+      setError(result.error, result.reference);
       return;
     }
     setCheckpointOpen(false);
@@ -201,7 +206,7 @@ export function SandboxHeaderActions({
     const result = await onImport(staged);
     setBusy(false);
     if (!result.ok) {
-      setError(result.error);
+      setError(result.error, result.reference);
       return;
     }
     setImportOpen(false);
@@ -227,13 +232,16 @@ export function SandboxHeaderActions({
         download(bundle.filename, bundle.document);
         reportDone("Backup downloaded");
       }
-    } catch {
+    } catch (caught) {
       if (
         mounted.current &&
         !controller.signal.aborted &&
         exportController.current === controller
       )
-        setError("Export could not be completed. Try again.");
+        setError(
+          "Export could not be completed. Try again.",
+          apiErrorReference(caught),
+        );
     } finally {
       if (mounted.current && exportController.current === controller) {
         exportController.current = null;
@@ -247,12 +255,15 @@ export function SandboxHeaderActions({
     try {
       const result = await onDiscard();
       if (!result.ok) {
-        setError(result.error);
+        setError(result.error, result.reference);
         return;
       }
       setDiscardOpen(false);
-    } catch {
-      setError("Draft changes could not be discarded. Try again.");
+    } catch (caught) {
+      setError(
+        "Draft changes could not be discarded. Try again.",
+        apiErrorReference(caught),
+      );
     } finally {
       setBusy(false);
     }
@@ -357,7 +368,11 @@ export function SandboxHeaderActions({
             {...versionCapacity}
             pending={versionCapacity.pending || busy}
           />
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
+          {error ? (
+            <Alert variant="destructive" reference={failure?.reference}>
+              {error}
+            </Alert>
+          ) : null}
           <Field>
             <FieldLabel htmlFor="sandbox-checkpoint-label">
               Checkpoint name
@@ -444,7 +459,15 @@ export function SandboxHeaderActions({
               </FieldLabel>
             </Field>
             {countUnavailable ? (
-              <Alert variant="destructive" className="space-y-3">
+              <Alert
+                variant="destructive"
+                className="space-y-3"
+                reference={
+                  historyAccess.denied
+                    ? null
+                    : apiErrorReference(versionCount.error)
+                }
+              >
                 <p>Version count is unavailable.</p>
                 <Button
                   variant="outline"
@@ -475,7 +498,11 @@ export function SandboxHeaderActions({
               Imported versions count toward the 50-version limit.
             </p>
           </div>
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
+          {error ? (
+            <Alert variant="destructive" reference={failure?.reference}>
+              {error}
+            </Alert>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -554,7 +581,11 @@ export function SandboxHeaderActions({
               ? "Saves a checkpoint, then resets the draft to the last publish. Live data stays."
               : "Saves a checkpoint, then clears the draft. Live data stays."}
           </DialogDescription>
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
+          {error ? (
+            <Alert variant="destructive" reference={failure?.reference}>
+              {error}
+            </Alert>
+          ) : null}
           <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button

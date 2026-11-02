@@ -29,6 +29,7 @@ import {
   consumeInvitationToken,
   retainInvitationToken,
 } from "@/lib/invitation-token";
+import { useErrorText } from "@/lib/use-error-text";
 
 type SetupFailure = "retryable" | "session" | "unavailable" | "uncertain";
 /** Without a link, a signed-in account joins from its pending invitations. */
@@ -52,7 +53,8 @@ export default function AuthSetupPage() {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [mismatch, setMismatch] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [failure, setFailure] = useState<SetupFailure | null>(null);
   const [pending, setPending] = useState(false);
   const [account, setAccount] = useState<SignedInAccount>({
@@ -158,18 +160,22 @@ export default function AuthSetupPage() {
       if (kind === "session")
         setError(
           "Your invitation session has expired. Return to sign in and start again.",
+          error,
         );
       else if (kind === "uncertain")
         setError(
           "Password setup may have completed. Return to sign in to confirm before trying again.",
+          error,
         );
       else if (kind === "unavailable")
         setError(
           "Authentication is temporarily unavailable. Your entries are still here. Try again shortly.",
+          error,
         );
       else
         setError(
           "We could not set that password. Check the requirements and try again.",
+          error,
         );
     } finally {
       if (submittedVersion === invitationVersion.current) setPending(false);
@@ -221,7 +227,13 @@ export default function AuthSetupPage() {
           <>
             {setupError && (
               <div className="mb-5 space-y-3">
-                <Alert role="alert" variant="destructive">
+                <Alert
+                  role="alert"
+                  variant="destructive"
+                  reference={
+                    missingInvitationLink ? undefined : errorFailure?.reference
+                  }
+                >
                   {setupError}
                 </Alert>
                 {setupFailure === "session" || setupFailure === "uncertain" ? (

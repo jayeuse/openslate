@@ -1,9 +1,9 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   apiFetch,
   apiFetchWithMetadata,
   type ApiFetchMetadata,
+  apiContractError,
 } from "@/lib/api";
 
 import {
@@ -52,7 +52,7 @@ function versioned<Schema extends z.ZodType>(
   result: ApiFetchMetadata<Schema>,
 ): C.Versioned<z.output<Schema>> {
   if (result.response.status !== 200 || !result.etag?.trim())
-    throw new ApiContractError();
+    throw apiContractError(result);
   return { data: result.data, etag: result.etag };
 }
 
@@ -158,7 +158,7 @@ export async function sendMessage(
     status: result.response.status,
     message: result.data,
   });
-  if (!sent.success) throw new ApiContractError();
+  if (!sent.success) throw apiContractError(result);
   return sent.data;
 }
 

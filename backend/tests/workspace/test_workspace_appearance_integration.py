@@ -204,7 +204,8 @@ def test_public_appearance_failure_is_generic_no_store(monkeypatch, failure):
             "detail": {
                 "code": "workspace_unavailable",
                 "message": "Workspace configuration is unavailable",
-            }
+            },
+            "request_id": response.headers["X-Request-ID"],
         }
         assert response.headers["Cache-Control"] == "no-store"
     finally:

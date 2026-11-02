@@ -10,7 +10,11 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
+import {
+  apiErrorMessage,
+  apiErrorReference,
+  type ApiErrorText,
+} from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { formatWorkspaceDateTime } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
@@ -61,8 +65,10 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
   );
   const [readBusy, setReadBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const [readError, setReadError] = useState("");
-  const [commandError, setCommandError] = useState("");
+  // Each message keeps the failed request's reference until it renders (D1.6,
+  // docs/specs/system-health.md).
+  const [readError, setReadError] = useState<ApiErrorText | null>(null);
+  const [commandError, setCommandError] = useState<ApiErrorText | null>(null);
   const live = useRef(false);
   const epoch = useRef(0);
   const admission = useRef(admitted);
@@ -132,7 +138,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     reading.current = true;
     const started = epoch.current;
     setReadBusy(true);
-    setReadError("");
+    setReadError(null);
     try {
       await client.cancelQueries({ queryKey: manageKeys.jobs() });
       await client.fetchQuery({
@@ -146,7 +152,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
         return false;
       setManageJobsDenied(client, false);
       setRequiresRead(false);
-      setReadError("");
+      setReadError(null);
       const saved = getManageJobsRecovery(client);
       if (saved)
         storeRecovery(
@@ -157,9 +163,10 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       return true;
     } catch (error) {
       if (live.current && admission.current && epoch.current === started) {
-        setReadError(
-          `Jobs could not be loaded. ${apiErrorMessage(error, "Try again.")}`,
-        );
+        setReadError({
+          message: `Jobs could not be loaded. ${apiErrorMessage(error, "Try again.")}`,
+          reference: apiErrorReference(error),
+        });
         if (
           error instanceof ApiError &&
           ["mfa_required", "ip_not_allowed"].includes(error.code ?? "")
@@ -232,7 +239,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     };
     storeRecovery(attempt);
     setPending(manageJobIdentity(actual));
-    setCommandError("");
+    setCommandError(null);
     try {
       await retryManageJob(actual, { key, signal: controller.signal });
       if (!owns(started)) return;
@@ -252,13 +259,16 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       if (refusal && error.status === 403) setManageJobsDenied(client, true);
       if (known || refusal) {
         storeRecovery(null);
-        setCommandError(
-          apiErrorMessage(error, "The retry could not be requested."),
-        );
+        setCommandError({
+          message: apiErrorMessage(error, "The retry could not be requested."),
+          reference: apiErrorReference(error),
+        });
       } else {
-        setCommandError(
-          "The retry could not be confirmed. Reload Jobs to see its state.",
-        );
+        setCommandError({
+          message:
+            "The retry could not be confirmed. Reload Jobs to see its state.",
+          reference: apiErrorReference(error),
+        });
         setRequiresRead(true);
       }
       if (
@@ -282,13 +292,19 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
         })
       : "Date unavailable";
   const p = query.data?.pagination;
-  const error =
-    readError ||
+  const error: ApiErrorText | null =
+    readError ??
     (query.error
-      ? `Jobs could not be loaded. ${apiErrorMessage(query.error, "Try again.")}`
+      ? {
+          message: `Jobs could not be loaded. ${apiErrorMessage(query.error, "Try again.")}`,
+          reference: apiErrorReference(query.error),
+        }
       : denied
-        ? "Jobs could not be loaded. You do not have access."
-        : "");
+        ? {
+            message: "Jobs could not be loaded. You do not have access.",
+            reference: undefined,
+          }
+        : null);
   const controlsLocked = pending !== null || recovery !== null || readBusy;
   const pendingRow = pending
     ? rows.find((row) => manageJobIdentity(row) === pending)
@@ -300,7 +316,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     if (next.kind !== undefined) setKind(next.kind);
     if (next.state !== undefined) setState(next.state);
     setOffset(0);
-    setReadError("");
+    setReadError(null);
   };
   // The page shows the notice for an account that is not an administrator;
   // until the role is verified, Jobs waits without a request.
@@ -323,8 +339,13 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       ) : null}
       {commandError ? (
         // A retry that failed or could not be confirmed is an error.
-        <Alert role="alert" variant="destructive" className="shrink-0">
-          {commandError}
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="shrink-0"
+          reference={commandError.reference}
+        >
+          <p>{commandError.message}</p>
         </Alert>
       ) : null}
       {recovery?.kind === "backup" &&
@@ -363,8 +384,9 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
             role="alert"
             variant="destructive"
             className="m-3 w-auto shrink-0"
+            reference={error.reference}
           >
-            <p>{error}</p>
+            <p>{error.message}</p>
             <Button
               variant="outline"
               className="mt-2 min-h-11"
@@ -410,14 +432,14 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
             onPageIndexChange={(page) => {
               if (!controlsLocked) {
                 setOffset(page * limit);
-                setReadError("");
+                setReadError(null);
               }
             }}
             onPageSizeChange={(size) => {
               if (!controlsLocked) {
                 setLimit(size);
                 setOffset(0);
-                setReadError("");
+                setReadError(null);
               }
             }}
             className="shrink-0 px-3 py-2 lg:py-2"

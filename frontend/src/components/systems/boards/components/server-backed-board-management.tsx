@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { reportDone } from "@/lib/feedback";
@@ -66,6 +67,7 @@ import {
 import { BoardSettingsAccess } from "./board-settings-access";
 import { ServerBackedBoardActivity } from "./server-backed-board-activity";
 import { ConfirmAction } from "./ui";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Props = {
   board: BoardManagementBoard;
@@ -130,7 +132,8 @@ function SettingsInstance(props: Props) {
     page: BoardUnlinkedFilePage;
   } | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileFailure, setFileError] = useErrorText();
+  const fileError = fileFailure?.message ?? null;
   const [purgePreviewLoading, setPurgePreviewLoading] = useState(false);
   const [purgeReviewAgain, setPurgeReviewAgain] = useState(false);
   const [purgeConfirmationName, setPurgeConfirmationName] = useState("");
@@ -146,11 +149,13 @@ function SettingsInstance(props: Props) {
   );
   const [access, setAccess] =
     useState<BoardManagementView["access"]>("loading");
+  const [accessReference, setAccessReference] = useState<string>();
   const [accessRetry, setAccessRetry] = useState(0);
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [latestReady, setLatestReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [notice, setNotice] = useState<string | null>(null);
   // Lifecycle and purge results show beside their action in Advanced (R2).
   const [lifecycleError, setLifecycleError] =
@@ -307,7 +312,10 @@ function SettingsInstance(props: Props) {
         if (!current || request !== accessRequest.current || deniedRef.current)
           return;
         accessFor.current = null;
-        if (!handleDenied(failure)) setAccess("error");
+        if (!handleDenied(failure)) {
+          setAccess("error");
+          setAccessReference(apiErrorReference(failure));
+        }
       },
     );
     return () => {
@@ -348,6 +356,8 @@ function SettingsInstance(props: Props) {
     conflict,
     latestReady,
     error,
+    errorReference: errorFailure?.reference,
+    accessReference,
     notice,
     lifecycleError,
     lifecycleNotice,
@@ -401,7 +411,7 @@ function SettingsInstance(props: Props) {
           setFilePage(null);
           return;
         }
-        setFileError("Unattached files could not be loaded.");
+        setFileError("Unattached files could not be loaded.", failure);
       })
       .finally(() => {
         if (current) setFileLoading(false);
@@ -450,6 +460,7 @@ function SettingsInstance(props: Props) {
             failure,
             "The file could not be archived. Refresh and try again.",
           ),
+          failure,
         );
     } finally {
       pendingRef.current = false;
@@ -503,6 +514,7 @@ function SettingsInstance(props: Props) {
           failure,
           "The file review could not be prepared. Refresh and review again.",
         ),
+        failure,
       );
     } finally {
       if (request === actionRequest.current) {
@@ -572,6 +584,7 @@ function SettingsInstance(props: Props) {
           failure,
           "The file was not deleted. Request a new review.",
         ),
+        failure,
       );
       setPurgePreview(null);
       setPurgeConfirmationName("");
@@ -632,6 +645,7 @@ function SettingsInstance(props: Props) {
       } else
         setError(
           "Board could not be saved. Review your details and try again.",
+          failure,
         );
     } finally {
       pendingRef.current = false;
@@ -654,7 +668,10 @@ function SettingsInstance(props: Props) {
     } catch (failure) {
       if (!stillCurrent(request)) return;
       if (!handleDenied(failure))
-        setError("The latest board details could not be loaded. Try again.");
+        setError(
+          "The latest board details could not be loaded. Try again.",
+          failure,
+        );
     } finally {
       pendingRef.current = false;
       if (mountedRef.current) setPending(false);
@@ -738,6 +755,7 @@ function SettingsInstance(props: Props) {
         setLifecycleError({
           action: "lifecycle",
           message: `Board could not be ${action === "archive" ? "archived" : "restored"}. Try again.`,
+          reference: apiErrorReference(failure),
         });
     } finally {
       pendingRef.current = false;
@@ -790,6 +808,7 @@ function SettingsInstance(props: Props) {
       setLifecycleError({
         action: "purge",
         message: boardPurgeFailureMessage(failure, "preview"),
+        reference: apiErrorReference(failure),
       });
       setPurgeReviewAgain(true);
     } finally {
@@ -856,6 +875,7 @@ function SettingsInstance(props: Props) {
       setLifecycleError({
         action: "purge",
         message: boardPurgeFailureMessage(failure, "execute"),
+        reference: apiErrorReference(failure),
       });
       clearPurgeReview();
       setPurgeReviewAgain(true);
@@ -1013,6 +1033,7 @@ function SettingsInstance(props: Props) {
                       }}
                       loading={fileLoading}
                       error={fileError}
+                      errorReference={fileFailure?.reference}
                       onRetry={() => setFileRefresh((value) => value + 1)}
                       page={filePage?.page ?? null}
                       stale={filePage?.key !== filesKey}
@@ -1090,6 +1111,7 @@ function SettingsInstance(props: Props) {
         pending={pending}
         loading={purgePreviewLoading}
         error={error}
+        errorReference={errorFailure?.reference}
         preview={purgePreview}
         region={region.data}
         confirmationName={purgeConfirmationName}

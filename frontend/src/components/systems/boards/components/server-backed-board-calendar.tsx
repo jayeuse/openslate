@@ -18,6 +18,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
   useVerifiedWorkspaceUserId,
@@ -31,6 +32,7 @@ import {
 import {
   addBoardCalendarSource,
   addMyCalendarSource,
+  calendarSourceErrorMessage,
   removeBoardCalendarSource,
   type CalendarSource,
 } from "../adapters/board-calendar-sources-api";
@@ -135,6 +137,7 @@ export function ServerBackedBoardCalendar({
   liveKey,
   workspaceCalendar,
   workspaceDateError,
+  workspaceDateReference,
   onRetryWorkspaceDate,
   boardActive = false,
   onDraftStateChange,
@@ -157,6 +160,8 @@ export function ServerBackedBoardCalendar({
   liveKey: number;
   workspaceCalendar: WorkspaceCalendarSettings | undefined;
   workspaceDateError: boolean;
+  /** The failed date read's request ID (D1.4). */
+  workspaceDateReference?: string;
   onRetryWorkspaceDate: () => void;
   boardActive?: boolean;
   selectedEventId?: string | null;
@@ -190,6 +195,7 @@ export function ServerBackedBoardCalendar({
     event: BoardEvent | null;
     error: string | null;
     refused: boolean;
+    reference?: string;
   } | null>(null);
   const period = useCalendarPeriod({ workspaceCalendar, requestedView });
   const {
@@ -222,6 +228,7 @@ export function ServerBackedBoardCalendar({
     key: string;
     status: "loading" | "ready" | "denied" | "error";
     value: BoardMyAccess | null;
+    reference?: string;
   } | null>(null);
   const [accessVersion, setAccessVersion] = useState(0);
   const [blockedBoardId, setBlockedBoardId] = useState<string | null>(null);
@@ -352,6 +359,7 @@ export function ServerBackedBoardCalendar({
             ? "It may have been removed, or you may not have access."
             : "Could not load the event. Try again.",
           refused,
+          reference: apiErrorReference(error),
         });
       });
     return () => {
@@ -414,6 +422,7 @@ export function ServerBackedBoardCalendar({
           key: accessKey,
           status: denied ? "denied" : "error",
           value: null,
+          reference: apiErrorReference(error),
         });
         if (denied) {
           setBlockedBoardId(boardId);
@@ -565,10 +574,13 @@ export function ServerBackedBoardCalendar({
       await removeBoardCalendarSource(boardId, source.id);
       reportDone("Record source removed");
     } catch (failure) {
+      // Authored words only (S1-C6), never the error's own message.
       reportError(
-        failure instanceof ApiError && failure.message
-          ? failure.message
-          : "The record source was not removed. Try again.",
+        apiErrorMessage(
+          failure,
+          "The record source was not removed. Try again.",
+        ),
+        apiErrorReference(failure),
       );
     } finally {
       setSourceToRemove(null);
@@ -579,6 +591,7 @@ export function ServerBackedBoardCalendar({
   const listActions: CalendarListActions = {
     hidden,
     statuses: data.statuses,
+    references: data.references,
     canManage: canManageSources,
     onToggle: toggleCalendar,
     onRetry: data.retry,
@@ -592,9 +605,11 @@ export function ServerBackedBoardCalendar({
         () => reportDone("Added to My calendar"),
         (failure: unknown) =>
           reportError(
-            failure instanceof ApiError && failure.message
-              ? failure.message
-              : "Could not add it to My calendar. Try again.",
+            calendarSourceErrorMessage(
+              failure,
+              "Could not add it to My calendar. Try again.",
+            ),
+            apiErrorReference(failure),
           ),
       );
     },
@@ -643,6 +658,7 @@ export function ServerBackedBoardCalendar({
           status: "error",
           message: currentSelectedDetail.error,
           retryable: !currentSelectedDetail.refused,
+          reference: currentSelectedDetail.reference,
         }
       : sheetEvent
         ? {
@@ -762,7 +778,10 @@ export function ServerBackedBoardCalendar({
         {canBrowseArchived &&
         lifecycle.archived.state?.key === lifecycle.archived.key &&
         lifecycle.archived.state.error ? (
-          <Alert variant="destructive">
+          <Alert
+            variant="destructive"
+            reference={lifecycle.archived.state.reference}
+          >
             {lifecycle.archived.state.error}
             <Button
               type="button"
@@ -851,7 +870,7 @@ export function ServerBackedBoardCalendar({
           primarySlot,
         )}
       {workspaceDateError ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={workspaceDateReference}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {workspaceToday
@@ -870,13 +889,17 @@ export function ServerBackedBoardCalendar({
         </Alert>
       ) : null}
       {editor.editorError && !activeDraft ? (
-        <Alert variant="destructive">{editor.editorError}</Alert>
+        <Alert variant="destructive" reference={editor.editorReference}>
+          {editor.editorError}
+        </Alert>
       ) : null}
       {lifecycle.error && !lifecycle.target ? (
-        <Alert variant="destructive">{lifecycle.error}</Alert>
+        <Alert variant="destructive" reference={lifecycle.reference}>
+          {lifecycle.error}
+        </Alert>
       ) : null}
       {accessFailed ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={access?.reference}>
           Could not check edit access. Your unsaved draft is retained.
           <Button
             type="button"
@@ -889,7 +912,7 @@ export function ServerBackedBoardCalendar({
         </Alert>
       ) : null}
       {show !== "archived" && data.eventsError ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={data.eventsReference}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {calendarPage ? "Showing the last loaded events. " : ""}
@@ -989,6 +1012,7 @@ export function ServerBackedBoardCalendar({
         }
         conflict={editor.conflict}
         error={editor.editorError}
+        errorReference={editor.editorReference}
         onChange={editor.change}
         onClose={editor.close}
         onSave={() => {
@@ -1042,6 +1066,7 @@ export function ServerBackedBoardCalendar({
         enabled={lifecycle.purge.enabled}
         preview={lifecycle.purge.preview}
         error={lifecycle.purge.error}
+        reference={lifecycle.purge.reference}
         name={lifecycle.purge.name}
         password={lifecycle.purge.password}
         region={displayRegion}
@@ -1064,6 +1089,7 @@ export function ServerBackedBoardCalendar({
         }
         target={lifecycle.target}
         error={lifecycle.error}
+        reference={lifecycle.reference}
         pending={lifecycle.pending}
         canConfirm={lifecycle.canConfirmLifecycle(lifecycle.target)}
         onCancel={lifecycle.cancelLifecycle}

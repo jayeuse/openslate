@@ -14,6 +14,8 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 import { cn } from "@/lib/utils";
 import type {
   SandboxDocumentDesign,
@@ -156,7 +158,8 @@ export function TestWorkspace({
   const [triggerIds, setTriggerIds] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const workspaceRef = useRef<HTMLElement>(null);
   const [wide, setWide] = useState(false);
   // Phones switch between Setup and Result; a run moves to the result.
@@ -412,10 +415,10 @@ export function TestWorkspace({
       }
       return true;
     } catch (reason) {
+      // The server's words never show (S1-C6); the shared path says it.
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "The test could not run. Try again.",
+        apiErrorMessage(reason, "The test could not run. Try again."),
+        reason,
       );
       return false;
     } finally {
@@ -432,9 +435,11 @@ export function TestWorkspace({
       setSelectedRunId(null);
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Test results could not be cleared. Try again.",
+        apiErrorMessage(
+          reason,
+          "Test results could not be cleared. Try again.",
+        ),
+        reason,
       );
     } finally {
       setClearing(false);
@@ -457,7 +462,11 @@ export function TestWorkspace({
       className="@container/test flex h-full min-w-0 flex-col gap-4"
     >
       {error ? (
-        <Alert variant="destructive" role="alert">
+        <Alert
+          variant="destructive"
+          role="alert"
+          reference={errorFailure?.reference}
+        >
           {error}
         </Alert>
       ) : null}

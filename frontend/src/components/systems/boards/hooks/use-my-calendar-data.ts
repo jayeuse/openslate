@@ -1,6 +1,7 @@
 "use client";
 
 import { queryOptions, useQueries, useQuery } from "@tanstack/react-query";
+import { apiErrorReference } from "@/lib/api-errors";
 import { listMyCalendarSources } from "../adapters/board-calendar-sources-api";
 import type { CalendarSource } from "../adapters/board-calendar-sources-api";
 import {
@@ -82,7 +83,11 @@ export type MyCalendarWindowData = {
   nextOccurrence: { date: string } | null;
   eventsReady: boolean;
   eventsError: string | null;
+  /** The failed read's request ID, shown under `eventsError` (D1.6). */
+  eventsReference: string | undefined;
   statuses: Map<string, CalendarReadStatus>;
+  /** Each failed read's request ID, by calendar (D1.4). */
+  references: Map<string, string>;
   dueCards: readonly MyDueCard[];
   retry: (calendarId: string) => void;
 };
@@ -172,18 +177,27 @@ export function useMyCalendarWindow({
         ? "loading"
         : board.status,
     );
+  const references = new Map<string, string>();
+  const keepReference = (calendarId: string, error: unknown) => {
+    const reference = apiErrorReference(error);
+    if (reference) references.set(calendarId, reference);
+  };
   visibleSources.forEach((source, index) => {
     const read = sourceReads[index];
     statuses.set(
       boardSourceCalendarId(source.id),
       read.isError ? "error" : read.isSuccess ? "ready" : "loading",
     );
+    if (read.isError)
+      keepReference(boardSourceCalendarId(source.id), read.error);
   });
-  if (dueShown)
+  if (dueShown) {
     statuses.set(
       MY_DUE_CALENDAR,
       dueRead.isError ? "error" : dueRead.isSuccess ? "ready" : "loading",
     );
+    if (dueRead.isError) keepReference(MY_DUE_CALENDAR, dueRead.error);
+  }
 
   const shownBoards = new Set(
     boards
@@ -205,7 +219,11 @@ export function useMyCalendarWindow({
     eventsError: occurrences.isError
       ? "Events could not be loaded. Try again."
       : null,
+    eventsReference: occurrences.isError
+      ? apiErrorReference(occurrences.error)
+      : undefined,
     statuses,
+    references,
     dueCards,
     retry: (calendarId) => {
       if (calendarId === MY_DUE_CALENDAR) {

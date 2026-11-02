@@ -69,6 +69,7 @@ export function BackupHistoryList({
   body,
   loading,
   failure,
+  failureReference,
   onRetry,
   selectedId,
   request,
@@ -86,6 +87,8 @@ export function BackupHistoryList({
   body: BackupListBody;
   loading: boolean;
   failure: "denied" | "unavailable" | null;
+  /** The failed history read's request ID, shown as its error reference. */
+  failureReference?: string;
   onRetry: () => void;
   selectedId: string | undefined;
   request: ManageBackupsRequest;
@@ -219,7 +222,12 @@ export function BackupHistoryList({
           </p>
         ) : null}
         {failure ? (
-          <Alert role="alert" variant="destructive" className="m-3">
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="m-3"
+            reference={failure === "denied" ? null : failureReference}
+          >
             <p>
               {failure === "denied"
                 ? "Only the installation owner can review backups."

@@ -34,7 +34,11 @@ import {
 import { authMeOptions } from "../access/adapters/access-queries";
 import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
+import {
+  apiErrorMessage,
+  apiErrorReference,
+  type ApiErrorText,
+} from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import ManageAudit from "./components/audit";
 import ManageJobs from "./components/jobs";
@@ -80,10 +84,16 @@ import { BackupPanel } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
 import { isManageBackupExportId } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
+import { SystemHealth } from "./components/system-health";
 import { ManageUnavailable } from "./components/manage-unavailable";
 
 type ViewTab =
-  "Organization" | "Audit" | "Backup" | "Jobs" | "Updates & licensing";
+  | "Organization"
+  | "System health"
+  | "Audit"
+  | "Backup"
+  | "Jobs"
+  | "Updates & licensing";
 type LogoDraft =
   | { kind: "new" | "reservation-unknown"; file: File }
   | { kind: "candidate"; file: File; candidate: WorkspaceLogoFile }
@@ -160,6 +170,7 @@ function profileResponseErrors(
 
 const manageTabs: readonly ViewTab[] = [
   "Organization",
+  "System health",
   "Audit",
   "Backup",
   "Jobs",
@@ -169,6 +180,7 @@ const manageTabs: readonly ViewTab[] = [
 /** Each tab's navigation id (`workspace-navigation.ts`). */
 const manageSectionIds: Readonly<Record<ViewTab, string>> = {
   Organization: "organization",
+  "System health": "health",
   Audit: "audit",
   Backup: "backup",
   Jobs: "jobs",
@@ -179,6 +191,7 @@ function manageTabFromQuery(value: string | null): ViewTab {
   const normalized = value?.toLowerCase();
   if (normalized === "updates" || normalized === "licensing")
     return "Updates & licensing";
+  if (normalized === "health") return "System health";
   return (
     manageTabs.find((tab) => tab.toLowerCase() === normalized) ?? "Organization"
   );
@@ -303,8 +316,10 @@ function ManageContent() {
       installationOwnerFor(knownIdentity),
       (auditDepartmentsFor(knownIdentity)?.length ?? 0) > 0,
     ).find((group) => group.id === "manage")?.items ?? [];
+  // Organization and System health open for every role (S2-C5).
   const sectionDecided =
     requestedTab === "Organization" ||
+    requestedTab === "System health" ||
     requestedTab === "Jobs" ||
     knownIdentity !== undefined ||
     identity.isError;
@@ -468,6 +483,13 @@ function ManageContent() {
     resume: () => void;
   } | null>(null);
   const [error, setError] = useState("");
+  // The organization save's failure keeps its request ID beside the message
+  // (D1.6, docs/specs/system-health.md); it shows only while that message does.
+  const [savedFailure, setSavedFailure] = useState<ApiErrorText | null>(null);
+  const errorReference =
+    savedFailure && savedFailure.message === error
+      ? savedFailure.reference
+      : undefined;
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const recoveryView = tab === "Backup";
   const pageTitle = tab;
@@ -478,13 +500,15 @@ function ManageContent() {
       ? organizationReader
         ? "Only an administrator can change these settings."
         : "Set your organization’s name, region, and look."
-      : tab === "Jobs"
-        ? "See scheduled work, attempts, and problems."
-        : tab === "Audit"
-          ? "See who changed what, then inspect the details."
-          : tab === "Updates & licensing"
-            ? "The person who runs your server installs updates."
-            : "The person who runs your server restores backups.";
+      : tab === "System health"
+        ? "See whether Slate Operations works now, and what to do when it does not."
+        : tab === "Jobs"
+          ? "See scheduled work, attempts, and problems."
+          : tab === "Audit"
+            ? "See who changed what, then inspect the details."
+            : tab === "Updates & licensing"
+              ? "The person who runs your server installs updates."
+              : "The person who runs your server restores backups.";
   // A real owner-only refusal (a stale identity) lands on the same notice.
   const ownerRefused =
     (tab === "Backup" || tab === "Updates & licensing") &&
@@ -1219,11 +1243,15 @@ function ManageContent() {
       if (denied) requestSessionRecheck();
       if (caught instanceof ApiError && caught.status === 422)
         setProfileServerErrors(profileResponseErrors(caught));
-      setError(
+      const saveFailure =
         caught instanceof ApiError && caught.status === 403
           ? "Only administrators can change these settings. Reload the page to check your access."
-          : "The settings could not be saved. Try again.",
-      );
+          : "The settings could not be saved. Try again.";
+      setSavedFailure({
+        message: saveFailure,
+        reference: apiErrorReference(caught),
+      });
+      setError(saveFailure);
     } finally {
       if (ownsCommand()) {
         workspaceWriting.current = false;
@@ -1329,7 +1357,8 @@ function ManageContent() {
             <Alert
               role="alert"
               variant="destructive"
-              className="flex items-center gap-2"
+              className="flex flex-wrap items-center gap-2"
+              reference={errorReference}
             >
               <AlertTriangle aria-hidden="true" />
               {error}
@@ -1365,10 +1394,12 @@ function ManageContent() {
               unsavedCount={unsavedCount}
               checkingSaved={committedReadbackRequired && workspaceDraftDirty}
               saveError={organizationErrorInFooter ? error : ""}
+              saveErrorReference={errorReference}
               regionalDate={regionalDate}
               regionalCurrency={regionalCurrency}
               workspace={workspaceQuery.data}
               workspaceLoading={workspaceQuery.isPending}
+              workspaceLoadReference={apiErrorReference(workspaceQuery.error)}
               workspaceLoadFailed={
                 workspaceQuery.isError ||
                 profileMismatch ||
@@ -1489,6 +1520,14 @@ function ManageContent() {
                 });
               }}
             />
+          ) : null}
+
+          {sectionShown && tab === "System health" ? (
+            <div className="manage-scroll min-w-0">
+              <SystemHealth
+                installationOwner={installationOwnerFor(knownIdentity)}
+              />
+            </div>
           ) : null}
 
           {sectionShown && tab === "Updates & licensing" ? (

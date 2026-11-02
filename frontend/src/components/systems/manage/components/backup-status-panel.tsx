@@ -10,6 +10,7 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 import { backupStatusFacts } from "../domain/backup-rules";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type Maintenance = ReturnType<typeof useManageMaintenance>;
 
@@ -113,7 +114,15 @@ export function BackupStatusPanel({
         </div>
       ) : maintenance.status.isError || maintenance.policyRefused ? (
         <div className="p-3">
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={
+              maintenance.policyRefused
+                ? null
+                : apiErrorReference(maintenance.status.error)
+            }
+          >
             <p>
               {maintenance.policyRefused
                 ? "Only the installation owner can review backup status."

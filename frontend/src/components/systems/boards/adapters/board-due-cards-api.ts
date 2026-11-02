@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetch,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import { occurrenceBoardWire } from "./board-events-schemas";
 import { listBoardCards, listKanbanStages } from "./board-kanban-api";
 import {
@@ -44,7 +50,10 @@ export type DueCard = {
 
 function safe(error: unknown): unknown {
   return error instanceof ApiError
-    ? new ApiError(error.status, "Request could not be completed")
+    ? keepRequestId(
+        new ApiError(error.status, "Request could not be completed"),
+        error,
+      )
     : error;
 }
 
@@ -140,9 +149,10 @@ export async function listMyDueCards(window: {
     } catch (error) {
       throw safe(error);
     }
-    if (result.pagination.offset !== cards.length) throw new ApiContractError();
+    if (result.pagination.offset !== cards.length)
+      throw apiContractError(result);
     for (const card of result.items) {
-      if (card.boardId !== card.board.id) throw new ApiContractError();
+      if (card.boardId !== card.board.id) throw apiContractError(result);
       cards.push({ ...dueCard(card), board: card.board });
     }
     if (!result.pagination.has_more) return cards;

@@ -60,6 +60,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Editing = {
   /** The complete stored record the form started from. */
@@ -170,7 +171,8 @@ export function RecordDetailsControls({
     | "purge"
     | null
   >(null);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [purgePreview, setPurgePreview] =
     useState<LifecyclePurgePreview | null>(null);
@@ -214,6 +216,7 @@ export function RecordDetailsControls({
     } catch (caught) {
       setError(
         apiErrorMessage(caught, "The record could not be opened for editing."),
+        caught,
       );
     } finally {
       setPending(null);
@@ -257,7 +260,10 @@ export function RecordDetailsControls({
         setEditing({ ...editing, errors });
         if (Object.keys(errors).length > 0) focusFirstInvalid();
         if (Object.keys(errors).length === 0)
-          setError(apiErrorMessage(caught, "The record could not be saved."));
+          setError(
+            apiErrorMessage(caught, "The record could not be saved."),
+            caught,
+          );
       }
     } finally {
       setPending(null);
@@ -273,7 +279,10 @@ export function RecordDetailsControls({
       onChanged("Record deleted. You can restore it from this dialog.");
     } catch (caught) {
       setConfirmDelete(false);
-      setError(apiErrorMessage(caught, "The record could not be deleted."));
+      setError(
+        apiErrorMessage(caught, "The record could not be deleted."),
+        caught,
+      );
     } finally {
       setPending(null);
     }
@@ -286,7 +295,10 @@ export function RecordDetailsControls({
       await restoreOpenViewRecord(record.id);
       onChanged("Record restored.");
     } catch (caught) {
-      setError(apiErrorMessage(caught, "The record could not be restored."));
+      setError(
+        apiErrorMessage(caught, "The record could not be restored."),
+        caught,
+      );
     } finally {
       setPending(null);
     }
@@ -314,6 +326,7 @@ export function RecordDetailsControls({
           caught,
           "The Delete forever review could not be prepared. Try again.",
         ),
+        caught,
       );
       setPurgeReviewAgain(true);
     } finally {
@@ -349,6 +362,7 @@ export function RecordDetailsControls({
           caught,
           "Delete forever could not be confirmed. Request a new review and try again.",
         ),
+        caught,
       );
       clearPurgeReview();
       setPurgeReviewAgain(true);
@@ -444,7 +458,11 @@ export function RecordDetailsControls({
     <div className="flex min-w-0 flex-col gap-4">
       {headerActions}
       {error ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={errorFailure?.reference}
+        >
           {error}
         </Alert>
       ) : null}

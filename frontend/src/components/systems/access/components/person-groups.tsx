@@ -22,6 +22,9 @@ import type { PersonMemberships } from "../hooks/use-people-memberships";
 import { catalogGroups, useAccessCatalog } from "../hooks/use-access-catalog";
 import type { AccessUser } from "../state/api";
 import { ActionError } from "./editor-conflicts";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { errorTextFor, type ApiErrorText } from "@/lib/api-errors";
 
 const unanswered =
   "The change got no answer, so it may have completed. Check the list before you try again.";
@@ -45,12 +48,15 @@ export function PersonGroups({
   const [adding, setAdding] = useState(false);
   const [choice, setChoice] = useState("");
   const [addPending, setAddPending] = useState(false);
-  const [addError, setAddError] = useState("");
+  const [addErrorFailure, setAddError] = useErrorText();
+  const addError = addErrorFailure?.message ?? "";
   // Each row saves on its own; only the row being changed locks.
   const [removing, setRemoving] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [rowErrors, setRowErrors] = useState<
+    Record<string, ApiErrorText | null>
+  >({});
   const [announcement, setAnnouncement] = useState("");
   const addButton = useRef<HTMLButtonElement>(null);
   const focusAdd = useRef(false);
@@ -134,6 +140,7 @@ export function PersonGroups({
               caught,
               "The person could not be added. Try again.",
             ),
+        caught,
       );
       void afterAccessGroupChange(client);
     } finally {
@@ -144,7 +151,7 @@ export function PersonGroups({
   async function remove(groupId: string, groupName: string) {
     if (removing.has(groupId)) return;
     setRemoving((current) => new Set([...current, groupId]));
-    setRowErrors((current) => ({ ...current, [groupId]: "" }));
+    setRowErrors((current) => ({ ...current, [groupId]: null }));
     try {
       await changeGroupMembership(groupId, person.id, false);
       await afterAccessGroupChange(client);
@@ -155,12 +162,15 @@ export function PersonGroups({
       if (!mounted.current) return;
       setRowErrors((current) => ({
         ...current,
-        [groupId]: isUnansweredRequest(caught)
-          ? unanswered
-          : groupErrorMessage(
-              caught,
-              "The person could not be removed. Try again.",
-            ),
+        [groupId]: errorTextFor(
+          isUnansweredRequest(caught)
+            ? unanswered
+            : groupErrorMessage(
+                caught,
+                "The person could not be removed. Try again.",
+              ),
+          caught,
+        ),
       }));
       void afterAccessGroupChange(client);
     } finally {
@@ -226,9 +236,12 @@ export function PersonGroups({
                   ) : null}
                 </div>
                 {rowError ? (
-                  <p role="alert" className="text-danger-text text-sm">
-                    {rowError}
-                  </p>
+                  <>
+                    <p role="alert" className="text-danger-text text-sm">
+                      {rowError.message}
+                    </p>
+                    <ErrorReference id={rowError.reference} className="mt-0" />
+                  </>
                 ) : null}
               </li>
             );
@@ -264,6 +277,10 @@ export function PersonGroups({
           Retry groups
         </Button>
       ) : null}
+      {/* The reference is the last part of the error, after Retry (D1.4). */}
+      {membership?.error ? (
+        <ErrorReference id={membership.reference} className="mt-0" />
+      ) : null}
       {membership?.hasMore ? (
         <Button
           type="button"
@@ -296,6 +313,7 @@ export function PersonGroups({
             onSearchChange={search.onSearchChange}
             loading={search.loading}
             error={search.error}
+            reference={search.reference}
             onRetry={() => void search.retry()}
             hasMore={search.hasMore}
             onLoadMore={() => void search.loadMore()}
@@ -307,7 +325,11 @@ export function PersonGroups({
               search.search ? "No groups match." : "There are no groups yet."
             }
           />
-          <ActionError message={addError} title={null} />
+          <ActionError
+            message={addError}
+            title={null}
+            reference={addErrorFailure?.reference}
+          />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"

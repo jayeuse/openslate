@@ -76,6 +76,8 @@ export function AuditToolbar({
     onSearchChange: (search: string) => void;
     loading: boolean;
     error?: string;
+    /** The failed people read's request ID, shown after `error` (S1-C4). */
+    reference?: string;
     onRetry: () => void;
     onChoose: (person: AuditPersonOption | null) => void;
   };
@@ -227,6 +229,7 @@ export function AuditToolbar({
           onSearchChange={people.onSearchChange}
           loading={people.loading}
           error={people.error}
+          reference={people.reference}
           onRetry={people.onRetry}
           disabled={disabled}
           emptyMessage="No one matches."

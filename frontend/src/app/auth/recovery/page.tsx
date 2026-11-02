@@ -14,6 +14,7 @@ import {
   FieldError,
   FieldLabel,
 } from "@/components/ui/field";
+import { apiErrorReference } from "@/lib/api-errors";
 import { completeRecovery, requestRecovery } from "@/lib/auth-api";
 import {
   consumeRecoveryToken,
@@ -38,6 +39,9 @@ export default function RecoveryPage() {
   const [completionState, setCompletionState] =
     useState<CompletionState>("idle");
   const [pending, setPending] = useState(false);
+  // The failed request behind either error alert (D1.6); each alert shows
+  // only after its own failure set it.
+  const [failureReference, setFailureReference] = useState<string>();
 
   useEffect(() => {
     function captureInitialLink() {
@@ -63,8 +67,9 @@ export default function RecoveryPage() {
     try {
       await requestRecovery(email);
       setRequestState("sent");
-    } catch {
+    } catch (failure) {
       setRequestState("error");
+      setFailureReference(apiErrorReference(failure));
     } finally {
       setPending(false);
     }
@@ -90,8 +95,9 @@ export default function RecoveryPage() {
     try {
       await completeRecovery(recoveryToken, password);
       router.replace("/login?completed=password");
-    } catch {
+    } catch (failure) {
       setCompletionState("error");
+      setFailureReference(apiErrorReference(failure));
     } finally {
       setPending(false);
     }
@@ -131,7 +137,12 @@ export default function RecoveryPage() {
         ) : completingRecovery ? (
           <>
             {completionState === "error" ? (
-              <Alert role="alert" variant="destructive" className="mb-5">
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="mb-5"
+                reference={failureReference}
+              >
                 We could not reset your password. Check the requirements and try
                 again.
               </Alert>
@@ -221,7 +232,12 @@ export default function RecoveryPage() {
               </Alert>
             ) : null}
             {requestState === "error" ? (
-              <Alert role="alert" variant="destructive" className="mb-5">
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="mb-5"
+                reference={failureReference}
+              >
                 We could not process that request. Try again shortly.
               </Alert>
             ) : null}

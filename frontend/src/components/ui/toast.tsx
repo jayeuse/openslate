@@ -2,13 +2,17 @@
 import { Toast } from "@base-ui/react/toast";
 import { CheckCircle2, CircleAlert, Info, X } from "lucide-react";
 import { useSyncExternalStore } from "react";
+import { ErrorReference } from "@/components/ui/error-reference";
 import { cn } from "@/lib/utils";
-type NoticeData = { workspaceRevision?: number };
+type NoticeData = { workspaceRevision?: number; reference?: string };
 type NoticeOptions = {
   title: string;
   description?: string;
   type: "success" | "error" | "info";
   action?: { label: string; onClick: () => void };
+  /** The full request ID of the failed request (error notices only); the
+   * notice shows it as its error reference. */
+  reference?: string;
   /** Runs when closing or when private admission is suspended. */
   onClose?: () => void;
 };
@@ -26,7 +30,7 @@ const subscribe = (listener: () => void) => {
 const getRevision = () => workspaceRevision;
 
 function addNotice(
-  { action, onClose, ...options }: NoticeOptions,
+  { action, onClose, reference, ...options }: NoticeOptions,
   privateNotice: boolean,
 ) {
   if (privateNotice && !workspaceActive) {
@@ -42,7 +46,10 @@ function addNotice(
   };
   const id: string = manager.add({
     ...options,
-    data: privateNotice ? { workspaceRevision: admittedRevision } : {},
+    data: {
+      ...(privateNotice ? { workspaceRevision: admittedRevision } : {}),
+      ...(options.type === "error" && reference ? { reference } : {}),
+    },
     onClose: close,
     onRemove: () => privateNotices.delete(id),
     priority: options.type === "error" ? "high" : "low",
@@ -110,13 +117,14 @@ function ToastList() {
     <Toast.Portal>
       {/* A notice never covers a primary control: bottom left on wider
           screens (over lists, clear of composers and page actions), and
-          below the 56px top bar on phones, where a composer fills the
+          below the top bar and the server banner on phones
+          (--app-top-height, set by the shell), where a composer fills the
           bottom edge. */}
       <Toast.Viewport
         // Base UI names this region "Notifications", which collides with the
         // Notifications inbox landmark.
         aria-label="Status messages"
-        className="fixed z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none max-sm:top-[calc(3.5rem+0.5rem)] max-sm:left-1/2 max-sm:-translate-x-1/2 sm:bottom-4 sm:left-4"
+        className="fixed z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none max-sm:top-[calc(var(--app-top-height,3.5rem)+0.5rem)] max-sm:left-1/2 max-sm:-translate-x-1/2 sm:bottom-4 sm:left-4"
       >
         {toasts.map((item) => {
           const obsolete =
@@ -163,8 +171,13 @@ function ToastList() {
                 <div className="flex flex-1 flex-col gap-1">
                   <Toast.Title className="text-sm font-medium" />
                   <Toast.Description className="text-muted-foreground text-sm" />
+                  {/* Not part of the announced title; F6 reaches its Copy. */}
+                  <ErrorReference
+                    id={item.type === "error" ? item.data?.reference : null}
+                    className="mt-1"
+                  />
                 </div>
-                {item.actionProps && (
+                {(item.actionProps || item.data?.reference) && (
                   <span className="sr-only">
                     Press F6 to reach this notice.
                   </span>

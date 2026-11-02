@@ -115,6 +115,7 @@ export function VersionCompare({
   disabled,
   comparing,
   error,
+  errorReference,
   result,
   hint,
 }: {
@@ -129,6 +130,8 @@ export function VersionCompare({
   disabled: boolean;
   comparing: boolean;
   error: string;
+  /** The failed request behind `error`, shown as its reference (D1.4). */
+  errorReference?: string;
   /** The compared pair while it matches the selects. */
   result: {
     older: SandboxVersionDetail;
@@ -181,7 +184,11 @@ export function VersionCompare({
           </Button>
         </div>
       ) : null}
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? (
+        <Alert variant="destructive" reference={errorReference}>
+          {error}
+        </Alert>
+      ) : null}
       {result ? (
         <VersionChangeTable {...result} />
       ) : (

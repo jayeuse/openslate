@@ -74,6 +74,7 @@ import {
   useWorkspaceInteractionSuspended,
 } from "../../shared/runtime/workspace-identity";
 import type { ActivityFilters } from "./audit-data";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type ManageAuditProps = {
   renderHeader: (actions: ReactNode) => ReactNode;
@@ -753,6 +754,7 @@ export default function ManageAudit({
                 error: peopleQuery.isError
                   ? "People filters could not be loaded. Try again."
                   : undefined,
+                reference: apiErrorReference(peopleQuery.error),
                 onRetry: () => void peopleQuery.refetch(),
                 onChoose: setChosenActor,
               }}
@@ -788,7 +790,11 @@ export default function ManageAudit({
             />
 
             {optionsQuery.isError && !auditConcealed ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={apiErrorReference(optionsQuery.error)}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p>Audit filter options could not be loaded. Try again.</p>
                   <Button
@@ -819,7 +825,15 @@ export default function ManageAudit({
             {notice ? <Alert variant="success">{notice}</Alert> : null}
 
             {listQuery.isError || auditConcealed ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={
+                  auditRefused || auditConcealed
+                    ? null
+                    : apiErrorReference(listQuery.error)
+                }
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p>
                     {auditRefused

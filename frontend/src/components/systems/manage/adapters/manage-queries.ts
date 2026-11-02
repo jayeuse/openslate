@@ -40,6 +40,7 @@ import {
   type ManageBackupsRequest,
   type ManageBackupStatus,
 } from "./backup-api";
+import { getSystemStatus } from "./system-status-api";
 
 // Keep an audit refusal through section remounts for this verified account.
 // Query clients are replaced at the account boundary and are never persisted.
@@ -95,6 +96,7 @@ export const manageKeys = {
   backupExport: (id: string) =>
     ["manage", "maintenance", "backup-exports", id] as const,
   version: () => ["manage", "maintenance", "version"] as const,
+  systemStatus: () => ["manage", "system-status"] as const,
 };
 
 export const manageBackupStatusOptions = () =>
@@ -111,6 +113,20 @@ export const manageVersionOptions = () =>
   queryOptions({
     queryKey: manageKeys.version(),
     queryFn: ({ signal }) => getManageVersion(signal),
+  });
+/**
+ * System health's status read (docs/specs/system-health.md, S2-C6). It polls
+ * every 60 seconds while the page is visible, against the provider's "SSE,
+ * not polling" default, because readiness has no invalidation event; the
+ * server answers from a 30-second cache. The poll is not the person's
+ * activity, so it never refreshes the session (`getSystemStatus`).
+ */
+export const manageSystemStatusOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.systemStatus(),
+    queryFn: ({ signal }) => getSystemStatus("background", signal),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   });
 export const manageBackupExportOptions = (id: string) =>
   queryOptions({

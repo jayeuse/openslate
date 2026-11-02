@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/components/ui/toast";
+import { apiErrorReference } from "@/lib/api-errors";
 import {
   archiveKanbanCard,
   archiveKanbanStage,
@@ -61,7 +62,11 @@ export function useKanbanCommands(boardId: string) {
     [boardId, client],
   );
   const fail = (error: unknown) => {
-    toast.add({ title: kanbanErrorMessage(error), type: "error" });
+    toast.add({
+      title: kanbanErrorMessage(error),
+      type: "error",
+      reference: apiErrorReference(error),
+    });
     void refresh();
   };
 
@@ -129,7 +134,11 @@ export function useKanbanCommands(boardId: string) {
     } catch (error) {
       client.setQueryData(cardsKey, before);
       if (isStaleKanbanWrite(error)) {
-        toast.add({ title: kanbanErrorMessage(error), type: "error" });
+        toast.add({
+          title: kanbanErrorMessage(error),
+          type: "error",
+          reference: apiErrorReference(error),
+        });
         void refresh();
       } else fail(error);
       return null;

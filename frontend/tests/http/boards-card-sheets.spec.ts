@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, modalStatus } from "./helpers/test";
 import {
   installKanbanApi,
   installRecordSheetApi,
@@ -65,23 +65,23 @@ test("a writer edits an objective's assignee, due date, labels and description, 
 
   await sheet.getByRole("combobox", { name: "Assignee", exact: true }).click();
   await page.getByRole("option", { name: "Ana Santos", exact: true }).click();
-  await expect(sheet.getByRole("status")).toHaveText("Assignee saved.");
+  await expect(modalStatus(sheet)).toHaveText("Assignee saved.");
 
   await sheet.getByLabel("Due", { exact: true }).fill("2026-10-30");
   await sheet.getByLabel("Due", { exact: true }).press("Enter");
-  await expect(sheet.getByRole("status")).toHaveText("Due saved.");
+  await expect(modalStatus(sheet)).toHaveText("Due saved.");
   await expect(sheet.getByText("Doing · Due Oct 30")).toBeVisible();
 
   await sheet.getByRole("button", { name: /^(Add|Edit) labels$/ }).click();
   await page.getByRole("menuitemcheckbox", { name: "Expo" }).click();
   await page.keyboard.press("Escape");
-  await expect(sheet.getByRole("status")).toHaveText("Labels saved.");
+  await expect(modalStatus(sheet)).toHaveText("Labels saved.");
 
   await sheet
     .getByRole("textbox", { name: "Description" })
     .fill("Agree the 2027 terms before the expo.");
   await sheet.getByRole("button", { name: "Save description" }).click();
-  await expect(sheet.getByRole("status")).toHaveText("Description saved.");
+  await expect(modalStatus(sheet)).toHaveText("Description saved.");
 
   expect(cardPatches(api)).toEqual([
     { revision: 1, assignee_id: peopleIds.ana },
@@ -106,7 +106,7 @@ test("a writer edits an objective's assignee, due date, labels and description, 
     .getByRole("textbox", { name: "Description" })
     .fill("Send the 2027 price list.");
   await other.getByRole("button", { name: "Save description" }).click();
-  await expect(other.getByRole("status")).toHaveText("Description saved.");
+  await expect(modalStatus(other)).toHaveText("Description saved.");
   expect(cardPatches(api).at(-1)).toEqual({
     revision: 1,
     description: "Send the 2027 price list.",
@@ -137,7 +137,7 @@ test("a writer assigns a board reader found by search who is neither assigned no
     .fill("car");
   await expect(page.getByRole("option")).toHaveText(["Carla Diaz"]);
   await page.getByRole("option", { name: "Carla Diaz", exact: true }).click();
-  await expect(sheet.getByRole("status")).toHaveText("Assignee saved.");
+  await expect(modalStatus(sheet)).toHaveText("Assignee saved.");
   await expect(
     sheet.getByRole("combobox", { name: "Assignee", exact: true }),
   ).toContainText("Carla Diaz");
@@ -248,7 +248,7 @@ test("a writer uploads a file to a card and removes it", async ({ page }) => {
   const details = sheet.getByRole("tabpanel", { name: "Details" });
   await details.getByLabel("Due", { exact: true }).fill("2026-10-30");
   await details.getByLabel("Due", { exact: true }).press("Enter");
-  await expect(details.getByRole("status")).toHaveText("Due saved.");
+  await expect(modalStatus(details)).toHaveText("Due saved.");
   expect(cardPatches(api)).toEqual([{ revision: 3, due_on: "2026-10-30" }]);
 });
 
@@ -380,7 +380,7 @@ test("a record card opens the shared record sheet with On this board first; its 
   await sheet
     .getByRole("combobox", { name: "Stage" })
     .selectOption({ label: "Done" });
-  await expect(sheet.getByRole("status")).toHaveText("Moved to Done.");
+  await expect(modalStatus(sheet)).toHaveText("Moved to Done.");
   await expect(sheet.getByRole("combobox", { name: "Stage" })).toHaveValue(
     stageIds.done,
   );
@@ -546,7 +546,7 @@ test("on a phone the card sheet fills the screen, with Move to stage and 44px ta
   }
   await sheet.getByRole("button", { name: "Move to stage" }).click();
   await page.getByRole("menuitemradio", { name: "Done" }).click();
-  await expect(sheet.getByRole("status")).toHaveText("Moved to Done.");
+  await expect(modalStatus(sheet)).toHaveText("Moved to Done.");
   await expect(sheet.getByText("Done", { exact: true })).toBeVisible();
   expect(cardPatches(api)).toEqual([{ revision: 1, stage_id: stageIds.done }]);
   // The assignee search opens above the full-screen sheet.
@@ -654,7 +654,7 @@ test("a writer's long card title wraps in its field, and Enter saves it", async 
     ),
   ).toBe(true);
   await field.press("Enter");
-  await expect(sheet.getByRole("status")).toHaveText("Title saved.");
+  await expect(modalStatus(sheet)).toHaveText("Title saved.");
   await expect(field).toHaveValue(long);
   // One save: the field locking while it saves does not send it again.
   expect(cardPatches(api)).toEqual([{ revision: 1, title: long }]);

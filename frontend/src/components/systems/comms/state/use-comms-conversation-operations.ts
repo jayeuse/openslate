@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Message, Thread } from "../domain/view-model";
 import { messageFromCommsError, type useCommsCommands } from "./runtime";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function createCommsConversationOperations({
   run,
@@ -17,7 +18,7 @@ export function createCommsConversationOperations({
   thread: Thread | undefined;
   select: (id: string) => void;
   setDirectError: (message: string) => void;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, reference?: string) => void;
   setDmOpen: Dispatch<SetStateAction<boolean>>;
   setThreadId: Dispatch<SetStateAction<string>>;
 }) {
@@ -35,7 +36,7 @@ export function createCommsConversationOperations({
         "The direct conversation could not be opened.",
       );
       setDirectError(message);
-      setNotice(message);
+      setNotice(message, apiErrorReference(error));
     }
   }
   async function startThread(message: Message) {
@@ -49,6 +50,7 @@ export function createCommsConversationOperations({
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "The thread could not be opened."),
+        apiErrorReference(error),
       );
     }
   }
@@ -85,7 +87,7 @@ export function createCommsConversationOperations({
         error,
         "The thread could not be updated.",
       );
-      setNotice(message);
+      setNotice(message, apiErrorReference(error));
       return message;
     }
   }

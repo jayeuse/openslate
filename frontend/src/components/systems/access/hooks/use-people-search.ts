@@ -8,7 +8,8 @@ import {
   type QueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 import {
   extendsRead,
   readStamp,
@@ -93,7 +94,8 @@ export function usePeopleSearch({
   const [appliedSearch, setAppliedSearch] = useState("");
   const [extension, setExtension] = useState<Extension | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [pageError, setPageError] = useState("");
+  const [pageFailure, setPageError] = useErrorText();
+  const pageError = pageFailure?.message ?? "";
   const latchKey = useMemo(() => refusalKey(source), [source]);
   const ids = [...new Set(selectedIds)].sort();
   const currentInputs = useRef<object | null>(null);
@@ -210,6 +212,7 @@ export function usePeopleSearch({
     } catch (error) {
       setPageError(
         apiErrorMessage(error, "More people could not be loaded. Try again."),
+        error,
       );
     } finally {
       setLoadingMore(false);
@@ -248,6 +251,13 @@ export function usePeopleSearch({
       (query.error || selected.failed
         ? "People could not be loaded. Try again."
         : "");
+  // The failed request behind `error`; a refusal notice shows none (D1.4,
+  // docs/specs/system-health.md).
+  const reference = denied
+    ? undefined
+    : pageError
+      ? pageFailure?.reference
+      : apiErrorReference(query.error ?? selected.errors.find(Boolean));
   return {
     search,
     onSearchChange: (value: string) => {
@@ -262,6 +272,7 @@ export function usePeopleSearch({
     hasMore,
     loadMore,
     error,
+    reference,
     retry,
   };
 }

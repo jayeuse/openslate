@@ -18,6 +18,7 @@ import { personName, roleLabels } from "../helpers/people";
 import { usePeopleSearch } from "../hooks/use-people-search";
 import type { AccessPeopleSource } from "../adapters/people-picker-queries";
 import type { AccessDirectoryUser, AccessMemberCandidate } from "../state/api";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 function PersonLine({ option }: { option: MemberOption }) {
   return (
@@ -282,6 +283,7 @@ export function GroupMemberPicker({
             >
               Retry people
             </Button>
+            <ErrorReference id={remote.reference} />
           </div>
         ) : null}
         {remote.hasMore ? (

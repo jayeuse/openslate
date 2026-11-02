@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch, apiContractError } from "@/lib/api";
 import { recordSchema } from "../../openview/adapters/views-schemas";
 import type { OpenViewRecord } from "../../openview/adapters/views-api";
 import {
@@ -24,9 +24,9 @@ function boardPath(boardId: string, rest: string): string {
 
 function checkSheet(boardId: string, cardId: string, sheet: CardSheet) {
   if (sheet.card.boardId !== boardId || sheet.card.id !== cardId)
-    throw new ApiContractError();
+    throw apiContractError(sheet);
   if (sheet.checklist.some((item) => item.cardId !== cardId))
-    throw new ApiContractError();
+    throw apiContractError(sheet);
   return sheet;
 }
 
@@ -105,7 +105,7 @@ export async function addChecklistItem(
       body: JSON.stringify({ text: text.trim() }),
     },
   );
-  if (item.cardId !== cardId) throw new ApiContractError();
+  if (item.cardId !== cardId) throw apiContractError(item);
   return item;
 }
 
@@ -123,7 +123,7 @@ export async function updateChecklistItem(
     checklistItemWire,
     { method: "PATCH", cache: "no-store", body: JSON.stringify(body) },
   );
-  if (saved.id !== item.id) throw new ApiContractError();
+  if (saved.id !== item.id) throw apiContractError(saved);
   return saved;
 }
 
@@ -158,7 +158,7 @@ export async function orderChecklist(
     },
   );
   if (items.some((item) => item.cardId !== cardId))
-    throw new ApiContractError();
+    throw apiContractError(items);
   return items;
 }
 
@@ -202,7 +202,7 @@ export async function listCardActivity(
     activityPageWire,
     { cache: "no-store", signal },
   );
-  if (page.pagination.offset !== offset) throw new ApiContractError();
+  if (page.pagination.offset !== offset) throw apiContractError(page);
   return { items: page.items, hasMore: page.pagination.has_more };
 }
 
@@ -219,6 +219,6 @@ export async function readCardRecord(
     recordSchema,
     { cache: "no-store", signal },
   );
-  if (record.id !== recordId) throw new ApiContractError();
+  if (record.id !== recordId) throw apiContractError(record);
   return record;
 }

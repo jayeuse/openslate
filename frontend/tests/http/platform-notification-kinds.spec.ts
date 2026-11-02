@@ -7,6 +7,7 @@ import {
   signedInAs,
   test,
   type Page,
+  answeredHeaders,
 } from "./helpers/test";
 import { wireWorkspace } from "../helpers/wire";
 import {
@@ -159,6 +160,7 @@ async function setup(page: Page) {
       state.sourceReads.push(new URL(route.request().url()).pathname);
       await route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         json: { detail: "Private body/email/snapshot must not be loaded" },
       });
     },
@@ -389,6 +391,7 @@ async function commsSetup(page: Page) {
     if (url.pathname !== `/api/comms/conversations/${id(730)}`)
       return route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         json: { detail: "Message bodies must not be fetched" },
       });
     const body = {

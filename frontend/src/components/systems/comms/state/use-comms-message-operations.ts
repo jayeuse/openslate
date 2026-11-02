@@ -5,6 +5,7 @@ import type { MessageDraft } from "../components/message-shared";
 import { sendRefusal } from "../domain/composer-input";
 import type { Message } from "../domain/view-model";
 import { messageFromCommsError, type useCommsCommands } from "./runtime";
+import { apiErrorReference } from "@/lib/api-errors";
 type Run = ReturnType<typeof useCommsCommands>["run"];
 
 export async function submitCommsDraft(
@@ -73,7 +74,7 @@ export function createCommsMessageOperations({
   viewerId: string;
   replyingTo: Message | null;
   setReplyingTo: Dispatch<SetStateAction<Message | null>>;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, reference?: string) => void;
   announce: (message: string) => void;
   scrollToLatest: () => void;
   allMessages: Message[];
@@ -88,7 +89,7 @@ export function createCommsMessageOperations({
       return null;
     } catch (error) {
       const message = messageFromCommsError(error, fallback);
-      setNotice(message);
+      setNotice(message, apiErrorReference(error));
       return message;
     }
   }
@@ -199,7 +200,7 @@ export function createCommsMessageOperations({
         error,
         "The message could not be sent. Your draft is still available.",
       );
-      if (!refusal) setNotice(message);
+      if (!refusal) setNotice(message, apiErrorReference(error));
       return message;
     }
     setReplyingTo(null);

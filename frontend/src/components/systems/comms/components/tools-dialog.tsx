@@ -36,6 +36,7 @@ import { ExportTools } from "./tools-export";
 import { ToolAdvanced } from "./tool-advanced";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
+import { useErrorText } from "@/lib/use-error-text";
 import { TextField } from "./message-shared";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useVisiblePeople } from "../state/use-visible-people";
@@ -232,7 +233,8 @@ function LifecycleTools({
   const [reason, setReason] = useState("");
   const reportSaved = useRef(false);
   const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [status, setStatus] = useState("");
   const proofReady = password.length > 0;
   const [days, setDays] = useState(0);
@@ -307,6 +309,7 @@ function LifecycleTools({
           "The change could not be completed. Your draft is still here.",
           stale ? STALE_PREVIEW_MESSAGE : undefined,
         ),
+        failure,
       );
       return false;
     } finally {
@@ -483,7 +486,11 @@ function LifecycleTools({
     >
       <FieldGroup className="p-5 sm:p-6">
         {(error || resource.error) && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={error ? errorFailure?.reference : resource.reference}
+          >
             {error || "Tool data could not be loaded."}
             {resource.error && (
               <Button variant="outline" onClick={resource.reload}>

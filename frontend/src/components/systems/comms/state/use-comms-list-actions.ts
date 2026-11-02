@@ -3,6 +3,7 @@ import { useCommsClient } from "./client-context";
 import { reportCommsDone, reportCommsError } from "./comms-feedback";
 import { messageFromCommsError } from "./runtime";
 import type { Channel } from "../domain/view-model";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function useCommsListActions() {
   const { client } = useCommsClient();
@@ -32,6 +33,7 @@ export function useCommsListActions() {
     } catch (error) {
       reportCommsError(
         messageFromCommsError(error, "The category order could not be saved."),
+        apiErrorReference(error),
       );
     }
   }
@@ -50,6 +52,7 @@ export function useCommsListActions() {
     } catch (error) {
       reportCommsError(
         messageFromCommsError(error, "The channel could not be duplicated."),
+        apiErrorReference(error),
       );
     }
   }
@@ -70,6 +73,7 @@ export function useCommsListActions() {
           error,
           "The channel archive state could not be saved.",
         ),
+        apiErrorReference(error),
       );
       return;
     }
@@ -118,6 +122,7 @@ export function useCommsListActions() {
           error,
           "The direct conversation could not be updated.",
         ),
+        apiErrorReference(error),
       );
     }
   }

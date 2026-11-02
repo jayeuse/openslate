@@ -87,7 +87,7 @@ export function MembershipPreview({
   return (
     <section aria-label="Channel members" className="flex flex-col gap-4">
       {members.error && (
-        <Alert role="alert" variant="destructive">
+        <Alert role="alert" variant="destructive" reference={members.reference}>
           Members could not be loaded.{" "}
           <Action onClick={members.reload}>Try again</Action>
         </Alert>
@@ -153,7 +153,11 @@ export function MembershipPreview({
                 ))}
               </Choice>
               {person.error && (
-                <Alert role="alert" variant="destructive">
+                <Alert
+                  role="alert"
+                  variant="destructive"
+                  reference={person.reference}
+                >
                   This person could not be checked.{" "}
                   <Action onClick={person.reload}>Try again</Action>
                 </Alert>

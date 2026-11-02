@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, keepRequestId, apiContractError } from "@/lib/api";
 import { listSchema } from "./views-schemas";
 import { openViewReadFetch } from "./openview-access";
 import {
@@ -119,7 +119,7 @@ export async function listOpenViewCharts(
         (request.moduleId && chart.moduleId !== request.moduleId),
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 
@@ -151,15 +151,18 @@ export async function readOpenViewChart(
       signal,
     });
     signal?.throwIfAborted();
-    if (chart.id !== requested) throw new ApiContractError();
+    if (chart.id !== requested) throw apiContractError(chart);
     return chart;
   } catch (error) {
     if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-      throw new ApiError(
-        error.status,
-        "Saved Chart is unavailable",
-        undefined,
-        "chart_source_unavailable",
+      throw keepRequestId(
+        new ApiError(
+          error.status,
+          "Saved Chart is unavailable",
+          undefined,
+          "chart_source_unavailable",
+        ),
+        error,
       );
     }
     throw error;
@@ -197,7 +200,7 @@ export async function createOpenViewChart(
     chart.name !== body.name ||
     chart.chartType !== body.chart_type
   )
-    throw new ApiContractError();
+    throw apiContractError(chart);
   return chart;
 }
 
@@ -226,7 +229,7 @@ export async function updateOpenViewChart(
     chart.name !== body.name ||
     chart.chartType !== body.chart_type
   )
-    throw new ApiContractError();
+    throw apiContractError(chart);
   return chart;
 }
 
@@ -246,7 +249,7 @@ export async function restoreOpenViewChart(id: string, revision: number) {
     refreshOnUnauthorized: false,
   });
   if (chart.id !== requested || chart.isDeleted || chart.revision <= revision)
-    throw new ApiContractError();
+    throw apiContractError(chart);
   return chart;
 }
 
@@ -295,7 +298,7 @@ export async function getOpenViewChartUsage(
     new Set(page.items.map((item) => `${item.kind}:${item.id}`)).size !==
       page.items.length
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 

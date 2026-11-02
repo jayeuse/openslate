@@ -20,6 +20,7 @@ from app.common.dependencies.auth import (
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.core.database.organization_scope import bound_organization_column
+from app.core.middleware.request_context import error_content
 from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.policy.scope import explain_access
@@ -349,7 +350,7 @@ def recover_user(
     try:
         result = recover_person(db, identity, request, user_id, payload.revoke_sessions)
     except HTTPException as error:
-        return security_effect_error(error, self_effect)
+        return security_effect_error(request, error, self_effect)
     if self_effect:
         clear_browser_session(response)
     return result
@@ -369,16 +370,16 @@ def reset_user_mfa(
     try:
         result = reset_person_mfa(db, identity, request, user_id)
     except HTTPException as error:
-        return security_effect_error(error, self_effect)
+        return security_effect_error(request, error, self_effect)
     if self_effect:
         clear_browser_session(response)
     return result
 
 
-def security_effect_error(error: HTTPException, self_effect: bool) -> Response:
+def security_effect_error(request: Request, error: HTTPException, self_effect: bool) -> Response:
     response = JSONResponse(
         status_code=error.status_code,
-        content={"detail": error.detail},
+        content=error_content(request, error.detail),
         headers={"Cache-Control": "no-store"},
     )
     if (

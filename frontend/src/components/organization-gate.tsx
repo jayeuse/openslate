@@ -6,6 +6,7 @@ import { Building2, ChevronRight, MailOpen } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import type {
   AccountRole,
   OrganizationMembership,
@@ -43,7 +44,11 @@ export function PendingInvitationList({
   disabled = false,
 }: PendingInvitationListProps) {
   const [joining, setJoining] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  // The invitation that failed to join, with its request's reference (D1.6).
+  const [failed, setFailed] = useState<{
+    id: string;
+    reference: string | undefined;
+  } | null>(null);
 
   async function join(invitation: PendingInvitation) {
     if (joining) return;
@@ -51,8 +56,8 @@ export function PendingInvitationList({
     setFailed(null);
     try {
       await onJoin(invitation);
-    } catch {
-      setFailed(invitation.id);
+    } catch (error) {
+      setFailed({ id: invitation.id, reference: apiErrorReference(error) });
     } finally {
       setJoining(null);
     }
@@ -80,8 +85,8 @@ export function PendingInvitationList({
               {joining === invitation.id ? "Joining…" : "Join"}
             </Button>
           </div>
-          {failed === invitation.id ? (
-            <Alert variant="destructive">
+          {failed?.id === invitation.id ? (
+            <Alert variant="destructive" reference={failed.reference}>
               We could not join {invitation.name}. The invitation may have
               expired. Try again, or ask for a new invitation.
             </Alert>
@@ -99,7 +104,8 @@ type OrganizationGateProps = {
   onJoin: (invitation: PendingInvitation) => Promise<void>;
   onCheckAgain: () => void;
   onSignOut: () => void;
-  signOutError: boolean;
+  /** A failed sign-out and its request's reference (D1.4). */
+  signOutError: ApiErrorText | null;
 };
 
 /**
@@ -117,17 +123,19 @@ export function OrganizationGate({
   signOutError,
 }: OrganizationGateProps) {
   const [opening, setOpening] = useState<string | null>(null);
-  const [openFailed, setOpenFailed] = useState(false);
+  const [openFailed, setOpenFailed] = useState<{
+    reference: string | undefined;
+  } | null>(null);
   const hasOrganizations = memberships.length > 0;
 
   async function choose(organization: OrganizationMembership) {
     if (opening) return;
     setOpening(organization.orgId);
-    setOpenFailed(false);
+    setOpenFailed(null);
     try {
       await onChoose(organization);
-    } catch {
-      setOpenFailed(true);
+    } catch (error) {
+      setOpenFailed({ reference: apiErrorReference(error) });
     } finally {
       setOpening(null);
     }
@@ -187,7 +195,7 @@ export function OrganizationGate({
             ))}
           </ul>
           {openFailed ? (
-            <Alert variant="destructive">
+            <Alert variant="destructive" reference={openFailed.reference}>
               We could not open that organization. Try again.
             </Alert>
           ) : null}
@@ -237,7 +245,11 @@ export function OrganizationGate({
         </Button>
       </div>
       {signOutError ? (
-        <Alert variant="destructive" className="mt-3">
+        <Alert
+          variant="destructive"
+          className="mt-3"
+          reference={signOutError.reference}
+        >
           Sign-out could not finish. Try again.
         </Alert>
       ) : null}

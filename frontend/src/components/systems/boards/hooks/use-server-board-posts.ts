@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiError, apiContractError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { listBoardPosts } from "../adapters/board-posts-api";
 import type {
@@ -23,6 +24,8 @@ export type PostAuthorsState = {
   pagination: BoardPostAuthorPage["pagination"] | null;
   status: "idle" | "loading" | "ready" | "error" | "denied";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 
 export type PostAuthorsEvent =
@@ -40,6 +43,7 @@ export type PostAuthorsEvent =
       key: string;
       sequence: number;
       error: string;
+      reference?: string;
       retain: boolean;
       denied: boolean;
     };
@@ -65,6 +69,7 @@ export function transitionPostAuthors(
       pagination: state.key === event.key ? state.pagination : null,
       status: "loading",
       error: null,
+      reference: undefined,
     };
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
@@ -84,6 +89,7 @@ export function transitionPostAuthors(
       pagination: event.pagination ?? null,
       status: "ready",
       error: null,
+      reference: undefined,
     };
   const data = event.retain && !event.denied ? state.data : null;
   return {
@@ -92,6 +98,7 @@ export function transitionPostAuthors(
     pagination: data ? state.pagination : null,
     status: event.denied ? "denied" : data ? "ready" : "error",
     error: event.error,
+    reference: event.reference,
   };
 }
 
@@ -109,9 +116,11 @@ export function postAuthorChoiceFailure(
   subject: "choices" | "labels" = "choices",
 ): {
   error: string;
+  reference: string | undefined;
   retain: boolean;
   denied: boolean;
 } {
+  const reference = apiErrorReference(error);
   const denied =
     error instanceof ApiError && [401, 403, 404].includes(error.status);
   const transient =
@@ -121,17 +130,20 @@ export function postAuthorChoiceFailure(
   return denied
     ? {
         error: `Author ${subject} unavailable. Check your access or retry.`,
+        reference,
         retain: false,
         denied: true,
       }
     : transient
       ? {
           error: `Could not refresh author ${subject}. Showing the last loaded ${subject === "choices" ? "options" : "labels"}.`,
+          reference,
           retain: true,
           denied: false,
         }
       : {
           error: `Author ${subject} unavailable. Retry.`,
+          reference,
           retain: false,
           denied: false,
         };
@@ -268,7 +280,7 @@ export function useServerBoardPostAuthorLabels(
           ids: ids.slice(start, start + 100),
           signal: controller.signal,
         });
-        if (page.pagination.hasMore) throw new ApiContractError();
+        if (page.pagination.hasMore) throw apiContractError(page);
         choices.push(...page.items);
       }
       return choices;
@@ -350,6 +362,8 @@ export type PostFeedState = {
   data: BoardPostPage | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 
 export type PostFeedEvent =
@@ -365,21 +379,25 @@ export type PostFeedEvent =
       key: string;
       sequence: number;
       error: string;
+      reference?: string;
       retain: boolean;
     };
 
 export function postFeedFailure(error: unknown): {
   error: string;
+  reference: string | undefined;
   retain: boolean;
 } {
+  const reference = apiErrorReference(error);
   const transient =
     error instanceof TypeError ||
     (error instanceof ApiError &&
       (error.status >= 500 || error.status === 408 || error.status === 429));
   return transient
-    ? { error: "Could not refresh posts. Try again.", retain: true }
+    ? { error: "Could not refresh posts. Try again.", reference, retain: true }
     : {
         error: "Posts unavailable. Check your access or try again.",
+        reference,
         retain: false,
       };
 }
@@ -395,17 +413,25 @@ export function transitionPostFeed(
       data: state.key === event.key ? state.data : null,
       status: "loading",
       error: null,
+      reference: undefined,
     };
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
+    return {
+      ...state,
+      data: event.data,
+      status: "ready",
+      error: null,
+      reference: undefined,
+    };
   const data = event.retain ? state.data : null;
   return {
     ...state,
     data,
     status: data ? "ready" : "error",
     error: event.error,
+    reference: event.reference,
   };
 }
 

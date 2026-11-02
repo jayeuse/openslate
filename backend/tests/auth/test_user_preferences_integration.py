@@ -190,7 +190,10 @@ def test_combined_preferences_roll_back_all_values_and_audit_on_commit_failure(p
             json={"theme": "dark", "appearance": {"motion": "reduce", "keyboard_shortcuts": False}},
         )
     assert rejected.status_code == 503
-    assert rejected.json() == {"detail": "Unable to update preferences"}
+    assert rejected.json() == {
+        "detail": "Unable to update preferences",
+        "request_id": rejected.headers["X-Request-ID"],
+    }
     assert _state(account) == before
 
 

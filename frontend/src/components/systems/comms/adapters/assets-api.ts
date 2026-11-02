@@ -4,6 +4,8 @@ import {
   ApiError,
   apiFetchWithMetadata,
   apiRequest,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 import {
   retryAfterSeconds,
@@ -45,18 +47,21 @@ async function fileError(response: Response): Promise<never> {
     .object({ detail: z.object({ code: z.string() }) })
     .safeParse(body);
   if (parsed.success)
-    throw new ApiError(
-      response.status,
-      "File request could not be completed",
-      undefined,
-      parsed.data.detail.code,
-      retryAfterSeconds(response),
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "File request could not be completed",
+        undefined,
+        parsed.data.detail.code,
+        retryAfterSeconds(response),
+      ),
+      response,
     );
   return throwFileRequestError(response);
 }
 async function invalidDownload(response: Response): Promise<never> {
   await response.body?.cancel().catch(() => undefined);
-  throw new ApiContractError();
+  throw apiContractError(response);
 }
 
 export async function reserveAttachment(
@@ -88,7 +93,7 @@ export async function reserveAttachment(
     result.response.headers.get("Location") !==
     `/api/comms/conversations/${conversationId}/files/${data.id}`
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return data;
 }
 
@@ -204,7 +209,7 @@ export async function downloadAttachment(
       if (done) break;
       size += value.byteLength;
       if (size > MAX_ATTACHMENT_BYTES || (length !== null && size > length))
-        throw new ApiContractError();
+        throw apiContractError(response);
       chunks.push(value);
     }
   } catch (error) {
@@ -214,7 +219,7 @@ export async function downloadAttachment(
     reader.releaseLock();
   }
   if (size === 0 || (length !== null && size !== length))
-    throw new ApiContractError();
+    throw apiContractError(response);
   const buffer = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {

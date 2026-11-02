@@ -6,6 +6,8 @@ import {
   type Locator,
   type Page,
   type Route,
+  answeredHeaders,
+  expectAnsweredReference,
 } from "./helpers/test";
 import {
   installOpenViewEventSource,
@@ -1406,6 +1408,7 @@ async function installViewsApi(
         nextMutationFailure = null;
         return route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           contentType: "application/json",
           body: JSON.stringify({ detail: "Default could not be cleared." }),
         });
@@ -1441,6 +1444,7 @@ async function installViewsApi(
         nextMutationFailure = null;
         return route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           contentType: "application/json",
           body: JSON.stringify({ detail: "Archive temporarily failed." }),
         });
@@ -1457,6 +1461,7 @@ async function installViewsApi(
         nextMutationFailure = null;
         return route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           contentType: "application/json",
           body: JSON.stringify({ detail: "Restore temporarily failed." }),
         });
@@ -1557,6 +1562,7 @@ async function installViewsApi(
       failNextGroupedQuery = false;
       return route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         contentType: "application/json",
         body: JSON.stringify({ detail: "Private grouped failure canary" }),
       });
@@ -2111,6 +2117,9 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     archiveDialog.getByRole("alert").filter({ hasText: "Archive" }),
   ).toBeVisible();
+  await expectAnsweredReference(
+    archiveDialog.getByRole("alert").filter({ hasText: "Archive" }),
+  );
   expect(api.saved().is_deleted).toBe(false);
   await expect(
     page.getByLabel("Search Equipment", { exact: true }),
@@ -2165,6 +2174,9 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     archivedDialog.getByRole("alert").filter({ hasText: "Restore" }),
   ).toBeVisible();
+  await expectAnsweredReference(
+    archivedDialog.getByRole("alert").filter({ hasText: "Restore" }),
+  );
   expect(api.saved().is_deleted).toBe(true);
   await expect(
     page.getByLabel("Search Equipment", { exact: true }),
@@ -2242,6 +2254,9 @@ test("selecting Unsaved view or clearing an implicit default asks before discard
   await expect(
     page.getByRole("alert").filter({ hasText: "Default" }),
   ).toBeVisible();
+  await expectAnsweredReference(
+    page.getByRole("alert").filter({ hasText: "Default" }),
+  );
   expect(api.defaultView()).toBe(viewId);
   await expect(search).toHaveValue("unpublished default draft");
 
@@ -2615,6 +2630,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
       await expect(grouping.getByRole("alert")).toContainText(
         "Grouped records could not be loaded.",
       );
+      await expectAnsweredReference(grouping.getByRole("alert"));
       await expect(grouping).not.toContainText(
         "Private grouped failure canary",
       );

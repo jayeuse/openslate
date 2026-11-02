@@ -179,7 +179,10 @@ def test_comms_only_sharing_reveals_card_until_target_leaves(person_world):
     # person_world hides its owned company Board; do not add any other sharing path.
     hidden = card(world)
     assert hidden.status_code == 404
-    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    assert hidden.json() == {
+        "detail": {"code": "person_not_found", "message": "Person not found"},
+        "request_id": hidden.headers["X-Request-ID"],
+    }
     with AuditSession(world.owner) as db:
         scope_session(db, world.person_org_id)
         set_audit_actor(db, world.actor_id)
@@ -227,7 +230,10 @@ def test_comms_only_sharing_reveals_card_until_target_leaves(person_world):
         db.commit()
     hidden = card(world)
     assert hidden.status_code == 404
-    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    assert hidden.json() == {
+        "detail": {"code": "person_not_found", "message": "Person not found"},
+        "request_id": hidden.headers["X-Request-ID"],
+    }
 
 
 def test_removed_live_group_membership_hides_card_but_not_the_profile_photo(person_world):
@@ -298,7 +304,10 @@ def test_board_visibility_requires_a_shared_live_board(person_world, defect):
         db.commit()
     hidden = card(world)
     assert hidden.status_code == 404
-    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    assert hidden.json() == {
+        "detail": {"code": "person_not_found", "message": "Person not found"},
+        "request_id": hidden.headers["X-Request-ID"],
+    }
     # The photo follows the profile rule (PD17), not the shared Board.
     assert world.client.get(
         f"/api/users/{world.target_id}/avatar", headers=world.headers()

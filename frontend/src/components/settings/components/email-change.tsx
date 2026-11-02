@@ -27,6 +27,7 @@ import { requestEmailChange } from "@/lib/auth-api";
 import { profileSelfOptions } from "@/components/profile/adapters/profile-queries";
 import { DialogRows } from "./dialog-rows";
 import { FactValue, focusReturn } from "./rows";
+import { useErrorText } from "@/lib/use-error-text";
 
 /**
  * The Email row (PD12): the saved address as plain text and a quiet Change…
@@ -41,7 +42,8 @@ export default function EmailChange() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [accepted, setAccepted] = useState(false);
   const version = useRef(0);
   const operation = useRef<AbortController | null>(null);
@@ -91,6 +93,7 @@ export default function EmailChange() {
               : failure instanceof ApiError && failure.status === 422
                 ? "Check the new email address and current password. The request was not accepted."
                 : "The request could not be confirmed. Confirmation emails may have been sent. Check both inboxes before you ask again; nothing is sent again by itself.",
+        failure,
       );
     } finally {
       if (current === version.current && !controller.signal.aborted) {
@@ -210,7 +213,11 @@ export default function EmailChange() {
               The change finishes when you confirm both emails.
             </p>
             {error && (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={errorFailure?.reference}
+              >
                 {error}
               </Alert>
             )}

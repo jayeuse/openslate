@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useId,
@@ -44,6 +45,7 @@ import {
   type NavigationSurface,
 } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { ServerConnectionBanner } from "@/components/server-connection-banner";
 import { isModulePage } from "@/components/department-navigation-model";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
@@ -96,6 +98,7 @@ import {
   signOut,
 } from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const SIDEBAR_COLLAPSED_KEY = "slateops-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "slateops-sidebar-width";
@@ -147,6 +150,29 @@ export function AppShell({
     (pathname === "/openview" && searchParams.get("section") === "dashboards");
   // Boards is a still page from 1280px too; only its panels scroll (BR8).
   const isBoards = pathname === "/boards";
+  // Profile and Account settings keep their panes in the viewport from 1280px.
+  const isAccountPane =
+    pathname === "/profile" || pathname.startsWith("/settings");
+  // The top bar and the server banner publish their height, so a phone
+  // notice and a viewport-bound panel sit below them (D3.5,
+  // docs/specs/system-health.md).
+  // A stable ref, so the observer attaches once per mounted top area.
+  const topArea = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const root = document.documentElement;
+    const publish = () =>
+      root.style.setProperty(
+        "--app-top-height",
+        `${node.getBoundingClientRect().height}px`,
+      );
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--app-top-height");
+    };
+  }, []);
   const suspended = useWorkspaceInteractionSuspended();
   const queryClient = useQueryClient();
   const brandQuery = useQuery({
@@ -331,11 +357,12 @@ export function AppShell({
   async function logout() {
     try {
       await signOut();
-    } catch {
+    } catch (error) {
       toast.add({
         title: "Could not sign out",
         description: "You are still signed in. Try again.",
         type: "error",
+        reference: apiErrorReference(error),
       });
       return;
     }
@@ -572,53 +599,65 @@ export function AppShell({
             </SheetContent>
           </Sheet>
 
+          {/* A flex column: the top bar and the server banner (D3,
+              docs/specs/system-health.md) take their height, and main takes
+              the rest, so a fixed-height page gets shorter by the banner and
+              never starts to scroll. */}
           <div
             className={cn(
-              "min-w-0 flex-1",
+              "flex min-w-0 flex-1 flex-col",
               isComms || isAccess
-                ? "h-screen min-h-0"
-                : isSandbox
-                  ? "min-h-screen xl:h-screen xl:min-h-0"
+                ? "h-dvh min-h-0"
+                : isSandbox || isManage || isModule || isBoards || isAccountPane
+                  ? "min-h-screen xl:h-dvh xl:min-h-0"
                   : "min-h-screen",
             )}
           >
-            <header
-              data-skin="topbar"
-              className="border-border bg-card sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
-            >
-              <div className="flex min-w-0 items-center gap-2.5">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-11 min-w-11 shrink-0 lg:hidden"
-                  aria-label="Open navigation"
-                  aria-expanded={mobileOpen}
-                  aria-controls="mobile-navigation"
-                  onClick={(event) => openMobileNavigation(event.currentTarget)}
-                >
-                  <Menu aria-hidden="true" />
-                </Button>
-                <AppBreadcrumbs />
-              </div>
-              <AppHeaderActions
-                verifiedUserId={verifiedUserId}
-                accountOpen={accountOpen}
-                onAccountOpenChange={setAccountOpen}
-                onLogout={logout}
-              />
-            </header>
+            {/* The banner stays in view with the top bar on a phone. */}
+            <div ref={topArea} className="sticky top-0 z-20 shrink-0">
+              <header
+                data-skin="topbar"
+                className="border-border bg-card flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-11 min-w-11 shrink-0 lg:hidden"
+                    aria-label="Open navigation"
+                    aria-expanded={mobileOpen}
+                    aria-controls="mobile-navigation"
+                    onClick={(event) =>
+                      openMobileNavigation(event.currentTarget)
+                    }
+                  >
+                    <Menu aria-hidden="true" />
+                  </Button>
+                  <AppBreadcrumbs />
+                </div>
+                <AppHeaderActions
+                  verifiedUserId={verifiedUserId}
+                  accountOpen={accountOpen}
+                  onAccountOpenChange={setAccountOpen}
+                  onLogout={logout}
+                />
+              </header>
+              <ServerConnectionBanner />
+            </div>
             <main
               id="main-content"
               data-skin="page"
               data-page-spacing={isComms ? "excluded" : undefined}
               className={cn(
                 isComms || isAccess
-                  ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
+                  ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                   : isSandbox
-                    ? "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                    ? "flex-1 p-4 sm:px-5 sm:py-7 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
                     : isManage || isModule || isBoards
-                      ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
-                      : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
+                      ? "flex-1 p-3 sm:px-5 sm:py-3 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                      : isAccountPane
+                        ? "flex-1 p-4 sm:px-5 sm:py-7 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                        : "flex-1 p-4 sm:px-5 sm:py-7",
               )}
             >
               {children}

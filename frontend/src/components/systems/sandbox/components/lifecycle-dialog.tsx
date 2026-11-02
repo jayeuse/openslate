@@ -29,6 +29,7 @@ import {
   previewSandboxLifecycle,
   type SandboxLifecycleRequest,
 } from "../state/lifecycle-api";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Props = {
   request: SandboxLifecycleRequest | null;
@@ -46,7 +47,8 @@ export function SandboxLifecycleDialog({
   >(null);
   const [confirmation, setConfirmation] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [busy, setBusy] = useState<"review" | "command" | null>(null);
   const generation = useRef(0);
   const confirming = useRef(false);
@@ -70,7 +72,10 @@ export function SandboxLifecycleDialog({
       if (generation.current === current) setPreview(result);
     } catch (reason) {
       if (generation.current === current)
-        setError(structuralLifecycleErrorMessage(reason, target.operation));
+        setError(
+          structuralLifecycleErrorMessage(reason, target.operation),
+          reason,
+        );
     } finally {
       if (generation.current === current) setBusy(null);
     }
@@ -135,7 +140,10 @@ export function SandboxLifecycleDialog({
     } catch (reason) {
       if (generation.current === current) {
         clear();
-        setError(structuralLifecycleErrorMessage(reason, request.operation));
+        setError(
+          structuralLifecycleErrorMessage(reason, request.operation),
+          reason,
+        );
       }
     } finally {
       if (generation.current === current) {
@@ -169,7 +177,11 @@ export function SandboxLifecycleDialog({
           onClose={cancel}
         />
         {error ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={errorFailure?.reference}
+          >
             {error}
           </Alert>
         ) : null}

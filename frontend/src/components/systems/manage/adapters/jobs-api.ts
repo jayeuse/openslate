@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch, apiFetchWithMetadata } from "@/lib/api";
+import { apiFetch, apiFetchWithMetadata, apiContractError } from "@/lib/api";
 
 const uuid = z
   .string()
@@ -103,7 +103,7 @@ export async function listManageJobs(
     p.has_more !== p.offset + p.count < p.total ||
     new Set(result.items.map(manageJobIdentity)).size !== p.count
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }
 
@@ -139,6 +139,6 @@ export async function retryManageJob(
           `/api/backups?run_id=${row.id}`
       : receipt.response.status !== 200 || row.kind !== kind || row.id !== id
   )
-    throw new ApiContractError();
+    throw apiContractError(receipt);
   return row;
 }

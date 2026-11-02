@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { apiErrorReference } from "@/lib/api-errors";
 import { ApiError } from "@/lib/api";
 import { boardsDetailKey } from "@/components/boards-navigation-model";
 import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
@@ -152,6 +153,8 @@ export type ResourceState<T> = {
   data: T | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 export type ResourceEvent<T> =
   | { type: "begin"; key: string; sequence: number }
@@ -161,6 +164,7 @@ export type ResourceEvent<T> =
       key: string;
       sequence: number;
       error: string;
+      reference?: string;
       denied: boolean;
     };
 
@@ -184,13 +188,20 @@ export function transitionResource<T>(
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
+    return {
+      ...state,
+      data: event.data,
+      status: "ready",
+      error: null,
+      reference: undefined,
+    };
   const data = event.denied ? null : state.data;
   return {
     ...state,
     data,
     status: data === null ? "error" : "ready",
     error: event.error,
+    reference: event.reference,
   };
 }
 
@@ -241,6 +252,7 @@ function invalidateBoardResourceAccess<L, D>(
     data: null,
     status: "error",
     error: "Board access changed. Refresh the board list.",
+    reference: undefined,
   }));
   setters.detail((current) => ({
     ...current,
@@ -248,6 +260,7 @@ function invalidateBoardResourceAccess<L, D>(
     data: null,
     status: "error",
     error: BOARD_UNAVAILABLE,
+    reference: undefined,
   }));
 }
 
@@ -335,6 +348,7 @@ export function useServerBoardsResource(route: BoardRoute) {
             key: LIST_KEY,
             sequence,
             error: "Could not refresh boards. Try again.",
+            reference: denied ? undefined : apiErrorReference(error),
             denied,
           }),
         );
@@ -348,6 +362,7 @@ export function useServerBoardsResource(route: BoardRoute) {
                   data: null,
                   status: "error",
                   error: BOARD_UNAVAILABLE,
+                  reference: undefined,
                 }
               : current,
           );
@@ -447,6 +462,7 @@ export function useServerBoardsResource(route: BoardRoute) {
                   data: null,
                   status: "error",
                   error: "Board access changed. Refresh the board list.",
+                  reference: undefined,
                 }
               : current,
           );
@@ -459,6 +475,10 @@ export function useServerBoardsResource(route: BoardRoute) {
             error: accessDenied(error)
               ? BOARD_UNAVAILABLE
               : "Could not refresh this board. Try again.",
+            // A refusal is a plain notice, with no reference (D1.4).
+            reference: accessDenied(error)
+              ? undefined
+              : apiErrorReference(error),
             denied: accessDenied(error),
           }),
         );

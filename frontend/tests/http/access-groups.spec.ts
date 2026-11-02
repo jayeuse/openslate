@@ -5,6 +5,10 @@ import {
   heldResponse,
   test,
   type Page,
+  answeredHeaders,
+  expectAnsweredReference,
+  serverBanner,
+  modalStatus,
 } from "./helpers/test";
 import { tableCardGaps } from "./helpers/layout";
 
@@ -196,7 +200,7 @@ test("an administrator replaces members from the directory, merged onto newer me
   const members = sheet.getByRole("list", { name: "Members" });
   await expect(members).toContainText("Ben Cruz");
 
-  const announcement = sheet.getByRole("status");
+  const announcement = modalStatus(sheet);
   await sheet.getByRole("button", { name: "Add Ana Santos" }).click();
   // Focus stays in the picker, and the change is announced.
   await expect(
@@ -457,6 +461,8 @@ test("a member save that got no answer is held for review, and the other drafts 
   await expect(sheet.getByRole("alert")).toContainText(
     "This change to the group may have completed.",
   );
+  // No answer at all: the shell says the server cannot be reached.
+  await expect(serverBanner(page)).toBeVisible();
   await expect(
     sheet.getByRole("button", { name: "Reload Access to review" }),
   ).toBeVisible();
@@ -484,11 +490,18 @@ test("the list offers a retry after a failed load and explains a refusal", async
   let fail = true;
   api.on("GET", "/api/access/groups", (route) =>
     fail
-      ? route.fulfill({ status: 500, json: { detail: "Unavailable" } })
+      ? route.fulfill({
+          status: 500,
+          headers: answeredHeaders,
+          json: { detail: "Unavailable" },
+        })
       : "next",
   );
   await page.goto("/access?view=groups");
   await expect(page.getByText("Groups could not be loaded")).toBeVisible();
+  await expectAnsweredReference(
+    page.getByRole("alert").filter({ hasText: "Groups could not be loaded" }),
+  );
   fail = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText("2 groups")).toBeVisible();

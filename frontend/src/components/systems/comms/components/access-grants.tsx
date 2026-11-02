@@ -13,6 +13,7 @@ import { Action } from "../../shared/components/ui";
 import type * as C from "../contract/types";
 import { useCommsClient } from "../state/client-context";
 import {
+  commsErrorText,
   messageFromCommsError,
   useCommsCommands,
   useCommsRead,
@@ -20,6 +21,9 @@ import {
 } from "../state/runtime";
 import { DepartmentList, DepartmentName } from "./channel-scope";
 import { LevelBadge } from "./member-level";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
+import type { ApiErrorText } from "@/lib/api-errors";
 
 const LEVEL_LABELS: Record<C.AccessGrantLevel, string> = {
   read: "Read",
@@ -65,7 +69,7 @@ export function AccessGrantsEditor({
     managedDepartmentIds === "all" ||
     managedDepartmentIds.has(departmentId);
   const [levels, setLevels] = useState<Record<string, C.AccessGrantLevel>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, ApiErrorText>>({});
   const [giving, setGiving] = useState(false);
   const headingId = useId();
   if (refused) return null;
@@ -78,6 +82,7 @@ export function AccessGrantsEditor({
         <Action className="self-start" onClick={list.reload}>
           Try again
         </Action>
+        <ErrorReference id={list.reference} />
       </div>
     ) : (
       <p role="status" className="text-muted-foreground text-sm">
@@ -126,7 +131,7 @@ export function AccessGrantsEditor({
       setLevels((current) => without(current, id));
       setErrors((current) => ({
         ...current,
-        [id]: messageFromCommsError(
+        [id]: commsErrorText(
           failure,
           level
             ? "Access could not be changed. Try again."
@@ -188,7 +193,8 @@ export function AccessGrantsEditor({
               <GrantRow
                 key={id}
                 grant={grant}
-                error={errors[id]}
+                error={errors[id]?.message}
+                reference={errors[id]?.reference}
                 pending={pending}
                 controls={(describedBy) => (
                   <>
@@ -257,6 +263,7 @@ function GrantRow({
   controls,
   pending = false,
   error,
+  reference,
 }: {
   grant: C.AccessGrant;
   /** Read-only rows say where they come from instead of offering controls. */
@@ -265,6 +272,8 @@ function GrantRow({
   controls?: (describedBy: string | undefined) => ReactNode;
   pending?: boolean;
   error?: string;
+  /** The failed request behind `error`; it shows under the error line. */
+  reference?: string;
 }) {
   const { groups } = useCommsClient();
   const errorId = useId();
@@ -327,6 +336,9 @@ function GrantRow({
           {error}
         </p>
       )}
+      {error ? (
+        <ErrorReference id={reference} className="sm:basis-full" />
+      ) : null}
     </li>
   );
 }
@@ -346,7 +358,8 @@ function GiveAccessPanel({
     null,
   );
   const [level, setLevel] = useState<C.AccessGrantLevel>("read");
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const { run, isPending } = useCommsCommands();
   const levelId = useId();
   const errorId = useId();
@@ -414,6 +427,7 @@ function GiveAccessPanel({
           "Access could not be given. Try again.",
           "Someone changed access first. Check the list, then try again.",
         ),
+        failure,
       );
     }
   }
@@ -435,6 +449,9 @@ function GiveAccessPanel({
         searchPlaceholder="Type a name…"
         loading={!!q && candidates.status === "loading" && !candidates.data}
         error={candidates.status === "error" ? candidates.error : undefined}
+        reference={
+          candidates.status === "error" ? candidates.reference : undefined
+        }
         onRetry={candidates.reload}
         emptyMessage={
           q ? "No groups or people match." : "Type a name to find them."
@@ -468,6 +485,7 @@ function GiveAccessPanel({
           {error}
         </p>
       )}
+      <ErrorReference id={errorFailure?.reference} className="mt-0" />
       <div className="flex flex-wrap gap-2">
         <Action
           variant="default"

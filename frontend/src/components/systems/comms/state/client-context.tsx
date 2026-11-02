@@ -15,6 +15,7 @@ import {
   listAccessDepartments,
   listAccessModules,
 } from "../../access/state/api";
+import { apiErrorReference } from "@/lib/api-errors";
 import { currentOrganizationId } from "@/lib/organization-context";
 import {
   registerWorkspaceSessionClear,
@@ -68,6 +69,8 @@ export type CommsClientState = {
   /** Loads the readable department names when no category has asked for them yet. */
   requestDepartments?: () => void;
   departmentsStatus?: "loading" | "error" | "ready";
+  /** The failed department read's request ID (D1.6). */
+  departmentsReference?: string;
   retryDepartments?: () => void;
 };
 const ClientContext = createContext<CommsClientState | null>(null);
@@ -330,6 +333,9 @@ function OwnedClient({
           : departments.data
             ? "ready"
             : "loading",
+        departmentsReference: departments.isError
+          ? apiErrorReference(departments.error)
+          : undefined,
         retryDepartments: () => {
           void departments.refetch();
         },

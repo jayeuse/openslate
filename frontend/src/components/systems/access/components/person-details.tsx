@@ -36,6 +36,7 @@ import {
   endOfDateInput,
   isUnansweredRequest,
   peopleErrorMessage,
+  personSaveFailure,
   personConflicts,
   personName,
   personPatch,
@@ -72,6 +73,7 @@ import {
 } from "./editor-conflicts";
 import { SponsorSearchSelect } from "./person-search-select";
 import { detailRowClassName, SelectField, TextField } from "./people-fields";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Edit = { baseline: PersonDraft; draft: PersonDraft };
 type Conflict = {
@@ -136,7 +138,8 @@ export function PersonDetails({
       : "",
   );
   const [errors, setErrors] = useState<Errors>({});
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [confirmOwnRole, setConfirmOwnRole] = useState(false);
@@ -289,6 +292,7 @@ export function PersonDetails({
           // ask for a check before another save.
           setError(
             "The save got no answer, so it may have completed. Check this person before you save again.",
+            caught,
           );
           void afterAccessUserChange(client);
         }
@@ -310,23 +314,13 @@ export function PersonDetails({
         await review({ baseline, draft: resolved }, false);
         return;
       }
-      const message =
-        caught instanceof ApiError && caught.status === 412
-          ? "This person changed while you were saving. Check the details and save again."
-          : peopleErrorMessage(
-              caught,
-              "The changes could not be saved. Try again.",
-            );
-      // A refused role change (the last administrator, the owner) shows
-      // beside Role. A username in use is the other conflict a save meets.
-      if (
-        caught instanceof ApiError &&
-        caught.status === 409 &&
-        "role" in patch &&
-        !("username" in patch)
-      )
-        setErrors({ role: message });
-      else setError(message);
+      const failure = personSaveFailure(
+        caught,
+        patch,
+        "The changes could not be saved. Try again.",
+      );
+      setErrors(failure.fields);
+      setError(failure.form.message, caught);
       void afterAccessUserChange(client);
       return;
     }
@@ -385,6 +379,7 @@ export function PersonDetails({
           caught,
           "The changes could not be saved. Try again.",
         ),
+        caught,
       );
     } finally {
       setPending(false);
@@ -573,7 +568,7 @@ export function PersonDetails({
           </>
         ) : null}
       </div>
-      <ActionError message={error} />
+      <ActionError message={error} reference={errorFailure?.reference} />
       <ActionError message={discardIssue} title={null} />
       {dirty ? (
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

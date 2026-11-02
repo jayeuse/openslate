@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/field";
 import { getSessionStatus, signIn } from "@/lib/auth-api";
 import { loginFailureMessage } from "@/lib/login-failure";
+import { useErrorText } from "@/lib/use-error-text";
 
 function PasswordSetNotice() {
   const search = useSearchParams();
@@ -29,7 +30,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [pending, setPending] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   useEffect(() => {
@@ -62,7 +64,7 @@ export default function LoginPage() {
       }
       router.push(await workspaceStartRoute());
     } catch (error) {
-      setError(loginFailureMessage(error));
+      setError(loginFailureMessage(error), error);
     } finally {
       setPending(false);
     }
@@ -116,7 +118,12 @@ export default function LoginPage() {
               <PasswordSetNotice />
             </Suspense>
             {error && (
-              <Alert role="alert" variant="destructive" className="mb-5">
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="mb-5"
+                reference={errorFailure?.reference}
+              >
                 {error}
               </Alert>
             )}

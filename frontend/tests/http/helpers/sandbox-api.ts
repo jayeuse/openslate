@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "./test";
+import { expect, type Locator, type Page, answeredHeaders } from "./test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -109,6 +109,7 @@ export async function openAuthenticatedSandbox(
       if (options.discardRefreshFailure && documentReads === 3) {
         await route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           contentType: "application/json",
           body: JSON.stringify({ detail: options.discardRefreshFailure }),
         });
@@ -121,6 +122,7 @@ export async function openAuthenticatedSandbox(
       if (options.saveFailure) {
         await route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           contentType: "application/json",
           body: JSON.stringify({ detail: options.saveFailure }),
         });
@@ -348,6 +350,7 @@ export async function openAuthenticatedSandbox(
     if (route.request().method() === "DELETE" && options.clearTestsFailure) {
       await route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         contentType: "application/json",
         body: JSON.stringify({ detail: options.clearTestsFailure }),
       });

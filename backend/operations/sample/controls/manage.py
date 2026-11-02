@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.systems.access.users.sessions_schemas import AdminSessionCollectionResponse
+from app.systems.manage.health.schemas import SystemStatusResponse
 from app.systems.manage.workspace.security_schemas import WorkspaceSecurityResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.account import plan_account_controls
@@ -30,6 +31,7 @@ CONTROL_ROUTES = frozenset(
         ("GET", "/api/workspace/security"),
         ("PATCH", "/api/workspace/security"),
         ("GET", "/api/auth/mfa"),
+        ("GET", "/api/system/status"),
     }
 )
 _SESSION_QUERY = {
@@ -102,6 +104,8 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             {"read_checks": 3, "policy_restored": True},
         ),
         ("review_mfa_status", member, 200, {"read_checks": 1, "mfa_optional": True}),
+        # Every signed-in person reads the system status, so a plain member checks it.
+        ("review_system_status", member, 200, {"read_checks": 1, "system_status_shape": True}),
         ("review_admin_sessions", "admin", 200, {"read_checks": 2}),
         (
             "revoke_admin_sessions",
@@ -345,6 +349,24 @@ def execute_manage_control(
                 "Sample MFA status differs from the unenrolled actor", step=action.key
             )
         extra["mfa_optional"] = True
+    elif operation == "review_system_status":
+        import json
+
+        try:
+            status = SystemStatusResponse.model_validate_json(
+                json.dumps(read("/api/system/status")), strict=True
+            )
+        except ValidationError:
+            raise SamplePhaseActionError(
+                "System status response is invalid", step=action.key
+            ) from None
+        if [part.key for part in status.parts] != ["data", "signing_in", "files", "email"] or (
+            not status.version or status.checked_at.utcoffset() is None
+        ):
+            raise SamplePhaseActionError(
+                "System status differs from the four parts in order", step=action.key
+            )
+        extra["system_status_shape"] = True
     elif operation == "review_admin_sessions":
         if not sessions(_SESSION_QUERY):
             raise SamplePhaseActionError(

@@ -68,7 +68,10 @@ def test_static_site_serves_only_known_html_and_exact_files(monkeypatch, tmp_pat
     assert missing.status_code == 404 and "Missing" in missing.text
     assert api_prefix_neighbor.status_code == 404 and "Missing" in api_prefix_neighbor.text
     assert internal.status_code == 404 and "Missing" in internal.text
-    assert api_missing.status_code == 404 and api_missing.json() == {"detail": "Not Found"}
+    assert api_missing.status_code == 404 and api_missing.json() == {
+        "detail": "Not Found",
+        "request_id": api_missing.headers["X-Request-ID"],
+    }
     assert head.status_code == 200 and head.content == b""
     assert post.status_code == 405
     assert client.get("/", headers={"Host": "untrusted.example.test"}).status_code == 400

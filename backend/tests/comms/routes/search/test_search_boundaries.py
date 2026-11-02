@@ -76,6 +76,7 @@ def test_search_rechecks_captured_conversations_before_returning_hits_or_totals(
         event.remove(case.world.runtime, "after_cursor_execute", revoke_after_projection)
     assert changed == [True]
     assert response.status_code == 404
-    assert set(response.json()) == {"detail"}
+    assert set(response.json()) == {"detail", "request_id"}
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
     assert "no-store" in response.headers["cache-control"]
     assert search(reader)["pagination"]["total"] == 1

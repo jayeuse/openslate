@@ -214,9 +214,7 @@ function SettingsFrame({ children }: { children: ReactNode }) {
     <div
       className={cn(
         "flex min-w-0 flex-col gap-4 sm:gap-5 xl:min-h-0 xl:overflow-hidden",
-        inShell
-          ? "xl:-my-7 xl:h-[calc(100dvh-3.5rem)] xl:py-3"
-          : "xl:h-[calc(100dvh-7.25rem)]",
+        inShell ? "xl:-my-7 xl:flex-1 xl:py-3" : "xl:h-[calc(100dvh-7.25rem)]",
       )}
     >
       {children}

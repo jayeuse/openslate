@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 
 export type ImportFailure = { message: string; recheckSession: boolean };
 
@@ -31,10 +32,16 @@ export function importFailure(error: unknown, fallback: string): ImportFailure {
         message: "This module is no longer available. Choose another module.",
         recheckSession: false,
       };
-    return { message: error.message, recheckSession: false };
+    // The server's words never show (S1-C6); the shared path says it plainly.
+    return { message: apiErrorMessage(error, fallback), recheckSession: false };
   }
   return {
-    message: error instanceof Error ? error.message : fallback,
+    // A plain `Error` is a local check with its own words; a rejected
+    // response or a failed connection takes the shared plain words.
+    message:
+      error instanceof Error && error.constructor === Error
+        ? error.message
+        : apiErrorMessage(error, fallback),
     recheckSession: false,
   };
 }

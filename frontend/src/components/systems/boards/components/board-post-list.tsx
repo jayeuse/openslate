@@ -83,6 +83,7 @@ export function BoardPostList({
   rows,
   loading,
   error,
+  errorReference,
   onRetry,
   selectedId,
   onOpen,
@@ -107,6 +108,8 @@ export function BoardPostList({
   rows: readonly PostListRow[];
   loading: boolean;
   error: string | null;
+  /** The failed read's request ID (D1.4). */
+  errorReference?: string;
   onRetry: () => void;
   selectedId: string | null;
   onOpen: (postId: string) => void;
@@ -287,6 +290,7 @@ export function BoardPostList({
           <Alert
             variant="destructive"
             className="m-3 flex flex-wrap items-center justify-between gap-2"
+            reference={errorReference}
           >
             <span>{error}</span>
             <Button

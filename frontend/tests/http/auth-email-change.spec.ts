@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, serverBanner } from "./helpers/test";
 import {
   installProfileApi,
   profileGate,
@@ -83,6 +83,8 @@ test("unknown email request outcome stays truthful and never automatically resen
   await expect(dialog.getByRole("alert")).toContainText(
     /outcome|could not.*confirm|may.*(?:sent|completed)/i,
   );
+  // No answer at all: the shell says the server cannot be reached.
+  await expect(serverBanner(page)).toBeVisible();
   await page.evaluate(() => {
     window.dispatchEvent(new Event("blur"));
     window.dispatchEvent(new Event("focus"));

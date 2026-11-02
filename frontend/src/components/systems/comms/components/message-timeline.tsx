@@ -61,6 +61,7 @@ import { recordContext } from "../domain/records";
 import { useCommsClient } from "../state/client-context";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { VirtualMessageList } from "./virtual-message-list";
+import { apiErrorReference } from "@/lib/api-errors";
 
 function MessageText({
   text,
@@ -723,6 +724,7 @@ const TimelineRow = memo(function TimelineRow({
                             isFilesBusy(failure)
                               ? FILES_BUSY_MESSAGE
                               : "The attachment could not be downloaded. Local file bytes are unavailable after reload.",
+                            apiErrorReference(failure),
                           );
                         } finally {
                           setDownloading(null);

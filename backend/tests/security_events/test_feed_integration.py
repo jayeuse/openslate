@@ -73,7 +73,10 @@ def test_feed_rejects_invalid_filters(event_world):
     params = {"occurred_after": "2030-04-06T00:00:00Z", "occurred_before": "2030-04-05T00:00:00Z"}
     result = event_world.client.get("/api/security-events", params=params)
     assert result.status_code == 422
-    assert result.json() == {"detail": "Security event date range is inverted"}
+    assert result.json() == {
+        "detail": "Security event date range is inverted",
+        "request_id": result.headers["X-Request-ID"],
+    }
 
 
 def test_privileged_collection_detail_and_export_are_not_cached(event_world):

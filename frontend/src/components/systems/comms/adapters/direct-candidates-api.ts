@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetchWithMetadata } from "@/lib/api";
+import { apiFetchWithMetadata, apiContractError } from "@/lib/api";
 import { commsContextSchema } from "../contract/schemas";
 import type { CommsContext, RequestOptions } from "../contract/types";
 import { requestOptions } from "./structure-contract";
@@ -51,6 +51,6 @@ export async function listDirectCandidates(
     result.response.status !== 200 ||
     !result.response.headers.get("Cache-Control")?.includes("no-store")
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result.data;
 }

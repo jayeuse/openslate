@@ -30,6 +30,8 @@ import {
   type BoardEditableRecordLinkTarget,
   type BoardRecordLinkTarget,
 } from "../adapters/board-record-links-api";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 type Props =
   | {
@@ -102,6 +104,10 @@ export function ServerBoardRecordLinks(props: Props) {
   const [sourceOffset, setSourceOffset] = useState(0);
   const [sourceHasMore, setSourceHasMore] = useState(false);
   const [sourceError, setSourceError] = useState(false);
+  // Each failed read keeps its request's reference (D1.6).
+  const [listReference, setListReference] = useState<string>();
+  const [sourceReference, setSourceReference] = useState<string>();
+  const [recordReference, setRecordReference] = useState<string>();
   const [moduleId, setModuleId] = useState("");
   const [titleField, setTitleField] = useState<OpenViewDataSourceField | null>(
     null,
@@ -115,7 +121,8 @@ export function ServerBoardRecordLinks(props: Props) {
   const [search, setSearch] = useState("");
   const [recordId, setRecordId] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [notice, setNotice] = useState<string | null>(null);
   const versionsRef = useRef<BoardAttachmentVersions | null>(
     editable?.versions ?? null,
@@ -163,11 +170,12 @@ export function ServerBoardRecordLinks(props: Props) {
         setItems(page.items);
         setListStatus("ready");
       },
-      () => {
+      (failure: unknown) => {
         if (!active) return;
         itemsRef.current = [];
         setItems([]);
         setListStatus("error");
+        setListReference(apiErrorReference(failure));
       },
     );
     return () => {
@@ -184,8 +192,10 @@ export function ServerBoardRecordLinks(props: Props) {
         setSourceHasMore(page.pagination.hasMore);
         setSourceError(false);
       },
-      () => {
-        if (active) setSourceError(true);
+      (failure: unknown) => {
+        if (!active) return;
+        setSourceError(true);
+        setSourceReference(apiErrorReference(failure));
       },
     );
     return () => {
@@ -255,11 +265,12 @@ export function ServerBoardRecordLinks(props: Props) {
       setRecords(page.items);
       setRecordHasMore(page.pagination.hasMore);
       setRecordStatus("ready");
-    })().catch(() => {
+    })().catch((failure: unknown) => {
       if (!active) return;
       setTitleField(null);
       setRecords([]);
       setRecordStatus("error");
+      setRecordReference(apiErrorReference(failure));
     });
     return () => {
       active = false;
@@ -284,7 +295,7 @@ export function ServerBoardRecordLinks(props: Props) {
       setListReload((value) => value + 1);
       setNotice(action === "add" ? "Record linked." : "Record link removed.");
     } catch (operationError) {
-      setError(errorText(operationError));
+      setError(errorText(operationError), operationError);
     } finally {
       setPending(false);
     }
@@ -311,7 +322,7 @@ export function ServerBoardRecordLinks(props: Props) {
       )}
       {listStatus === "loading" && <p role="status">Loading linked records…</p>}
       {listStatus === "error" && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={listReference}>
           Record links could not be loaded.{" "}
           <Button
             type="button"
@@ -385,7 +396,9 @@ export function ServerBoardRecordLinks(props: Props) {
             </NativeSelect>
           </Field>
           {sourceError && (
-            <Alert variant="destructive">Modules could not be loaded.</Alert>
+            <Alert variant="destructive" reference={sourceReference}>
+              Modules could not be loaded.
+            </Alert>
           )}
           <div className="flex gap-2">
             <Button
@@ -424,7 +437,7 @@ export function ServerBoardRecordLinks(props: Props) {
                 <p role="status">Loading records…</p>
               )}
               {recordStatus === "error" && (
-                <Alert variant="destructive">
+                <Alert variant="destructive" reference={recordReference}>
                   Records could not be loaded.
                 </Alert>
               )}
@@ -493,7 +506,11 @@ export function ServerBoardRecordLinks(props: Props) {
           </Button>
         </div>
       )}
-      {error && <Alert variant="destructive">{error}</Alert>}
+      {error && (
+        <Alert variant="destructive" reference={errorFailure?.reference}>
+          {error}
+        </Alert>
+      )}
       {notice && <p role="status">{notice}</p>}
     </section>
   );

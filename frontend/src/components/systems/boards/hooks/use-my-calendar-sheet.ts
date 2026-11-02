@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiErrorReference } from "@/lib/api-errors";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import {
   eventReadRefused,
@@ -56,6 +57,7 @@ export function useMyCalendarSheet({
     event: BoardEvent | null;
     error: string | null;
     refused: boolean;
+    reference?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -76,6 +78,7 @@ export function useMyCalendarSheet({
           event: null,
           error: refused ? UNAVAILABLE : "Could not load the event. Try again.",
           refused,
+          reference: apiErrorReference(error),
         });
       });
     return () => {
@@ -95,7 +98,12 @@ export function useMyCalendarSheet({
   const state: EventSheetState = unresolved
     ? { status: "error", message: UNAVAILABLE, retryable: false }
     : current?.error
-      ? { status: "error", message: current.error, retryable: !current.refused }
+      ? {
+          status: "error",
+          message: current.error,
+          retryable: !current.refused,
+          reference: current.reference,
+        }
       : event
         ? {
             status: "ready",

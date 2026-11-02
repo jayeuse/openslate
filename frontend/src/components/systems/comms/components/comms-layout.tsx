@@ -22,6 +22,7 @@ import type { useCommsPanelLayout } from "../state/use-comms-panel-layout";
 import type { useCommsWorkspace } from "../state/use-comms-workspace";
 import type { NavigationState } from "../state/use-comms-navigation";
 import type { CommsPreferences } from "../domain/configuration";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 export function CommsSkeleton({
   channelWidth = 240,
@@ -169,6 +170,7 @@ export function CommsLayout({
         <Action type="button" variant="outline" onClick={resource.reload}>
           Try again
         </Action>
+        <ErrorReference id={resource.reference} />
       </section>
     );
   return (
@@ -178,6 +180,28 @@ export function CommsLayout({
         className="bg-card relative flex min-h-0 flex-1 flex-col overflow-hidden [&_button]:min-h-6 [&_button]:min-w-6 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
         <ConnectionBanner />
+        {resource.data && resource.error && !resource.refreshing && (
+          // A failed refresh is a request failure: the danger band, spoken as
+          // an alert. It sits in the flow above the panes, so its reference
+          // makes the panes shorter and covers nothing (D4 item 13).
+          <div className="border-danger-rule bg-danger-tint text-foreground flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b px-4 text-xs">
+            <p role="alert" className="flex-1">
+              {`Showing the last saved conversations. ${resource.error}`}
+            </p>
+            <Action
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={resource.reload}
+            >
+              Retry
+            </Action>
+            <ErrorReference
+              id={resource.reference}
+              className="mt-0 basis-full pb-2"
+            />
+          </div>
+        )}
         <LoadingRegion
           loading={resource.status === "loading" && !resource.hydrated}
           label="Loading conversations"
@@ -199,6 +223,7 @@ export function CommsLayout({
                     {resource.error}
                   </Alert>
                   <Action onClick={resource.reload}>Try again</Action>
+                  <ErrorReference id={resource.reference} />
                 </>
               ) : (
                 <p role="status">Verifying conversation access…</p>
@@ -206,36 +231,14 @@ export function CommsLayout({
             </div>
           )}
           <Activity mode={resource.data ? "visible" : "hidden"}>
-            {(resource.refreshing || resource.error) && (
-              // Covers the 44px connection strip; a failed refresh is a request
-              // failure, so it takes the danger band and speaks as an alert.
-              <div
-                className={cn(
-                  "absolute inset-x-0 top-0 z-20 flex min-h-11 items-center gap-2 border-b px-4 text-xs",
-                  resource.refreshing
-                    ? "bg-background text-muted-foreground"
-                    : "border-danger-rule bg-danger-tint text-foreground",
-                )}
+            {resource.refreshing && (
+              // One line over the 44px connection strip while it refreshes.
+              <p
+                role="status"
+                className="bg-background text-muted-foreground absolute inset-x-0 top-0 z-20 flex min-h-11 items-center border-b px-4 text-xs"
               >
-                <p
-                  role={resource.refreshing ? "status" : "alert"}
-                  className="flex-1"
-                >
-                  {resource.refreshing
-                    ? "Refreshing conversations…"
-                    : `Showing the last saved conversations. ${resource.error}`}
-                </p>
-                {!resource.refreshing && (
-                  <Action
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={resource.reload}
-                  >
-                    Retry
-                  </Action>
-                )}
-              </div>
+                Refreshing conversations…
+              </p>
             )}
             {dialogs}
             <ResizablePanelGroup

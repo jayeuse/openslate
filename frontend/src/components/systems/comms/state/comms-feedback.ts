@@ -11,6 +11,7 @@ function show(
   title: string,
   type: "success" | "error",
   action?: { label: string; onClick: () => void },
+  reference?: string,
 ) {
   if (!title) return;
   if (type === "error") {
@@ -19,11 +20,18 @@ function show(
   }
   // Cleared when the notice starts closing, not when its exit animation
   // ends, so a repeat of the same result during that animation still shows.
-  toast.add({ title, type, action, onClose: () => showing.delete(title) });
+  toast.add({
+    title,
+    type,
+    action,
+    reference,
+    onClose: () => showing.delete(title),
+  });
 }
 
-export function reportCommsError(message: string) {
-  show(message, "error");
+/** An error notice; `reference` is the failed request's full ID, if any. */
+export function reportCommsError(message: string, reference?: string) {
+  show(message, "error", undefined, reference);
 }
 
 export function reportCommsDone(

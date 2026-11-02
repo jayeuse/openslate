@@ -122,6 +122,7 @@ export function VersionList({
   rowsDisabled,
   loading,
   failure,
+  failureReference,
   onRetry,
   canCheckpoint,
   pending,
@@ -151,6 +152,8 @@ export function VersionList({
   rowsDisabled: boolean;
   loading: boolean;
   failure: "denied" | "unavailable" | null;
+  /** The failed read behind an "unavailable" failure (D1.4). */
+  failureReference?: string;
   onRetry: () => void;
   canCheckpoint: boolean;
   pending: boolean;
@@ -280,7 +283,11 @@ export function VersionList({
           </p>
         ) : null}
         {failure ? (
-          <Alert variant="destructive" className="m-3">
+          <Alert
+            variant="destructive"
+            className="m-3"
+            reference={failure === "denied" ? null : failureReference}
+          >
             <p>
               {failure === "denied"
                 ? "History unavailable. Check your access or retry."

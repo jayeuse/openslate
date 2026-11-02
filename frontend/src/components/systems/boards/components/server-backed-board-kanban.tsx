@@ -55,6 +55,7 @@ import {
   KanbanToolbar,
   StageSwitcher,
 } from "./board-kanban-toolbar";
+import { apiErrorReference } from "@/lib/api-errors";
 
 /** The Kanban's URL words (BR68, preserved behavior `card=<id>`). */
 export type BoardKanbanParams = Partial<
@@ -330,7 +331,12 @@ export function ServerBackedBoardKanban({
         {announcement}
       </div>
       {failed && !pending ? (
-        <Alert variant="destructive">
+        <Alert
+          variant="destructive"
+          reference={apiErrorReference(
+            stagesRead.error ?? cardsRead.error ?? labelsRead.error,
+          )}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {stagesRead.data && cardsRead.data

@@ -34,6 +34,8 @@ import {
   trackRefusal,
   useRefusalLatch,
 } from "./refusal-latch";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 type CatalogItem = AccessDepartment | AccessModule | AccessGroup;
 type Kind = "departments" | "modules" | "groups";
@@ -126,7 +128,8 @@ export function useAccessCatalog({
     hasMore: boolean;
   } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [pageError, setPageError] = useState("");
+  const [pageFailure, setPageError] = useErrorText();
+  const pageError = pageFailure?.message ?? "";
   const latchKey = useMemo(() => refusalKey(kind), [kind]);
   const request = {
     limit: 25,
@@ -243,8 +246,8 @@ export function useAccessCatalog({
         offset: offset + page.pagination.count,
         hasMore: page.pagination.has_more,
       });
-    } catch {
-      setPageError("More options could not be loaded. Try again.");
+    } catch (error) {
+      setPageError("More options could not be loaded. Try again.", error);
     } finally {
       setLoadingMore(false);
     }
@@ -298,6 +301,15 @@ export function useAccessCatalog({
         (query.isError || selected.some((item) => item.isError)
           ? "Options could not be loaded. Try again."
           : ""),
+    // The failed request behind `error`; a refusal notice shows none (D1.4,
+    // docs/specs/system-health.md).
+    reference: denied
+      ? undefined
+      : pageError
+        ? pageFailure?.reference
+        : apiErrorReference(
+            query.error ?? selected.find((item) => item.isError)?.error,
+          ),
     retry,
     query,
   };

@@ -45,6 +45,8 @@ type AccessConfirmationDialogProps = {
   pending: boolean;
   actionsDisabled: boolean;
   error: string;
+  /** The failed request behind `error` (D1.4). */
+  errorReference?: string;
   draftAcknowledged: boolean;
   confirmOpener: RefObject<HTMLElement | null>;
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -57,6 +59,7 @@ export function AccessConfirmationDialog({
   pending,
   actionsDisabled,
   error,
+  errorReference,
   draftAcknowledged,
   confirmOpener,
   headingRef,
@@ -87,7 +90,7 @@ export function AccessConfirmationDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? (
-          <Alert role="alert" variant="destructive">
+          <Alert role="alert" variant="destructive" reference={errorReference}>
             {error}
           </Alert>
         ) : null}

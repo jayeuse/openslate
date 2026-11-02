@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { registerWorkspaceSessionClear } from "@/components/systems/shared/runtime/workspace-identity";
 import { toast } from "@/components/ui/toast";
+import type { ApiErrorText } from "@/lib/api-errors";
 import { reportDone, reportUndoable } from "@/lib/feedback";
 import { parseSandboxDocumentValue } from "../domain/document-parser";
 import type {
@@ -13,6 +14,7 @@ import {
   triggerLiteralError,
   unsavedTriggerChanges,
 } from "../domain/trigger-rules";
+import { SandboxCommandError } from "../state/commands";
 
 /**
  * Unsaved trigger edits. The page owns them, so leaving the Triggers view
@@ -35,7 +37,11 @@ export type TriggerDraft = {
   update: (
     next: SandboxTrigger[] | ((current: SandboxTrigger[]) => SandboxTrigger[]),
   ) => void;
-  save: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The failed save request's ID, shown under `error` (D1.6). */
+  errorReference: string | undefined;
+  save: () => Promise<
+    { ok: true } | { ok: false; error: string; reference?: string }
+  >;
   /** Drops the edits and returns them, so Undo can put them back. */
   discard: () => SandboxTrigger[] | null;
   restore: (edits: SandboxTrigger[]) => void;
@@ -51,6 +57,20 @@ export type TriggerDraft = {
    */
   offerUndo: (title: string, onUndo: () => void) => void;
 };
+
+/**
+ * The words and reference of a failed trigger save. The page throws a
+ * `SandboxCommandError` that keeps the refused request's reference; any other
+ * failure is local and has none (S1-C4, S1-C5).
+ */
+export function triggerSaveFailure(caught: unknown): ApiErrorText {
+  return {
+    message:
+      "The trigger change could not be saved. Your draft is still available.",
+    reference:
+      caught instanceof SandboxCommandError ? caught.reference : undefined,
+  };
+}
 
 /** Kept edits as stored: the saved triggers they began from, and the edits. */
 export type KeptTriggerRecord = { base: string; triggers: SandboxTrigger[] };
@@ -200,7 +220,9 @@ export function useTriggerDraft({
   }, []);
   const [base, setBase] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  // The message and its request's reference stay together (D1.6).
+  const [errorFailure, setError] = useState<ApiErrorText | null>(null);
+  const error = errorFailure?.message ?? "";
   const [kept, setKept] = useState<StoredTriggerDraft | null>(null);
   const storageKey = triggerDraftStorageKey(userId, orgId);
   const loadedKey = useRef<string | null>(null);
@@ -303,7 +325,7 @@ export function useTriggerDraft({
           : next;
       // Edits kept from before a reload stay offered until the person
       // chooses Restore or Discard; nothing drops them silently.
-      setError("");
+      setError(null);
       // Typing back to the saved triggers leaves nothing to save.
       if (JSON.stringify(value) === current.savedKey) {
         setEdits(null);
@@ -316,7 +338,7 @@ export function useTriggerDraft({
   );
 
   const save = useCallback(async (): Promise<
-    { ok: true } | { ok: false; error: string }
+    { ok: true } | { ok: false; error: string; reference?: string }
   > => {
     // Nothing to save (for example Ctrl+S with no edits) writes nothing.
     if (!dirtyRef.current) return { ok: true };
@@ -328,7 +350,7 @@ export function useTriggerDraft({
           .find((message): message is string => message !== null)
       : undefined;
     if (validationError) {
-      setError(validationError);
+      setError({ message: validationError, reference: undefined });
       return { ok: false, error: validationError };
     }
     setPending(true);
@@ -336,14 +358,17 @@ export function useTriggerDraft({
       await persist(snapshot);
       endUndo();
       setEdits(null);
-      setError("");
+      setError(null);
       reportDone("Triggers saved");
       return { ok: true };
-    } catch {
-      const failure =
-        "The trigger change could not be saved. Your draft is still available.";
+    } catch (caught) {
+      const failure = triggerSaveFailure(caught);
       setError(failure);
-      return { ok: false, error: failure };
+      return {
+        ok: false,
+        error: failure.message,
+        reference: failure.reference,
+      };
     } finally {
       setPending(false);
     }
@@ -352,7 +377,7 @@ export function useTriggerDraft({
   const discard = useCallback(() => {
     const previous = editsRef.current;
     setEdits(null);
-    setError("");
+    setError(null);
     return previous;
   }, [setEdits]);
 
@@ -360,7 +385,7 @@ export function useTriggerDraft({
     (next: SandboxTrigger[]) => {
       setEdits(next);
       setBase(savedRef.current.savedKey);
-      setError("");
+      setError(null);
     },
     [setEdits],
   );
@@ -370,7 +395,7 @@ export function useTriggerDraft({
     setEdits(kept.triggers);
     setBase(kept.base);
     setKept(null);
-    setError("");
+    setError(null);
   }, [kept, setEdits]);
 
   const discardKept = useCallback(() => {
@@ -399,6 +424,7 @@ export function useTriggerDraft({
     changes: dirty && edits ? unsavedTriggerChanges(edits, saved) : 0,
     unsaved,
     error,
+    errorReference: errorFailure?.reference,
     baseChanged: dirty && base !== savedKey,
     kept: kept
       ? { triggers: kept.triggers, baseChanged: kept.base !== savedKey }

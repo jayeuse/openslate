@@ -69,6 +69,7 @@ function ProfileContent() {
       <Alert
         variant="destructive"
         className="flex flex-wrap items-center gap-3"
+        reference={view.reference}
       >
         <p className="mr-auto">This profile could not load.</p>
         <Button
@@ -156,7 +157,7 @@ function ProfileFrame({ children }: { children?: ReactNode }) {
       className={cn(
         "flex min-w-0 flex-col",
         inShell &&
-          "-m-4 sm:-mx-5 sm:-my-7 xl:h-[calc(100dvh-3.5rem)] xl:overflow-hidden",
+          "-m-4 sm:-mx-5 sm:-my-7 xl:min-h-0 xl:flex-1 xl:overflow-hidden",
       )}
     >
       <div

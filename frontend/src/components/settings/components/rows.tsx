@@ -3,6 +3,7 @@
 import { useId, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /**
  * Label-left rows for Account settings, after Manage › Organization (MD4):
@@ -129,11 +130,23 @@ export function RowNote({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-export function RowError({ id, children }: { id: string; children?: string }) {
+export function RowError({
+  id,
+  children,
+  reference,
+}: {
+  id: string;
+  children?: string;
+  /** A failed request's ID, under the line (D1.4); a field check has none. */
+  reference?: string;
+}) {
   if (!children) return null;
   return (
-    <p id={id} role="alert" className="text-destructive text-sm">
-      {children}
-    </p>
+    <>
+      <p id={id} role="alert" className="text-destructive text-sm">
+        {children}
+      </p>
+      <ErrorReference id={reference} />
+    </>
   );
 }

@@ -12,11 +12,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import type { SandboxCommandResult } from "../state/commands";
+import type { ApiErrorText } from "@/lib/api-errors";
 
 export type VersionCapacityActions = {
   state:
     | { status: "loading" }
-    | { status: "unavailable" }
+    | { status: "unavailable"; reference?: string }
     | { status: "ready"; mutableCount: number; versionCap: number };
   pending: boolean;
   onRetry: () => Promise<void>;
@@ -31,7 +32,10 @@ export function VersionCapacityBanner({
 }: VersionCapacityActions) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<ApiErrorText | null>(null);
+  const error = failure?.message ?? "";
+  const setError = (message: string, reference?: string) =>
+    setFailure(message ? { message, reference } : null);
   const submitting = useRef(false);
   async function prune() {
     if (submitting.current || pending || state.status !== "ready") return;
@@ -41,7 +45,7 @@ export function VersionCapacityBanner({
     try {
       const result = await onPrune();
       if (result.ok) setOpen(false);
-      else setError(result.error);
+      else setError(result.error, result.reference);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -55,7 +59,11 @@ export function VersionCapacityBanner({
           Checking version capacity…
         </p>
       ) : state.status === "unavailable" ? (
-        <Alert variant="destructive" className="space-y-3">
+        <Alert
+          variant="destructive"
+          className="space-y-3"
+          reference={state.reference}
+        >
           <p>
             Version capacity is unavailable. Retry before deleting old
             checkpoints.
@@ -104,7 +112,11 @@ export function VersionCapacityBanner({
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? (
-            <Alert role="alert" variant="destructive">
+            <Alert
+              role="alert"
+              variant="destructive"
+              reference={failure?.reference}
+            >
               {error}
             </Alert>
           ) : null}

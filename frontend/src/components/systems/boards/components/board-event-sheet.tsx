@@ -130,7 +130,13 @@ export type SheetCalendar = { name: string; color: string; href?: string };
 
 export type EventSheetState =
   | { status: "loading" }
-  | { status: "error"; message: string; retryable: boolean }
+  | {
+      status: "error";
+      message: string;
+      retryable: boolean;
+      /** The failed read's request ID (D1.4). */
+      reference?: string;
+    }
   | { status: "ready"; event: BoardEvent; when: string };
 
 /**
@@ -318,6 +324,7 @@ export function BoardEventSheet({
             <Alert
               variant="destructive"
               className="flex flex-wrap items-center justify-between gap-2"
+              reference={state.reference}
             >
               <span>Could not load the event.</span>
               <Button

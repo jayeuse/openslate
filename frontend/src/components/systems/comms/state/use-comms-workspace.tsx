@@ -282,6 +282,12 @@ export function useCommsWorkspace() {
       details.refreshing,
     // A failed thread or record read keeps the frame and offers Try again.
     error: read.error || threadRead.error || recordRead.error,
+    // The reference of the read whose words show (D1.6).
+    reference: read.error
+      ? read.reference
+      : threadRead.error
+        ? threadRead.reference
+        : recordRead.reference,
     reload: () => {
       read.reload();
       threadRead.reload();
@@ -453,6 +459,7 @@ export function useCommsWorkspace() {
           ? "loading"
           : resource.status,
       error: binding.error || resource.error,
+      reference: binding.error ? undefined : resource.reference,
       reload: binding.error ? binding.reload : resource.reload,
     },
     // Retained only to preserve mounted drafts. The page conceals this tree

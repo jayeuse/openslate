@@ -42,6 +42,8 @@ import {
 } from "../adapters/board-kanban-schemas";
 import { STARTER_STAGES, stageCount } from "../domain/kanban";
 import { chartVar } from "./board-kanban-card";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /** The chart series by name: the name always stands beside the color (BR69). */
 export const COLOR_NAMES: Record<ChartColor, string> = {
@@ -197,7 +199,8 @@ function StageSettings({
   const id = useId();
   const [name, setName] = useState(stage.name);
   const [wip, setWip] = useState(stage.wipLimit ? String(stage.wipLimit) : "");
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [saving, setSaving] = useState(false);
   const save = async (changes: StageChanges) => {
     // A save in flight locks the fields, which blurs the one that was
@@ -208,7 +211,7 @@ function StageSettings({
     try {
       await onChange(changes);
     } catch (failure) {
-      setError(kanbanErrorMessage(failure));
+      setError(kanbanErrorMessage(failure), failure);
     } finally {
       setSaving(false);
     }
@@ -354,9 +357,12 @@ function StageSettings({
         </NativeSelect>
       </div>
       {error ? (
-        <p role="alert" className="text-danger-text px-2 text-xs">
-          {error}
-        </p>
+        <div>
+          <p role="alert" className="text-danger-text px-2 text-xs">
+            {error}
+          </p>
+          <ErrorReference id={errorFailure?.reference} />
+        </div>
       ) : null}
       <div className="bg-border mx-0 my-1 h-px" />
       <Button
@@ -420,7 +426,8 @@ export function ArchiveStageDialog({
   const [choice, setChoice] = useState<"move" | "archive">("move");
   const [target, setTarget] = useState<string>("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const canMove = others.length > 0;
   const mode = canMove ? choice : "archive";
   const targetId = target || others[0]?.id || null;
@@ -484,9 +491,12 @@ export function ArchiveStageDialog({
           </fieldset>
         ) : null}
         {error ? (
-          <p role="alert" className="text-danger-text mt-2 text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-danger-text mt-2 text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorFailure?.reference} />
+          </div>
         ) : null}
         <AlertDialogFooter>
           <Button
@@ -510,7 +520,7 @@ export function ArchiveStageDialog({
                 setChoice("move");
                 setTarget("");
               } catch (failure) {
-                setError(kanbanErrorMessage(failure));
+                setError(kanbanErrorMessage(failure), failure);
               } finally {
                 setPending(false);
               }
@@ -535,7 +545,8 @@ export function AddStage({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const add = async () => {
     const next = name.trim();
     if (!next || pending) return;
@@ -546,7 +557,7 @@ export function AddStage({
       setName("");
       setOpen(false);
     } catch (failure) {
-      setError(kanbanErrorMessage(failure));
+      setError(kanbanErrorMessage(failure), failure);
     } finally {
       setPending(false);
     }
@@ -592,9 +603,12 @@ export function AddStage({
         }}
       />
       {error ? (
-        <p role="alert" className="text-danger-text text-xs">
-          {error}
-        </p>
+        <div>
+          <p role="alert" className="text-danger-text text-xs">
+            {error}
+          </p>
+          <ErrorReference id={errorFailure?.reference} />
+        </div>
       ) : null}
     </div>
   );
@@ -614,7 +628,8 @@ export function KanbanSetup({
   addStage: ReactNode;
 }) {
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   if (!manage)
     return (
       <div className="grid h-full min-h-60 place-content-center gap-1 p-6 text-center">
@@ -661,7 +676,7 @@ export function KanbanSetup({
             try {
               await onStart();
             } catch (failure) {
-              setError(kanbanErrorMessage(failure));
+              setError(kanbanErrorMessage(failure), failure);
             } finally {
               setPending(false);
             }
@@ -671,9 +686,12 @@ export function KanbanSetup({
         </Button>
         {addStage}
         {error ? (
-          <p role="alert" className="text-danger-text text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-danger-text text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorFailure?.reference} />
+          </div>
         ) : null}
       </div>
     </div>

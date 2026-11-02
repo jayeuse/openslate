@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetchWithMetadata } from "@/lib/api";
+import { apiFetchWithMetadata, apiContractError } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
 import {
@@ -94,7 +94,7 @@ export async function createThread(
     result.response.headers.get("Location") !==
       `/api${threadPath(conversationId, rootMessageId)}`
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return { data: result.data, etag: tag.data.if_match };
 }
 
@@ -180,7 +180,7 @@ export async function sendReply(
       result.response.headers.get("Location") !==
         `/api${messagePath(conversationId, sent.data.message.id)}`)
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return sent.data;
 }
 

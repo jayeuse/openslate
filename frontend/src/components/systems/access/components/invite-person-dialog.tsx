@@ -57,6 +57,9 @@ import { useAccessCatalog, catalogGroups } from "../hooks/use-access-catalog";
 import { Input } from "@/components/ui/input";
 import { ActionError } from "./editor-conflicts";
 import { DiscardChangesDialog, SelectField, TextField } from "./people-fields";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type InviteForm = InviteDraft;
 
@@ -123,7 +126,8 @@ export function InvitePersonDialog({
   const [discardError, setDiscardError] = useState("");
   const verifying = useAccessVerifying();
   const [errors, setErrors] = useState<FieldErrors>({});
-  const [submitError, setSubmitError] = useState("");
+  const [submitErrorFailure, setSubmitError] = useErrorText();
+  const submitError = submitErrorFailure?.message ?? "";
   const [pending, setPending] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [now] = useState(() => Date.now());
@@ -259,7 +263,7 @@ export function InvitePersonDialog({
       void afterAccessUserChange(client);
     } catch (error) {
       if (isUnansweredRequest(error)) {
-        setSubmitError(await findLostInvitation(request.email));
+        setSubmitError(await findLostInvitation(request.email), error);
         return;
       }
       setSubmitError(
@@ -269,6 +273,7 @@ export function InvitePersonDialog({
               error,
               "The invitation could not be sent. Try again.",
             ),
+        error,
       );
     } finally {
       setPending(false);
@@ -459,6 +464,7 @@ export function InvitePersonDialog({
                   >
                     Retry groups
                   </Button>
+                  <ErrorReference id={groupSearch.reference} />
                 </div>
               ) : null}
               {groupSearch.hasMore ? (
@@ -475,12 +481,18 @@ export function InvitePersonDialog({
             </FieldSet>
 
             {settings.isError && form.role === "guest" && form.days === null ? (
-              <Alert variant="destructive">
+              <Alert
+                variant="destructive"
+                reference={apiErrorReference(settings.error)}
+              >
                 The default access length could not be loaded. Enter the number
                 of days.
               </Alert>
             ) : null}
-            <ActionError message={submitError} />
+            <ActionError
+              message={submitError}
+              reference={submitErrorFailure?.reference}
+            />
 
             <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
               <Button

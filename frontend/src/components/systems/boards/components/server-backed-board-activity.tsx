@@ -120,6 +120,7 @@ export function ServerBackedBoardActivity({
         <Alert
           variant="destructive"
           className="flex flex-wrap items-center justify-between gap-2"
+          reference={state.reference}
         >
           <span>
             {page ? "Showing the last loaded activity. " : ""}

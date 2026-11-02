@@ -28,6 +28,8 @@ import type {
   SandboxPublicationBlocker,
   SandboxPublicationPreview,
 } from "../state/api";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 type Props = {
   open: boolean;
@@ -101,8 +103,10 @@ export function ReviewPublishDialog({
   const [idempotencyKey, setIdempotencyKey] = useState("");
   // Review errors show above the list; publish errors show in the footer,
   // next to the password and Publish that caused them.
-  const [error, setError] = useState("");
-  const [publishError, setPublishError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
+  const [publishErrorFailure, setPublishError] = useErrorText();
+  const publishError = publishErrorFailure?.message ?? "";
   const [passwordRejected, setPasswordRejected] = useState(false);
   const passwordId = useId();
   const passwordHintId = useId();
@@ -135,7 +139,7 @@ export function ReviewPublishDialog({
       const next = await onPreview();
       if (round.current === current) setPreview(next);
     } catch (reason) {
-      if (round.current === current) setError(errorMessage(reason));
+      if (round.current === current) setError(errorMessage(reason), reason);
     } finally {
       setBusy(null);
     }
@@ -167,7 +171,7 @@ export function ReviewPublishDialog({
       setNote("");
       onOpenChange(false);
     } catch (reason) {
-      setPublishError(errorMessage(reason));
+      setPublishError(errorMessage(reason), reason);
       setPasswordRejected(errorCode(reason) === "invalid_password");
     } finally {
       setBusy(null);
@@ -219,7 +223,11 @@ export function ReviewPublishDialog({
           onClose={() => onOpenChange(false)}
         />
         {error ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={errorFailure?.reference}
+          >
             {error}
           </Alert>
         ) : null}
@@ -348,6 +356,16 @@ export function ReviewPublishDialog({
                     {footerHint}
                   </p>
                 ) : null}
+                {/* A refused password is a field refusal; other failures
+                    keep their request's reference (D1.4). */}
+                <ErrorReference
+                  id={
+                    passwordRejected
+                      ? undefined
+                      : publishErrorFailure?.reference
+                  }
+                  className="mt-0"
+                />
               </div>
               <DialogFooter className="mt-0 flex-row justify-end">
                 {cancel}

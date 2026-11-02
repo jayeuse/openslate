@@ -19,6 +19,8 @@ import {
   isSearchAdmissionError,
   searchFailureMessage,
 } from "../helpers/search-failure";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type SearchProps = {
   query: string;
@@ -99,6 +101,13 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                     >
                       Retry
                     </Action>
+                    <ErrorReference
+                      id={
+                        admissionDenied
+                          ? undefined
+                          : apiErrorReference(read.error)
+                      }
+                    />
                   </div>
                 ) : data && !data.items.length ? (
                   <p className="text-muted-foreground text-sm">

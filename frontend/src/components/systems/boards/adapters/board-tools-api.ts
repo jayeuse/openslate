@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, keepRequestId } from "@/lib/api";
 
 const uuidSchema = z.string().uuid();
 const paginationSchema = z
@@ -147,11 +147,14 @@ export async function getMyBoardAccess(
     });
   } catch (error) {
     if (error instanceof ApiError) {
-      throw new ApiError(
-        error.status,
-        error.status === 404
-          ? "Board not found"
-          : "Request could not be completed",
+      throw keepRequestId(
+        new ApiError(
+          error.status,
+          error.status === 404
+            ? "Board not found"
+            : "Request could not be completed",
+        ),
+        error,
       );
     }
     throw error;

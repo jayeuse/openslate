@@ -28,6 +28,7 @@ import {
 } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // The encrypted backup flow: the routed export's panel, the passphrase
 // dialog that prepares one, and the password dialog that admits a download.
@@ -104,7 +105,15 @@ export function BackupExportPanel({
             prepare one.
           </Alert>
         ) : maintenance.exportQuery.isError || maintenance.exportRefused ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={
+              maintenance.exportRefused
+                ? null
+                : apiErrorReference(maintenance.exportQuery.error)
+            }
+          >
             <p>
               {maintenance.exportRefused
                 ? "You don’t have access to this encrypted backup."
@@ -255,6 +264,7 @@ export function PrepareExportDialog({
   showConfirmation,
   onShowConfirmation,
   error,
+  errorReference,
   onSubmit,
   onCancel,
   finalFocus,
@@ -272,6 +282,8 @@ export function PrepareExportDialog({
   showConfirmation: boolean;
   onShowConfirmation: (revealed: boolean) => void;
   error: string;
+  /** The failed request's ID, shown as its error reference. */
+  errorReference?: string;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
   finalFocus: () => HTMLElement | null;
@@ -371,7 +383,11 @@ export function PrepareExportDialog({
             </Field>
           </fieldset>
           {error ? (
-            <Alert role="alert" variant="destructive">
+            <Alert
+              role="alert"
+              variant="destructive"
+              reference={errorReference}
+            >
               {error}
             </Alert>
           ) : null}
@@ -410,6 +426,7 @@ export function ConfirmPasswordDialog({
   passwordError,
   onPasswordChange,
   error,
+  errorReference,
   onSubmit,
   onCancel,
   finalFocus,
@@ -420,6 +437,8 @@ export function ConfirmPasswordDialog({
   passwordError: string | null;
   onPasswordChange: (value: string) => void;
   error: string;
+  /** The failed request's ID, shown as its error reference. */
+  errorReference?: string;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
   finalFocus: () => HTMLElement | null;
@@ -479,7 +498,11 @@ export function ConfirmPasswordDialog({
             </Field>
           </fieldset>
           {error ? (
-            <Alert role="alert" variant="destructive">
+            <Alert
+              role="alert"
+              variant="destructive"
+              reference={errorReference}
+            >
               {error}
             </Alert>
           ) : null}

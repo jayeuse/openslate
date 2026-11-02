@@ -13,6 +13,21 @@ application PostgreSQL connection, Supabase Auth health, Supabase Storage health
 configuration. All four are required. Overall readiness is 200 only when every required component is
 ready; otherwise it is 503.
 
+`GET /api/system/status` ([`manage/health/`](../../backend/app/systems/manage/health/router.py))
+gives the same readiness to every signed-in person of the bound organization (admin,
+member, or guest; `get_current_user`). It names plain parts, not services: `data`
+(database), `signing_in` (auth), `files` (storage), and `email` (smtp), always in that
+order, each with `working`, `not_working`, or `not_set_up`. Email is `set_up` when it is
+configured and never `working`, because readiness does not test delivery; a missing
+component is `not_working`. The response also holds the application `version` and the
+UTC `checked_at` time of the probe it used, and nothing else. Each process probes
+readiness at most once in 30 seconds and returns the cached snapshot with its original
+check time until then, including the caller-timeout fallback; there is no bypass
+([`service.py`](../../backend/app/systems/manage/health/service.py)). Concurrent misses
+share readiness's one in-flight probe. The route ends its request transaction before
+the probe and writes no audit row or security event. `/api/health` and `/api/ready` do
+not use this cache and stay unauthenticated.
+
 SMTP readiness means the host, port, and sender address are configured; it does not
 test email delivery. The snapshot does not check application-schema compatibility, backups, restore behavior, or
 production installation acceptance. A guarded production Compose rehearsal exercised
@@ -20,7 +35,8 @@ all-required readiness plus bounded Auth and Storage failure/recovery paths.
 That container-level evidence does not establish native Linux host boot/reboot behavior,
 Windows operation, or whole-installation readiness for a customer deployment.
 
-Requests receive an `X-Request-ID`.
+Requests receive an `X-Request-ID`. Error JSON bodies repeat it as `request_id` (see
+[Error Handling and Recovery](15-error-handling-and-recovery.md)).
 [`observability.py`](../../backend/app/core/observability.py) emits application JSON
 logs using an allowlist of event names and fields such as request ID, route template,
 method, status, duration, operation ID, actor ID, upstream, and reason code. Exception

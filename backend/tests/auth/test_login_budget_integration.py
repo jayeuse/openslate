@@ -153,7 +153,10 @@ def test_login_account_budget_cooldown_recovery_and_success(login_world):
     world.calls.clear()
     refused = attempt(world, second)
     assert refused.status_code == 429
-    assert refused.json() == {"detail": "Invalid authentication credentials"}
+    assert refused.json() == {
+        "detail": "Invalid authentication credentials",
+        "request_id": refused.headers["X-Request-ID"],
+    }
     assert refused.headers["Retry-After"] == "900"
     assert refused.headers.get_list("set-cookie") == [] and grants(world) == []
     assert len(lockouts(world)) == before + 1

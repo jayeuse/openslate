@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetch,
+  apiRequest,
+  apiContractError,
+} from "@/lib/api";
 import {
   defaultOrganizationBlockedSchema,
   type AccountRole,
@@ -113,7 +119,7 @@ export async function getPersonCard(
     refreshOnUnauthorized: false,
   });
   if (data.avatar_url !== null && data.avatar_url !== `/api/users/${id}/avatar`)
-    throw new ApiContractError();
+    throw apiContractError(data);
   signal?.throwIfAborted();
   return { viewer: { ...viewer }, targetId: id, data };
 }
@@ -288,7 +294,7 @@ export async function readOwnAvatar(
   uuid.parse(expectedId);
   const blob = await readAvatarBytes(userId, signal);
   const self = await readProfileSelf(userId, signal);
-  if (self.avatar_file_id !== expectedId) throw new ApiContractError();
+  if (self.avatar_file_id !== expectedId) throw apiContractError(self);
   signal?.throwIfAborted();
   return blob;
 }
@@ -354,7 +360,7 @@ async function readAvatarBytes(userId: string, signal?: AbortSignal) {
     !response.body
   ) {
     await response.body?.cancel().catch(() => undefined);
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -365,10 +371,10 @@ async function readAvatarBytes(userId: string, signal?: AbortSignal) {
       const next = await reader.read();
       if (next.done) break;
       size += next.value.byteLength;
-      if (size > MAX_AVATAR_BYTES) throw new ApiContractError();
+      if (size > MAX_AVATAR_BYTES) throw apiContractError(response);
       chunks.push(new Uint8Array(next.value));
     }
-    if (!size) throw new ApiContractError();
+    if (!size) throw apiContractError(response);
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     throw error;
@@ -412,7 +418,7 @@ export function personProfileFromWire(
 ): PersonProfile {
   const id = uuid.parse(personId);
   if (wire.avatar_url !== null && wire.avatar_url !== `/api/users/${id}/avatar`)
-    throw new ApiContractError();
+    throw apiContractError(wire);
   const full = "role" in wire ? wire : null;
   return {
     personId: id,

@@ -21,6 +21,9 @@ import {
   type BoardGroups,
 } from "../adapters/board-management-api";
 import { BoardLevelChip } from "./board-page-header";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /** The level chip's words (D2); the values stay the server's. */
 const LEVELS: { value: BoardAccessLevel; label: string; hint: string }[] = [
@@ -41,13 +44,18 @@ type GroupChoice = { id: string; name: string };
 
 type Loaded =
   | { status: "loading" }
-  | { status: "error"; error: string }
+  | { status: "error"; error: string; reference?: string }
   | { status: "ready"; data: BoardGroups };
 
 /** The change being saved; its row shows "Saving…" and only it locks. */
 type Saving = { groupId: string; next: Entry[] };
 /** The last result, said beside its row (or under the add form). */
-type RowResult = { groupId: string; text: string; failed: boolean };
+type RowResult = {
+  groupId: string;
+  text: string;
+  failed: boolean;
+  reference?: string;
+};
 /** A removed group and its place, for Undo. */
 type Removed = { entry: Entry; index: number };
 
@@ -100,7 +108,8 @@ export function ServerBackedBoardGroups({
   } | null>(null);
   const [groupRetry, setGroupRetry] = useState(0);
   const [choicesLoading, setChoicesLoading] = useState(false);
-  const [choicesError, setChoicesError] = useState<string | null>(null);
+  const [choicesFailure, setChoicesError] = useErrorText();
+  const choicesError = choicesFailure?.message ?? null;
   const [selectedGroupState, setSelectedGroup] = useState<
     (GroupChoice & { scope: string }) | null
   >(null);
@@ -117,7 +126,8 @@ export function ServerBackedBoardGroups({
   const savingRef = useRef(false);
   const [result, setResult] = useState<RowResult | null>(null);
   const [removed, setRemoved] = useState<Removed | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
+  const [listFailure, setListError] = useErrorText();
+  const listError = listFailure?.message ?? null;
   /** Where focus goes once the list has drawn (R5). */
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const levelRefs = useRef(new Map<string, HTMLSelectElement>());
@@ -131,11 +141,15 @@ export function ServerBackedBoardGroups({
         if (!current) return;
         setLoaded({ key, value: { status: "ready", data } });
       },
-      () => {
+      (failure: unknown) => {
         if (!current) return;
         setLoaded({
           key,
-          value: { status: "error", error: "The groups could not be loaded." },
+          value: {
+            status: "error",
+            error: "The groups could not be loaded.",
+            reference: apiErrorReference(failure),
+          },
         });
       },
     );
@@ -192,7 +206,10 @@ export function ServerBackedBoardGroups({
               setSelectedGroup(null);
               setAdding({ groupId: "", level: "read" });
             }
-            setChoicesError("Group choices could not be loaded. Retry.");
+            setChoicesError(
+              "Group choices could not be loaded. Retry.",
+              failure,
+            );
             setChoicesLoading(false);
           });
       },
@@ -202,7 +219,7 @@ export function ServerBackedBoardGroups({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [choicesKey, groupSearch, groupRetry, isAdmin, offset]);
+  }, [choicesKey, groupSearch, groupRetry, isAdmin, offset, setChoicesError]);
 
   const state: Loaded =
     loaded?.key === key ? loaded.value : { status: "loading" };
@@ -264,10 +281,16 @@ export function ServerBackedBoardGroups({
       const { text, reload } = saveError(failure);
       if (reload) {
         // The board moved on: read the groups and the board again.
-        setListError(text);
+        setListError(text, failure);
         setReloadKey((value) => value + 1);
         onChanged?.();
-      } else setResult({ groupId, text, failed: true });
+      } else
+        setResult({
+          groupId,
+          text,
+          failed: true,
+          reference: apiErrorReference(failure),
+        });
       return false;
     } finally {
       savingRef.current = false;
@@ -354,7 +377,7 @@ export function ServerBackedBoardGroups({
         </p>
       )}
       {state.status === "error" && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={state.reference}>
           <p>{state.error}</p>
           <Button
             type="button"
@@ -455,9 +478,12 @@ export function ServerBackedBoardGroups({
                       )}
                     </div>
                     {shown?.failed ? (
-                      <p role="alert" className="text-danger-text text-sm">
-                        {shown.text}
-                      </p>
+                      <div>
+                        <p role="alert" className="text-danger-text text-sm">
+                          {shown.text}
+                        </p>
+                        <ErrorReference id={shown.reference} />
+                      </div>
                     ) : null}
                   </li>
                 );
@@ -485,9 +511,12 @@ export function ServerBackedBoardGroups({
             ) : null}
           </p>
           {listError ? (
-            <p role="alert" className="text-danger-text text-sm">
-              {listError}
-            </p>
+            <div>
+              <p role="alert" className="text-danger-text text-sm">
+                {listError}
+              </p>
+              <ErrorReference id={listFailure?.reference} />
+            </div>
           ) : null}
           {editable && (
             <form
@@ -517,6 +546,7 @@ export function ServerBackedBoardGroups({
                   loading={choicesLoading && offset === 0}
                   loadingMore={choicesLoading && offset > 0}
                   error={choicesError ?? undefined}
+                  reference={choicesFailure?.reference}
                   onRetry={() => setGroupRetry((value) => value + 1)}
                   hasMore={currentChoices?.hasMore}
                   onLoadMore={() => {
@@ -581,9 +611,12 @@ export function ServerBackedBoardGroups({
           )}
           {result?.failed &&
           !entries.some((entry) => entry.groupId === result.groupId) ? (
-            <p role="alert" className="text-danger-text text-sm">
-              {result.text}
-            </p>
+            <div>
+              <p role="alert" className="text-danger-text text-sm">
+                {result.text}
+              </p>
+              <ErrorReference id={result.reference} />
+            </div>
           ) : null}
           {editable && (
             <dl className="text-muted-foreground grid gap-1 text-sm">

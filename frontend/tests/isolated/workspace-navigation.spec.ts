@@ -169,7 +169,8 @@ test("Manage shows each section only to an account whose requests the server adm
   // The server rules: Organization reads admit every member; Audit lists
   // admit an administrator (a department manager is the next test); Jobs
   // admits a verified administrator; Backup and Updates admit an
-  // administrator who also owns the installation.
+  // administrator who also owns the installation. System health admits every
+  // signed-in person (S2-C5, docs/specs/system-health.md), second in the list.
   const manager = {
     role: "member" as const,
     access: [{ departmentId, moduleId: null, level: "manage" as const }],
@@ -192,23 +193,47 @@ test("Manage shows each section only to an account whose requests the server adm
       ?.items.map((entry) => entry.id);
 
   expect(sections({ role: "admin", access: [], operator: true }, true)).toEqual(
-    ["organization", "backup", "audit", "jobs", "updates"],
+    ["organization", "health", "backup", "audit", "jobs", "updates"],
   );
   expect(
     sections({ role: "admin", access: [], operator: false }, true),
-  ).toEqual(["organization", "audit", "jobs"]);
-  expect(sections(manager, false)).toEqual(["organization"]);
+  ).toEqual(["organization", "health", "audit", "jobs"]);
+  expect(sections(manager, false)).toEqual(["organization", "health"]);
   expect(
     sections({ role: "member", access: [], operator: false }, false),
-  ).toEqual(["organization"]);
+  ).toEqual(["organization", "health"]);
   // Owning the installation does not admit a member of this organization.
   expect(
     sections({ role: "member", access: [], operator: true }, false),
-  ).toEqual(["organization"]);
+  ).toEqual(["organization", "health"]);
   expect(
     sections({ role: "guest", access: [], operator: true }, false),
-  ).toEqual(["organization"]);
+  ).toEqual(["organization", "health"]);
   expect(installationOwnerFor(undefined)).toBe(false);
+  // While the identity loads, System health already shows.
+  expect(
+    getWorkspaceNavigation("/manage", new URLSearchParams(), "none")
+      .find((group) => group.id === "manage")
+      ?.items.map((entry) => entry.id),
+  ).toEqual(["organization", "health"]);
+});
+
+test("Manage opens on Organization; System health has its own address", () => {
+  const manage = getWorkspaceNavigation(
+    "/manage",
+    new URLSearchParams(),
+    "none",
+  ).find((group) => group.id === "manage");
+  expect(manage?.href).toBe("/manage?view=organization");
+  expect(manage?.items.find((entry) => entry.id === "health")?.href).toBe(
+    "/manage?view=health",
+  );
+  expect(currentNavigationKey("/manage", new URLSearchParams())).toBe(
+    "manage:organization",
+  );
+  expect(
+    currentNavigationKey("/manage", new URLSearchParams("view=health")),
+  ).toBe("manage:health");
 });
 
 test("Audit shows to a member who manages a department, scoped to the departments they manage", () => {
@@ -513,7 +538,7 @@ test("every workspace describes what it holds in one short line", () => {
     ["sandbox", "Design departments and records"],
     ["boards", "Team pages and events"],
     ["access", "Who can see and change what"],
-    ["manage", "Organization settings and audit"],
+    ["manage", "Organization settings, system health, and audit"],
     ["platform", "Files, search, and import & export"],
   ]);
 });

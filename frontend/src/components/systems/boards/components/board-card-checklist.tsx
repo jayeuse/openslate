@@ -25,6 +25,7 @@ import {
   checklistCount,
 } from "../domain/card-sheet";
 import type { CardFieldContext } from "./board-card-fields";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const control = "min-h-11 xl:min-h-8";
 
@@ -303,6 +304,7 @@ export function CardActivityList({
       <Alert
         variant="destructive"
         className="flex flex-wrap items-center justify-between gap-2"
+        reference={apiErrorReference(activity.error)}
       >
         <span>The activity could not be loaded.</span>
         <Button

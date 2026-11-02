@@ -4,6 +4,7 @@ import { useEffect, useId, type MouseEvent, type ReactNode } from "react";
 import { Building2, Check, Lock, Network } from "lucide-react";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { DisabledReason } from "@/components/ui/disabled-reason";
+import { ErrorReference } from "@/components/ui/error-reference";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,7 @@ export function useChannelDepartments() {
     requestDepartments,
     retryDepartments,
     departmentsStatus,
+    departmentsReference,
   } = useCommsClient();
   const { categories } = useCommsWorkspaceView();
   useEffect(() => {
@@ -80,6 +82,15 @@ export function useChannelDepartments() {
   return {
     admin,
     status: failed ? "error" : loading ? "loading" : "ready",
+    // One reference: the read that failed first in the order of `retry`.
+    reference:
+      departmentsStatus === "error"
+        ? departmentsReference
+        : creation.error
+          ? creation.reference
+          : categoryChecks.error
+            ? categoryChecks.reference
+            : undefined,
     options: catalog.departments.filter(
       (department) => placement(department.id) !== null,
     ),
@@ -241,7 +252,8 @@ export function ChannelScopeChoice({
   onChange: (next: Channel, note: string) => void;
 }) {
   const { catalog } = useCommsClient();
-  const { admin, status, options, placement, retry } = useChannelDepartments();
+  const { admin, status, options, placement, retry, reference } =
+    useChannelDepartments();
   const legendId = useId();
   const ids = {
     organization: { title: useId(), note: useId(), reason: useId() },
@@ -394,14 +406,11 @@ export function ChannelScopeChoice({
             )}
           </Choice>
           {status === "error" && (
-            <Action
-              type="button"
-              variant="ghost"
-              className="-mt-2 self-start px-2 underline underline-offset-4"
-              onClick={retry}
-            >
-              Try again
-            </Action>
+            <DepartmentsLoadError
+              retry={retry}
+              reference={reference}
+              className="-mt-2"
+            />
           )}
           {departmentError && (
             <p
@@ -429,6 +438,7 @@ export function useCategoryDepartments() {
     requestDepartments,
     retryDepartments,
     departmentsStatus,
+    departmentsReference,
   } = useCommsClient();
   useEffect(() => {
     requestDepartments?.();
@@ -437,6 +447,7 @@ export function useCategoryDepartments() {
   return {
     admin,
     status: departmentsStatus ?? "ready",
+    reference: departmentsReference,
     options: catalog.departments.filter(
       (department) => admin || managedDepartmentIds.has(department.id),
     ),
@@ -456,7 +467,7 @@ export function CategoryDepartmentChoice({
   errorId: string;
   onChange: (departmentId: string) => void;
 }) {
-  const { status, options, retry } = useCategoryDepartments();
+  const { status, options, retry, reference } = useCategoryDepartments();
   const noteId = useId();
   // Without a department a category holds organization channels; a member
   // who must choose one sees no note until they do.
@@ -507,20 +518,44 @@ export function CategoryDepartmentChoice({
         </p>
       )}
       {status === "error" && (
-        <Action
-          type="button"
-          variant="ghost"
-          className="self-start px-2 underline underline-offset-4"
-          onClick={retry}
-        >
-          Try again
-        </Action>
+        <DepartmentsLoadError retry={retry} reference={reference} />
       )}
       {error && (
         <p id={errorId} role="alert" className="text-destructive text-sm">
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The department list could not load: an error line, "Try again", and the
+ * failed read's reference as the last part (D1.4, docs/specs/system-health.md).
+ */
+export function DepartmentsLoadError({
+  retry,
+  reference,
+  className,
+}: {
+  retry: () => void;
+  reference: string | undefined;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-col items-start gap-1", className)}>
+      <p role="alert" className="text-destructive text-sm">
+        Departments could not be loaded.
+      </p>
+      <Action
+        type="button"
+        variant="ghost"
+        className="px-2 underline underline-offset-4"
+        onClick={retry}
+      >
+        Try again
+      </Action>
+      <ErrorReference id={reference} className="mt-0" />
     </div>
   );
 }

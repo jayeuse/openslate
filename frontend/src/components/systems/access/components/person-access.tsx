@@ -21,6 +21,8 @@ import {
 import type { AccessUser } from "../state/api";
 import { AccessLevelBadge } from "./access-level-badge";
 import { useDepartmentOrder } from "./people-row-parts";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // A person's effective access: per department and module, the level and the
 // groups that give it. The backend decides it; this view only names it.
@@ -142,6 +144,15 @@ export function PersonAccess({ person }: { person: AccessUser }) {
           >
             Retry
           </Button>
+          <ErrorReference
+            id={
+              access.isError
+                ? apiErrorReference(access.error)
+                : departments.error
+                  ? departments.reference
+                  : modules.reference
+            }
+          />
         </div>
       ) : (
         <LoadingRegion

@@ -1,10 +1,11 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   ApiError,
   apiFetch,
   apiRequest,
   type ApiRequestInit,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 import { isReadRequest, openViewReadFetch } from "./openview-access";
 
@@ -200,7 +201,11 @@ function schedulePath(reportId: string): string {
   return `/reports/${encodeURIComponent(reportId)}/schedule`;
 }
 
-function safeScheduleError(status: number, detail: unknown): never {
+function safeScheduleError(
+  status: number,
+  detail: unknown,
+  source: unknown,
+): never {
   if (status === 409) {
     const parsed = conflictDetailSchema.safeParse(detail);
     if (parsed.success) {
@@ -213,13 +218,26 @@ function safeScheduleError(status: number, detail: unknown): never {
           ? { current_revision }
           : {}),
       };
-      throw new ApiError(status, message, safeDetail, code);
+      throw keepRequestId(
+        new ApiError(status, message, safeDetail, code),
+        source,
+      );
     }
   }
-  if (status === 404) throw new ApiError(status, "Report schedule not found");
+  if (status === 404)
+    throw keepRequestId(
+      new ApiError(status, "Report schedule not found"),
+      source,
+    );
   if (status === 422)
-    throw new ApiError(status, "Schedule details are invalid");
-  throw new ApiError(status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(status, "Schedule details are invalid"),
+      source,
+    );
+  throw keepRequestId(
+    new ApiError(status, "Request could not be completed"),
+    source,
+  );
 }
 
 async function safeScheduleJson(
@@ -234,7 +252,7 @@ async function safeScheduleJson(
     );
   } catch (error) {
     if (error instanceof ApiError)
-      return safeScheduleError(error.status, error.details);
+      return safeScheduleError(error.status, error.details, error);
     throw error;
   }
 }
@@ -243,7 +261,7 @@ function assertReportIdentity(
   schedule: OpenViewReportSchedule,
   reportId: string,
 ): OpenViewReportSchedule {
-  if (schedule.reportId !== reportId) throw new ApiContractError();
+  if (schedule.reportId !== reportId) throw apiContractError(schedule);
   return schedule;
 }
 
@@ -255,8 +273,8 @@ async function parseCreatedSchedule(
   try {
     body = await response.json();
   } catch {
-    if (response.ok) throw new ApiContractError();
-    return safeScheduleError(response.status, undefined);
+    if (response.ok) throw apiContractError(response);
+    return safeScheduleError(response.status, undefined, response);
   }
   if (!response.ok) {
     const detail = z
@@ -266,16 +284,17 @@ async function parseCreatedSchedule(
     return safeScheduleError(
       response.status,
       detail.success ? detail.data.detail : undefined,
+      response,
     );
   }
   if (
     response.status !== 201 ||
     response.headers.get("Location") !== `/api${schedulePath(reportId)}`
   ) {
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   const parsed = wireScheduleSchema.safeParse(body);
-  if (!parsed.success) throw new ApiContractError();
+  if (!parsed.success) throw apiContractError(response);
   return assertReportIdentity(parsed.data, reportId);
 }
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch, apiContractError } from "@/lib/api";
 
 const uuid = z.string().uuid();
 const response = z
@@ -33,6 +33,6 @@ export async function getBoardPostManageState(
     response,
     { cache: "no-store" },
   );
-  if (state.id !== postId) throw new ApiContractError();
+  if (state.id !== postId) throw apiContractError(state);
   return state;
 }

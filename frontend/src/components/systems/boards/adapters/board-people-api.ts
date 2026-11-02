@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch, apiContractError } from "@/lib/api";
 
 const uuid = z.string().uuid();
 /** The board people read sends at most this many people a page. */
@@ -86,6 +86,6 @@ export async function listBoardPeople(
     page.pagination.limit !== BOARD_PEOPLE_PAGE_SIZE ||
     page.pagination.offset !== offset
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }

@@ -1,5 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Route,
+  answeredHeaders,
+  answeredReference,
+} from "./helpers/test";
 import {
   authorAccess,
   boardId,
@@ -102,9 +109,14 @@ async function installAttachmentApi(page: Page, options: Options) {
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
-    const reply = (status: number, body: unknown) =>
+    const reply = (
+      status: number,
+      body: unknown,
+      headers: Record<string, string> = {},
+    ) =>
       route.fulfill({
         status,
+        headers,
         contentType: "application/json",
         body: JSON.stringify(body),
       });
@@ -173,7 +185,7 @@ async function installAttachmentApi(page: Page, options: Options) {
       if (!stored) return reply(404, { detail: "File not found" });
       if (attachFailures > 0) {
         attachFailures -= 1;
-        return reply(500, { detail: "Attach failed" });
+        return reply(500, { detail: "Attach failed" }, answeredHeaders);
       }
       attached.push(stored);
       postRevision += 1;
@@ -302,8 +314,9 @@ test("a failed attach keeps the uploaded file ready for a retry", async ({
   const panel = await openDraftAttachments(page);
   const name = "Yard layout.png";
   await panel.getByLabel("Add an attachment").setInputFiles(dummyFile(name));
+  // The words, then the answered request's reference (S1-C4).
   await expect(panel.getByRole("alert")).toHaveText(
-    "Could not attach the file. Try again.",
+    `Could not attach the file. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
   );
   await expect(
     panel.getByText(`${name} is uploaded but not attached yet.`),

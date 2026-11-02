@@ -24,6 +24,7 @@ import { DiscardChangesDialog } from "../../access/components/people-fields";
 import { backupScheduleLabels } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type Maintenance = ReturnType<typeof useManageMaintenance>;
 
@@ -105,7 +106,15 @@ export function BackupScheduleDialog({
             }}
           >
             {!status || !current ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={
+                  maintenance.policyRefused
+                    ? null
+                    : apiErrorReference(maintenance.status.error)
+                }
+              >
                 <p>
                   {maintenance.policyRefused
                     ? "Only the installation owner can review backup status."
@@ -145,7 +154,11 @@ export function BackupScheduleDialog({
                   </Alert>
                 ) : null}
                 {maintenance.error ? (
-                  <Alert role="alert" variant="destructive">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={maintenance.errorReference}
+                  >
                     {maintenance.error}
                   </Alert>
                 ) : null}

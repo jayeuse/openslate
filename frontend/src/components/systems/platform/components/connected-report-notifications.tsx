@@ -16,6 +16,7 @@ import {
   NotificationItems,
   useNotificationCommands,
 } from "./notification-items";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const PAGE_LIMIT = 25;
 
@@ -126,6 +127,7 @@ export default function ConnectedReportNotifications() {
             role="alert"
             variant="destructive"
             className="flex w-full flex-wrap items-center justify-between gap-3"
+            reference={refused ? undefined : apiErrorReference(query.error)}
           >
             <p className="min-w-0">{error}</p>
             <Action

@@ -5,6 +5,8 @@ import {
   ApiError,
   apiFetchWithMetadata,
   apiRequest,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 import {
   retryAfterSeconds,
@@ -234,7 +236,7 @@ export async function startExport(
   if (
     result.response.headers.get("Location") !== `/api/comms/exports/${job.id}`
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return job;
 }
 export async function getExport(
@@ -310,7 +312,7 @@ async function readBytes(
   const reader = response.body?.getReader();
   if (!reader) {
     signal?.throwIfAborted();
-    if (length !== null && length !== 0) throw new ApiContractError();
+    if (length !== null && length !== 0) throw apiContractError(response);
     return new Uint8Array(0);
   }
   const chunks: Uint8Array[] = [];
@@ -323,10 +325,10 @@ async function readBytes(
       if (done) break;
       size += value.byteLength;
       if (size > maximum || (length !== null && size > length))
-        throw new ApiContractError();
+        throw apiContractError(response);
       chunks.push(value);
     }
-    if (length !== null && size !== length) throw new ApiContractError();
+    if (length !== null && size !== length) throw apiContractError(response);
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     throw error;
@@ -368,12 +370,15 @@ async function downloadError(
     if (!(error instanceof SyntaxError || error instanceof ApiContractError))
       throw error;
   }
-  throw new ApiError(
-    response.status,
-    "Export could not be downloaded.",
-    undefined,
-    code,
-    retryAfterSeconds(response),
+  throw keepRequestId(
+    new ApiError(
+      response.status,
+      "Export could not be downloaded.",
+      undefined,
+      code,
+      retryAfterSeconds(response),
+    ),
+    response,
   );
 }
 
@@ -397,7 +402,7 @@ export async function downloadExport(
   );
   let filename: string, media_type: string, length: number | null;
   try {
-    requirePrivateNoStore(response.headers);
+    requirePrivateNoStore(response);
     media_type = response.headers.get("Content-Type")?.trim() ?? "";
     const extension = /^text\/csv(?:;\s*charset=(?:utf-8|"utf-8"))?$/i.test(
       media_type,
@@ -414,7 +419,7 @@ export async function downloadExport(
       response.headers.get("X-Content-Type-Options")?.trim().toLowerCase() !==
         "nosniff"
     )
-      throw new ApiContractError();
+      throw apiContractError(response);
     filename = downloadFilename(
       response.headers.get("Content-Disposition"),
       extension,
@@ -428,10 +433,14 @@ export async function downloadExport(
         !Number.isSafeInteger(length) ||
         length > MAX_EXPORT_BYTES)
     )
-      throw new ApiContractError();
+      throw apiContractError(response);
   } catch (error) {
     await response.body?.cancel().catch(() => undefined);
-    throw error;
+    // The header parser has no response in scope; its refusal keeps this
+    // response's ID here (S1-C3, D4.5).
+    throw error instanceof ApiContractError && !error.requestId
+      ? apiContractError(response)
+      : error;
   }
   const bytes = await readBytes(
     response,

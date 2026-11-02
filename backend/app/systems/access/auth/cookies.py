@@ -2,11 +2,12 @@
 
 from urllib.parse import urlsplit
 
-from fastapi import Response
+from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.config.development import is_relaxed_development
+from app.core.middleware.request_context import error_content
 
 
 def _browser_cookie_secure() -> bool:
@@ -53,9 +54,9 @@ def clear_browser_session(response: Response) -> None:
     response.delete_cookie("slateops_csrf", path="/", secure=secure)
 
 
-def cleared_auth_error() -> JSONResponse:
+def cleared_auth_error(request: Request) -> JSONResponse:
     response = JSONResponse(
-        status_code=401, content={"detail": "Invalid authentication credentials"}
+        status_code=401, content=error_content(request, "Invalid authentication credentials")
     )
     clear_browser_session(response)
     return response

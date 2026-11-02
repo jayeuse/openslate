@@ -35,6 +35,8 @@ import type { SandboxCommandResult } from "../state/commands";
 import { cn } from "@/lib/utils";
 import { fieldAdvancedSummary } from "../domain/build-summary";
 import { PropertyRow } from "./designer-properties";
+import { ErrorReference } from "@/components/ui/error-reference";
+import type { ApiErrorText } from "@/lib/api-errors";
 
 type FieldDraft = {
   name: string;
@@ -408,7 +410,11 @@ export function FieldSettings({
     [draftId, onDraftStateChange],
   );
   const selectOptions = selectOptionsForDraft(field, draft);
-  const [error, setError] = useState("");
+  // The message keeps its failed request's reference (D1.6).
+  const [failure, setFailure] = useState<ApiErrorText | null>(null);
+  const error = failure?.message ?? "";
+  const setError = (message: string, reference?: string) =>
+    setFailure(message ? { message, reference } : null);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setDraft(draftForField(field));
@@ -499,6 +505,7 @@ export function FieldSettings({
         {error ? (
           <FormField data-invalid>
             <FieldError className="text-xs">{error}</FieldError>
+            <ErrorReference id={failure?.reference} className="mt-0" />
           </FormField>
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -511,7 +518,7 @@ export function FieldSettings({
               disabled={pending || index === 0}
               onClick={async () => {
                 const result = await onMove(-1);
-                if (!result.ok) setError(result.error);
+                if (!result.ok) setError(result.error, result.reference);
               }}
             >
               <ArrowUp aria-hidden="true" />
@@ -524,7 +531,7 @@ export function FieldSettings({
               disabled={pending || index === count - 1}
               onClick={async () => {
                 const result = await onMove(1);
-                if (!result.ok) setError(result.error);
+                if (!result.ok) setError(result.error, result.reference);
               }}
             >
               <ArrowDown aria-hidden="true" />
@@ -561,7 +568,7 @@ export function FieldSettings({
                   setSaving(true);
                   const saved = await onSave(result);
                   setSaving(false);
-                  if (!saved.ok) setError(saved.error);
+                  if (!saved.ok) setError(saved.error, saved.reference);
                 }}
               >
                 Save field changes
@@ -725,7 +732,7 @@ export function FieldSettings({
                 disabled={pending || lifecycleDisabled || isRecordTitle}
                 onClick={async () => {
                   const result = await onLifecycle();
-                  if (!result.ok) setError(result.error);
+                  if (!result.ok) setError(result.error, result.reference);
                 }}
               >
                 {closed ? "Reopen" : "Close"} field
@@ -750,7 +757,7 @@ export function FieldSettings({
                 disabled={pending || lifecycleDisabled}
                 onClick={async () => {
                   const result = await onPurge();
-                  if (!result.ok) setError(result.error);
+                  if (!result.ok) setError(result.error, result.reference);
                 }}
               >
                 Delete field forever

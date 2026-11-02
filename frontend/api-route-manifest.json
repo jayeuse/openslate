@@ -1788,6 +1788,12 @@
     "path": "/api/jobs/{param}/{param}/retry"
   },
   {
+    "adapter": "frontend/src/components/systems/manage/adapters/system-status-api.ts",
+    "function": "getSystemStatus",
+    "method": "GET",
+    "path": "/api/system/status"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getManageWorkspace",
     "method": "GET",
@@ -2626,6 +2632,12 @@
     "function": "refreshAfterSessionRecheck",
     "method": "POST",
     "path": "/api/auth/refresh"
+  },
+  {
+    "adapter": "frontend/src/lib/api.ts",
+    "function": "requestServerHealth",
+    "method": "GET",
+    "path": "/api/health"
   },
   {
     "adapter": "frontend/src/lib/auth-api.ts",

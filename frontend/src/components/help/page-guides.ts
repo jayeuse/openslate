@@ -57,6 +57,7 @@ export const PAGE_GUIDES = {
     title: "Manage",
     entries: [
       "Organization: change the name, region, and look in the two panes, then choose Save settings at the bottom. Discard changes returns to the saved values. Only administrators can change them.",
+      "System health: the top line says whether Slate Operations works now, and Parts of Slate Operations shows the status of each part. Choose Check again to see the latest check. When an action fails, give the reference in its message to your administrator.",
       "Audit: the quick filters show all events, changes, created, or deleted items. Filters narrows by person, area, and dates; open an event to see what changed in its event details.",
       "Backup: Status shows the schedule, the last good backup, and the backup service. History lists every backup; select one to see its details. The person who runs your server restores backups.",
       "Jobs: the state filters show Pending, Queued, Running, Failed, and other work. Open a row's menu and choose Retry when a failed job offers it.",

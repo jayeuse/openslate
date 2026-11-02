@@ -43,6 +43,7 @@ import {
 import { ActionError } from "./editor-conflicts";
 import { GroupMemberPicker } from "./group-member-picker";
 import { DiscardChangesDialog, TextField } from "./people-fields";
+import { useErrorText } from "@/lib/use-error-text";
 
 type CreateForm = GroupCreateDraft;
 const emptyForm: CreateForm = { name: "", description: "", member_ids: [] };
@@ -80,7 +81,8 @@ export function CreateGroupDialog({
     () => groupCreateDraftJournal.read(signedInId) ?? emptyForm,
   );
   const [nameError, setNameError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState("");
+  const [submitErrorFailure, setSubmitError] = useErrorText();
+  const submitError = submitErrorFailure?.message ?? "";
   const [pending, setPending] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [discardError, setDiscardError] = useState("");
@@ -194,11 +196,12 @@ export function CreateGroupDialog({
       finish(created.data, `${created.data.name} is created`, "success");
     } catch (error) {
       if (isUnansweredRequest(error)) {
-        setSubmitError(await findLostGroup(form.name, before));
+        setSubmitError(await findLostGroup(form.name, before), error);
         return;
       }
       setSubmitError(
         groupErrorMessage(error, "The group could not be created. Try again."),
+        error,
       );
     } finally {
       setPending(false);
@@ -270,7 +273,10 @@ export function CreateGroupDialog({
                 onChange={(member_ids) => update({ member_ids })}
               />
             </div>
-            <ActionError message={submitError} />
+            <ActionError
+              message={submitError}
+              reference={submitErrorFailure?.reference}
+            />
             <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
               <Button
                 type="button"

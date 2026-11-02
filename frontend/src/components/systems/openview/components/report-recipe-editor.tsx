@@ -3,7 +3,7 @@
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -72,6 +72,7 @@ import {
   type ReportFilterDraft,
   type ReportViewSource,
 } from "./report-draft";
+import { useErrorText } from "@/lib/use-error-text";
 
 type FilterOperator = ReportFilterDraft["operator"];
 const VALUELESS = new Set<FilterOperator>([
@@ -204,7 +205,8 @@ export function ReportRecipeEditor({
     draftFor(moduleId, target),
   );
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [stale, setStale] = useState(false);
   const [userSearch, setUserSearch] = useState("");
   const dirty =
@@ -218,7 +220,8 @@ export function ReportRecipeEditor({
   const fieldsReadAt = fieldsBase ? readStamp(fieldsQuery) : 0;
   const [extension, setExtension] = useState<FieldPages | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [moreFailed, setMoreFailed] = useState(false);
+  // The failed "more fields" read, kept for its reference (D1.6).
+  const [moreFailed, setMoreFailed] = useState<{ cause: unknown } | null>(null);
   const more =
     extension &&
     extension.moduleId === moduleId &&
@@ -238,9 +241,12 @@ export function ReportRecipeEditor({
     : fieldsQuery.isError && !fieldsQuery.isFetching
       ? "Fields could not be loaded. Try again."
       : "";
+  const fieldsReference = moreFailed
+    ? apiErrorReference(moreFailed.cause)
+    : apiErrorReference(fieldsQuery.error);
   function onRetryFields(): void {
     setExtension(null);
-    setMoreFailed(false);
+    setMoreFailed(null);
     void fieldsQuery.refetch();
   }
   async function loadMoreFields(): Promise<void> {
@@ -249,7 +255,7 @@ export function ReportRecipeEditor({
     const loaded = more?.items ?? [];
     const readAt = fieldsReadAt;
     setLoadingMore(true);
-    setMoreFailed(false);
+    setMoreFailed(null);
     try {
       const page = await listOpenViewDataSourceFields(moduleId, {
         limit: CATALOG_PAGE_SIZE,
@@ -265,7 +271,7 @@ export function ReportRecipeEditor({
     } catch (failure) {
       if (isAuthorizationDenied(failure))
         void recordPageDenial(queryClient, moduleFieldKeys(moduleId), failure);
-      else setMoreFailed(true);
+      else setMoreFailed({ cause: failure });
     } finally {
       setLoadingMore(false);
     }
@@ -372,6 +378,7 @@ export function ReportRecipeEditor({
                 reason,
                 "The report could not be saved. Your changes are still here.",
               )),
+        reason,
       );
     } finally {
       setPending(false);
@@ -400,6 +407,7 @@ export function ReportRecipeEditor({
           reason,
           "The latest report could not be loaded. Try again.",
         ),
+        reason,
       );
     } finally {
       setPending(false);
@@ -452,7 +460,11 @@ export function ReportRecipeEditor({
             className="flex min-h-0 flex-col gap-6"
           >
             {error ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={errorFailure?.reference}
+              >
                 {error}
                 {stale ? (
                   <Button
@@ -507,7 +519,11 @@ export function ReportRecipeEditor({
               <FieldSet>
                 <FieldLegend>Columns</FieldLegend>
                 {fieldsError ? (
-                  <Alert role="alert" variant="destructive">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={fieldsReference}
+                  >
                     {fieldsError}
                     <Button
                       type="button"

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import {
   FILES_BUSY_MESSAGE,
   isFilesBusy,
@@ -128,6 +129,18 @@ export function messageFromCommsError(
     return `Too many attempts. Try again in ${Math.max(1, refusal.seconds)}s.`;
   return fallback;
 }
+/** A Comms failure's words and the failed request's reference, kept together
+ * until they render (D1.6, docs/specs/system-health.md). */
+export function commsErrorText(
+  error: unknown,
+  fallback: string,
+  conflict?: string,
+): ApiErrorText {
+  return {
+    message: messageFromCommsError(error, fallback, conflict),
+    reference: apiErrorReference(error),
+  };
+}
 /** A 412 precondition failure: the version the user saw is no longer current. */
 export function isCommsConflict(error: unknown): boolean {
   return failureStatus(error) === 412;
@@ -167,17 +180,20 @@ export function useCommsRead<T>(
   const refusals = useCommsRefusals();
   const refused =
     refusals?.bootstrap || refusals?.[key] || scope?.isRefused(key);
-  const error =
-    binding.error ||
-    (result.isError
-      ? messageFromCommsError(
+  // A binding failure is local and has no reference; a failed read keeps its
+  // request's reference (D1.6, docs/specs/system-health.md).
+  const failure =
+    !binding.error && result.isError
+      ? commsErrorText(
           result.error,
           "This data could not be loaded. Try again.",
         )
-      : "");
+      : null;
+  const error = binding.error || failure?.message || "";
   return {
     data: binding.client && !refused ? result.data : undefined,
     error,
+    reference: failure?.reference,
     status: error
       ? ("error" as const)
       : !binding.client || result.isPending

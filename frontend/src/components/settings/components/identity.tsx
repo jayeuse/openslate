@@ -42,6 +42,9 @@ export function IdentitySection({
           role="alert"
           variant="destructive"
           className="flex flex-wrap items-center gap-3"
+          reference={
+            editor.loadError ? editor.loadReference : editor.photoReference
+          }
         >
           <p className="mr-auto min-w-0">
             {editor.loadError || editor.photoError}
@@ -125,7 +128,9 @@ export function IdentitySection({
         </div>
         <RowNote id="profile-photo-note">PNG or JPEG, up to 2 MB.</RowNote>
         {editor.retryable ? null : (
-          <RowError id="profile-photo-error">{editor.photoError}</RowError>
+          <RowError id="profile-photo-error" reference={editor.photoReference}>
+            {editor.photoError}
+          </RowError>
         )}
       </SettingsRow>
       <form

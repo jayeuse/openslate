@@ -247,7 +247,11 @@ function ReadySheet({
   const feedback = (
     <>
       {model.problem ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={model.problemReference}
+        >
           {model.problem}
         </Alert>
       ) : null}

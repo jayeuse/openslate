@@ -1,4 +1,10 @@
-import { expect, test, type Page } from "./helpers/test";
+import {
+  expect,
+  test,
+  type Page,
+  answeredHeaders,
+  expectAnsweredReference,
+} from "./helpers/test";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
 import {
@@ -964,6 +970,7 @@ test("a copy that cannot be read and a blocked print window each say what went w
       failRead
         ? route.fulfill({
             status: 500,
+            headers: answeredHeaders,
             json: {
               detail: "Your browser blocked private report database detail",
             },
@@ -976,6 +983,7 @@ test("a copy that cannot be read and a blocked print window each say what went w
     "The copy could not be opened. Try again.",
   );
   await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expectAnsweredReference(failure);
   await expect(page.getByText(/private report database detail/)).toHaveCount(0);
 
   failRead = false;

@@ -23,6 +23,11 @@ import {
   trackRefusal,
   useRefusalLatch,
 } from "./refusal-latch";
+import {
+  apiErrorReference,
+  errorTextFor,
+  type ApiErrorText,
+} from "@/lib/api-errors";
 
 const refusalKey = ["access", "people-membership-refusal"] as const;
 const membershipRead = <Value>(
@@ -49,6 +54,8 @@ export type PersonMemberships = {
   recovering: boolean;
   denied: boolean;
   error: string;
+  /** The failed request behind `error`; a refusal has none (D1.4). */
+  reference?: string;
   /** A refused or failed first page needs fresh Retry, even with retained names. */
   retryFirstPage: boolean;
   loadMore: () => Promise<void>;
@@ -69,7 +76,9 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
   const scope = JSON.stringify(ids);
   const [extensions, setExtensions] = useState<Record<string, Extension>>({});
   const [loadingIds, setLoadingIds] = useState<ReadonlySet<string>>(new Set());
-  const [pageErrors, setPageErrors] = useState<Record<string, string>>({});
+  const [pageErrors, setPageErrors] = useState<
+    Record<string, ApiErrorText | null>
+  >({});
   const [recovering, setRecovering] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const currentInputs = useRef<object | null>(null);
@@ -168,7 +177,12 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
         ? "Groups are unavailable. Ask for access, then retry."
         : query.isError
           ? "Groups could not be loaded. Try again."
-          : pageErrors[id] || "";
+          : pageErrors[id]?.message || "";
+      const reference = denied
+        ? undefined
+        : query.isError
+          ? apiErrorReference(query.error)
+          : pageErrors[id]?.reference;
       const loadMore = async () => {
         const stamp = readStamp(query);
         const inputs = currentInputs.current;
@@ -183,7 +197,7 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
         const controller = new AbortController();
         controllers.current.set(id, controller);
         setLoadingIds((current) => new Set([...current, id]));
-        setPageErrors((current) => ({ ...current, [id]: "" }));
+        setPageErrors((current) => ({ ...current, [id]: null }));
         const offset =
           more?.nextOffset ??
           query.data.pagination.offset + query.data.pagination.count;
@@ -214,11 +228,14 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
               hasMore: page.pagination.has_more,
             },
           }));
-        } catch {
+        } catch (failure) {
           if (!controller.signal.aborted && currentInputs.current === inputs)
             setPageErrors((current) => ({
               ...current,
-              [id]: "More groups could not be loaded. Try again.",
+              [id]: errorTextFor(
+                "More groups could not be loaded. Try again.",
+                failure,
+              ),
             }));
         } finally {
           if (
@@ -252,6 +269,7 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
           recovering,
           denied,
           error,
+          reference,
           retryFirstPage: denied || query.isError,
           loadMore,
           retry,

@@ -8,6 +8,7 @@ import {
   guestExpiryFromDays,
   personConflicts,
   personPatch,
+  personSaveFailure,
   personState,
   presentAccess,
   resolvePersonDraft,
@@ -18,6 +19,7 @@ import type {
   AccessUser,
   AccessUserAccess,
 } from "../../../src/components/systems/access/state/api-contracts";
+import { ApiError } from "../../../src/lib/api";
 import { accessModule, department, group, ids, user } from "./fixtures";
 
 const now = Date.parse("2026-09-28T12:00:00Z");
@@ -261,4 +263,41 @@ test("administrators show full access and guests show the read limit", () => {
   );
   expect(view).toMatchObject({ kind: "entries", guestCapped: true });
   if (view.kind === "entries") expect(view.rows[0]?.capped).toBe(true);
+});
+
+test("a refused role change shows beside Role, with the reference on one form line", () => {
+  // D1.4, S1-C4 (docs/specs/system-health.md): a field error never carries
+  // the reference; one form-level line with the 422 words does.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const refused = new ApiError(
+    409,
+    "Conflict",
+    "The last administrator keeps the administrator role",
+    undefined,
+    undefined,
+    requestId,
+  );
+  expect(
+    personSaveFailure(refused, { role: "member" }, "Could not save."),
+  ).toEqual({
+    fields: { role: "The last administrator keeps the administrator role." },
+    form: {
+      message: "Check the entered values and try again.",
+      reference: requestId,
+    },
+  });
+  // Any other failure is a form-level error with its own words and reference.
+  expect(
+    personSaveFailure(
+      refused,
+      { role: "member", username: "x" },
+      "Could not save.",
+    ),
+  ).toEqual({
+    fields: {},
+    form: {
+      message: "The last administrator keeps the administrator role.",
+      reference: requestId,
+    },
+  });
 });

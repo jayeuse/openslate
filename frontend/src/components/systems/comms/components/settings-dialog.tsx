@@ -71,6 +71,7 @@ import {
   useCommsCommands,
   useCommsRead,
 } from "../state/runtime";
+import { useErrorText } from "@/lib/use-error-text";
 
 export interface CommsSettingsDialogProps {
   scope: CommsScope | "personal";
@@ -278,7 +279,8 @@ function LoadedCommsSettingsDialog({
   const [confirmReset, setConfirmReset] = useState<ConfirmActionRequest | null>(
     null,
   );
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [memberRoles, setMemberRoles] = useState<
     Record<string, "member" | "manager">
   >({});
@@ -631,6 +633,7 @@ function LoadedCommsSettingsDialog({
         savedAnything.current
           ? "Some changes were saved. Your unsaved changes are still here. Review them and try again."
           : messageFromCommsError(failure, "Changes could not be saved."),
+        failure,
       );
       return false;
     }
@@ -837,7 +840,11 @@ function LoadedCommsSettingsDialog({
       <Separator />
       {error && (
         <div ref={errorRef} tabIndex={-1} className="px-6 py-3 outline-none">
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={errorFailure?.reference}
+          >
             {error}
           </Alert>
         </div>

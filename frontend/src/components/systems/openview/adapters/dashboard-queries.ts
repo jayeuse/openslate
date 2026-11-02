@@ -12,7 +12,7 @@ import {
 } from "./analytics-api";
 import { queryOpenViewRecords } from "./views-api";
 import { listReadableRelationshipFields } from "./records-api";
-import { ApiContractError } from "@/lib/api";
+import { ApiContractError, apiContractError } from "@/lib/api";
 import {
   getOpenViewChart,
   chartMatchesWidget,
@@ -155,7 +155,7 @@ export async function resolveDashboardWidgetDefinition(
   if (widget.chartId != null) {
     const chart = await getOpenViewChart(widget.chartId, signal);
     if (!chartMatchesWidget(chart, widget.widgetType))
-      throw new ApiContractError();
+      throw apiContractError(chart);
     config = chart.config;
     sourceStamp = chartSourceStamp(chart);
     sourceName = chart.name;

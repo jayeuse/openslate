@@ -42,6 +42,8 @@ import {
   savedDraft,
   type IdentityDraft,
 } from "../domain/identity-draft";
+import { useErrorText } from "@/lib/use-error-text";
+import { apiErrorReference } from "@/lib/api-errors";
 
 /** The visible row label of each Identity field; the control keeps its full name. */
 export const identityLabels: Record<IdentityField, string> = {
@@ -70,11 +72,14 @@ export function useIdentityEditor() {
     enabled: !suspended,
   });
   const [draft, setDraft] = useState<IdentityDraft | null>(null);
-  const [saveError, setSaveError] = useState("");
-  const [photoError, setPhotoError] = useState("");
+  const [saveFailure, setSaveError] = useErrorText();
+  const saveError = saveFailure?.message ?? "";
+  const [photoFailure, setPhotoError] = useErrorText();
+  const photoError = photoFailure?.message ?? "";
   // An uncertain photo outcome locks the photo controls until a read confirms.
   const [photoLocked, setPhotoLocked] = useState(false);
-  const [photoReadError, setPhotoReadError] = useState("");
+  const [photoReadFailure, setPhotoReadError] = useErrorText();
+  const photoReadError = photoReadFailure?.message ?? "";
   const [saved, setSaved] = useState(false);
   // The Photo row's own words after a photo command (PD54): the photo saves
   // at once, so it never moves the Save profile chip.
@@ -162,7 +167,7 @@ export function useIdentityEditor() {
       })
       .catch((failure: unknown) => {
         if (controller.signal.aborted || !mounted.current) return;
-        setPhotoReadError("Your photo could not be loaded.");
+        setPhotoReadError("Your photo could not be loaded.", failure);
         if (profileNeedsSessionRecheck(failure)) {
           refusedPhoto.current = id;
           requestSessionRecheck();
@@ -285,11 +290,11 @@ export function useIdentityEditor() {
     } catch (failure) {
       if (!current()) return;
       if (uploadRefused || isFilesBusy(failure))
-        setPhotoError(FILES_BUSY_MESSAGE);
+        setPhotoError(FILES_BUSY_MESSAGE, failure);
       else if (photoCommand) {
-        setPhotoError(PHOTO_UNCERTAIN);
+        setPhotoError(PHOTO_UNCERTAIN, failure);
         setPhotoLocked(true);
-      } else setSaveError("Profile could not be saved. Try again.");
+      } else setSaveError("Profile could not be saved. Try again.", failure);
       if (profileNeedsSessionRecheck(failure)) requestSessionRecheck();
     } finally {
       if (operation.current === controller) operation.current = null;
@@ -335,13 +340,18 @@ export function useIdentityEditor() {
     loading: (query.isPending && !query.error) || verifying,
     saved,
     saveError,
+    saveReference: saveFailure?.reference,
     invalid,
     invalidMessage: invalid
       ? `${identityLabels[invalid]} must use at most ${identityLimits[invalid]} characters.`
       : "",
     loadError,
+    loadReference: query.error
+      ? apiErrorReference(query.error)
+      : photoReadFailure?.reference,
     photo: photo && self?.avatar_file_id === photo.id ? photo : null,
     photoError,
+    photoReference: photoFailure?.reference,
     /** The Photo row's status words: during, then after a photo command. */
     photoStatus:
       photoRunning === "upload"

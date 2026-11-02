@@ -225,17 +225,20 @@ export function ConflictDialog({
   );
 }
 
-/** A failed action's reason; `title` null shows the reason alone. */
+/** A failed action's reason; `title` null shows the reason alone. A failed
+ * request's `reference` renders last (D1.4, docs/specs/system-health.md). */
 export function ActionError({
   message,
   title = "Could not apply the change",
+  reference,
 }: {
   message: string;
   title?: string | null;
+  reference?: string;
 }) {
   if (!message) return null;
   return (
-    <Alert variant="destructive" role="alert">
+    <Alert variant="destructive" role="alert" reference={reference}>
       <AlertCircle />
       <div className="mt-2">
         {title ? <p className="font-medium">{title}</p> : null}

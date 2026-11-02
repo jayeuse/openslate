@@ -2,7 +2,11 @@
 
 import { Check, ChevronDown, Download, Maximize2, Printer } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiErrorMessage } from "@/lib/api-errors";
+import {
+  apiErrorMessage,
+  apiErrorReference,
+  type ApiErrorText,
+} from "@/lib/api-errors";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -40,7 +44,7 @@ const COPY_ROW_LIMIT = 500;
 
 type CopyRead =
   | { runId: string; status: "loading" }
-  | { runId: string; status: "failed"; message: string }
+  | { runId: string; status: "failed"; message: string; reference?: string }
   | {
       runId: string;
       status: "ready";
@@ -124,6 +128,7 @@ function CopyRows({
             role="alert"
             variant="destructive"
             className="flex flex-wrap items-center justify-between gap-3"
+            reference={read.reference}
           >
             <span>{read.message}</span>
             <Button
@@ -245,6 +250,8 @@ type ReportCopyPanelProps = {
   copies: OpenViewPage<OpenViewReportRun> | undefined;
   copiesPending: boolean;
   copiesFailed: boolean;
+  /** The failed copies read's request ID, shown as its error reference. */
+  copiesReference?: string;
   onRetryCopies: () => void;
   /** The copy the address names; without one the latest copy shows. */
   copyId: string | undefined;
@@ -262,6 +269,7 @@ export function ReportCopyPanel({
   copies,
   copiesPending,
   copiesFailed,
+  copiesReference,
   onRetryCopies,
   copyId,
   region,
@@ -281,7 +289,8 @@ export function ReportCopyPanel({
   >(null);
   const [read, setRead] = useState<CopyRead | null>(null);
   const [retry, setRetry] = useState(0);
-  const [actionError, setActionError] = useState("");
+  // A failed action keeps its request ID beside the message (D1.6).
+  const [actionError, setActionError] = useState<ApiErrorText | null>(null);
   const [printing, setPrinting] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const narrow = useNarrowScreen();
@@ -342,6 +351,7 @@ export function ReportCopyPanel({
               reason,
               "The copy could not be opened. Try again.",
             ),
+            reference: apiErrorReference(reason),
           });
       });
     return () => {
@@ -368,8 +378,11 @@ export function ReportCopyPanel({
         ],
         hasMore: page.pagination.hasMore,
       });
-    } catch {
-      setActionError("Older copies could not be loaded. Try again.");
+    } catch (reason) {
+      setActionError({
+        message: "Older copies could not be loaded. Try again.",
+        reference: apiErrorReference(reason),
+      });
     } finally {
       setOlderLoading(false);
     }
@@ -377,7 +390,7 @@ export function ReportCopyPanel({
 
   async function download(): Promise<void> {
     if (!current) return;
-    setActionError("");
+    setActionError(null);
     try {
       const ready =
         currentRead?.status === "ready"
@@ -393,21 +406,25 @@ export function ReportCopyPanel({
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
     } catch (reason) {
-      setActionError(
-        apiErrorMessage(reason, "The CSV could not be downloaded. Try again."),
-      );
+      setActionError({
+        message: apiErrorMessage(
+          reason,
+          "The CSV could not be downloaded. Try again.",
+        ),
+        reference: apiErrorReference(reason),
+      });
     }
   }
 
   async function print(): Promise<void> {
     if (!current || printing) return;
-    setActionError("");
+    setActionError(null);
     const blocked =
       "Your browser blocked the print window. Allow pop-ups and try again.";
     // Opened before any wait, so the browser treats it as the click's window.
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
-      setActionError(blocked);
+      setActionError({ message: blocked, reference: undefined });
       return;
     }
     printWindow.opener = null;
@@ -426,9 +443,13 @@ export function ReportCopyPanel({
       );
     } catch (reason) {
       printWindow.close();
-      setActionError(
-        apiErrorMessage(reason, "The copy could not be printed. Try again."),
-      );
+      setActionError({
+        message: apiErrorMessage(
+          reason,
+          "The copy could not be printed. Try again.",
+        ),
+        reference: apiErrorReference(reason),
+      });
     } finally {
       setPrinting(false);
     }
@@ -450,6 +471,7 @@ export function ReportCopyPanel({
           role="alert"
           variant="destructive"
           className="flex flex-wrap items-center justify-between gap-3"
+          reference={copiesReference}
         >
           <span>Copies could not be loaded. Try again.</span>
           <Button
@@ -591,8 +613,13 @@ export function ReportCopyPanel({
         </Button>
       </div>
       {actionError ? (
-        <Alert role="alert" variant="destructive" className="m-4">
-          {actionError}
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="m-4"
+          reference={actionError.reference}
+        >
+          <p>{actionError.message}</p>
         </Alert>
       ) : null}
       {/* Only this panel scrolls on desktop (EXIT-C4); phones open it full

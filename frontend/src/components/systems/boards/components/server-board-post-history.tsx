@@ -19,10 +19,11 @@ import {
   type BoardPostRevision,
   type BoardPostRevisionSummary,
 } from "../adapters/board-posts-api";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type Loaded<T> =
   | { status: "loading" }
-  | { status: "error"; error: string }
+  | { status: "error"; error: string; reference?: string }
   | { status: "ready"; data: T };
 
 function timeLabel(
@@ -51,11 +52,15 @@ function useRevisions(boardId: string, postId: string, retryKey: number) {
       .then((list) =>
         setState({ key, value: { status: "ready", data: list.items } }),
       )
-      .catch(() => {
+      .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({
           key,
-          value: { status: "error", error: "Edit history is unavailable." },
+          value: {
+            status: "error",
+            error: "Edit history is unavailable.",
+            reference: apiErrorReference(error),
+          },
         });
       });
     return () => controller.abort();
@@ -79,11 +84,15 @@ function useRevision(
       .then((data) =>
         setState({ id: revisionId, value: { status: "ready", data } }),
       )
-      .catch(() => {
+      .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({
           id: revisionId,
-          value: { status: "error", error: "This version is unavailable." },
+          value: {
+            status: "error",
+            error: "This version is unavailable.",
+            reference: apiErrorReference(error),
+          },
         });
       });
     return () => controller.abort();
@@ -153,7 +162,7 @@ function PostHistoryContent({
     );
   if (revisions.status === "error")
     return (
-      <Alert variant="destructive">
+      <Alert variant="destructive" reference={revisions.reference}>
         <p>{revisions.error}</p>
         <Button
           type="button"
@@ -212,7 +221,9 @@ function PostHistoryContent({
         {revision?.status === "ready" ? (
           <RevisionBody revision={revision.data} />
         ) : revision?.status === "error" ? (
-          <Alert variant="destructive">{revision.error}</Alert>
+          <Alert variant="destructive" reference={revision.reference}>
+            {revision.error}
+          </Alert>
         ) : (
           <p role="status" className="text-muted-foreground text-sm">
             Loading this version…

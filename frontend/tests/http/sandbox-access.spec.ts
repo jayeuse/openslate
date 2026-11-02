@@ -1,4 +1,11 @@
-import { expect, signedInAs, test } from "./helpers/test";
+import {
+  expect,
+  signedInAs,
+  test,
+  answeredHeaders,
+  serverBanner,
+  expectAnsweredReference,
+} from "./helpers/test";
 
 // The Sandbox belongs to administrators: every Sandbox API refuses anyone
 // else, so another account sees one calm notice and a way back, never a
@@ -53,11 +60,22 @@ test("an administrator whose Sandbox read fails on the server keeps Retry and se
     role: "admin",
   });
   await page.route("**/api/sandbox/**", (route) =>
-    route.fulfill({ status: 500, json: { detail: "Server error" } }),
+    route.fulfill({
+      status: 500,
+      headers: answeredHeaders,
+      json: { detail: "Server error" },
+    }),
   );
   await page.goto("/sandbox?section=build");
 
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expectAnsweredReference(
+    page
+      .getByRole("alert")
+      .filter({ has: page.getByRole("button", { name: "Retry" }) }),
+  );
+  // The server answered: its own error, not the connection banner.
+  await expect(serverBanner(page)).toHaveCount(0);
   await expect(
     page.getByText("Sandbox is not available to your account.", {
       exact: true,

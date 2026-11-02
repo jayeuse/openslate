@@ -198,6 +198,7 @@ function AssigneePicker({
           onSearchChange={picker.setSearch}
           loading={picker.loading}
           error={picker.error}
+          reference={picker.reference}
           onRetry={picker.retry}
           hasMore={picker.hasMore}
           onLoadMore={picker.loadMore}

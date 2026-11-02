@@ -122,7 +122,8 @@ def _ok(response, status=200):
 def _error(response, status, code):
     assert response.status_code == status, response.text
     body = response.json()
-    assert set(body) == {"detail"}
+    assert set(body) == {"detail", "request_id"}
+    assert body["request_id"] == response.headers["X-Request-ID"]
     assert set(body["detail"]) == {"code", "message"}
     assert body["detail"]["code"] == code
     assert isinstance(body["detail"]["message"], str)

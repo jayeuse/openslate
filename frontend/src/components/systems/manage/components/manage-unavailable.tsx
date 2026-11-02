@@ -6,7 +6,12 @@ import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import type { WorkspaceNavigationItem } from "@/components/workspace-navigation";
 
 type ManageSectionTitle =
-  "Organization" | "Audit" | "Backup" | "Jobs" | "Updates & licensing";
+  | "Organization"
+  | "System health"
+  | "Audit"
+  | "Backup"
+  | "Jobs"
+  | "Updates & licensing";
 
 /** The installation owner runs Backup and Updates; the rest follow the role. */
 export function manageUnavailableMessage(section: ManageSectionTitle): string {

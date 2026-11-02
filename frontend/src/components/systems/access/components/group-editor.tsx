@@ -97,6 +97,8 @@ import {
   detailRowClassName,
   TextField,
 } from "./people-fields";
+import { useErrorText } from "@/lib/use-error-text";
+import { errorTextFor, type ApiErrorText } from "@/lib/api-errors";
 
 type Edit<Value> = { baseline: Value; draft: Value };
 type Edits = {
@@ -206,14 +208,15 @@ export function GroupEditor({
       : "",
   );
   const [latest, setLatest] = useState<AccessGroup | null>(null);
-  const [errors, setErrors] = useState<Partial<Record<GroupSection, string>>>(
-    {},
-  );
+  const [errors, setErrors] = useState<
+    Partial<Record<GroupSection, ApiErrorText | null>>
+  >({});
   const [nameError, setNameError] = useState<string | null>(null);
   const [pending, setPending] = useState<GroupSection | "delete" | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
+  const [deleteErrorFailure, setDeleteError] = useErrorText();
+  const deleteError = deleteErrorFailure?.message ?? "";
   // The last edit each section's Discard removed, for its inline Undo.
   const [discardedEdits, setDiscardedEdits] = useState<Partial<Edits>>({});
   // Where focus goes once the bar under a section changes: the Undo after
@@ -340,7 +343,7 @@ export function GroupEditor({
     if (locked) return;
     const current = edits[section] as Edit<SectionValue[S]> | null;
     const baseline = current?.baseline ?? valueOf(shown, section);
-    setErrors((value) => ({ ...value, [section]: "" }));
+    setErrors((value) => ({ ...value, [section]: null }));
     if (section === "details") setNameError(null);
     setDiscardedEdits((value) => ({ ...value, [section]: null }));
     commitEdits({
@@ -353,7 +356,7 @@ export function GroupEditor({
     focusNext.current = { section, target: "undo" };
     setDiscardedEdits((value) => ({ ...value, [section]: edits[section] }));
     commitEdits({ ...edits, [section]: null });
-    setErrors((value) => ({ ...value, [section]: "" }));
+    setErrors((value) => ({ ...value, [section]: null }));
     if (section === "details") setNameError(null);
   }
 
@@ -447,8 +450,9 @@ export function GroupEditor({
           setEdits(withEdit);
           setErrors((value) => ({
             ...value,
-            [section]:
+            [section]: errorTextFor(
               "The save got no answer, so it may have completed. Check this group before you save again.",
+            ),
           }));
         }
         void afterAccessGroupChange(client);
@@ -468,9 +472,12 @@ export function GroupEditor({
       }
       setErrors((value) => ({
         ...value,
-        [section]: groupErrorMessage(
+        [section]: errorTextFor(
+          groupErrorMessage(
+            caught,
+            "The changes could not be saved. Try again.",
+          ),
           caught,
-          "The changes could not be saved. Try again.",
         ),
       }));
       void afterAccessGroupChange(client);
@@ -560,7 +567,7 @@ export function GroupEditor({
       if (found) return;
     }
     setPending(section);
-    setErrors((value) => ({ ...value, [section]: "" }));
+    setErrors((value) => ({ ...value, [section]: null }));
     try {
       await review(
         section,
@@ -571,9 +578,12 @@ export function GroupEditor({
     } catch (caught) {
       setErrors((value) => ({
         ...value,
-        [section]: groupErrorMessage(
+        [section]: errorTextFor(
+          groupErrorMessage(
+            caught,
+            "The changes could not be saved. Try again.",
+          ),
           caught,
-          "The changes could not be saved. Try again.",
         ),
       }));
     } finally {
@@ -616,9 +626,12 @@ export function GroupEditor({
     } catch (caught) {
       setErrors((value) => ({
         ...value,
-        [section]: groupErrorMessage(
+        [section]: errorTextFor(
+          groupErrorMessage(
+            caught,
+            "The changes could not be saved. Try again.",
+          ),
           caught,
-          "The changes could not be saved. Try again.",
         ),
       }));
     } finally {
@@ -649,6 +662,7 @@ export function GroupEditor({
     } catch (caught) {
       setDeleteError(
         groupErrorMessage(caught, "The group could not be deleted. Try again."),
+        caught,
       );
       void afterAccessGroupChange(client);
     } finally {
@@ -712,7 +726,11 @@ export function GroupEditor({
           </p>
         ) : null}
         {section === "members" && peopleSearch.error ? (
-          <Alert variant="destructive" className="space-y-3">
+          <Alert
+            variant="destructive"
+            className="space-y-3"
+            reference={peopleSearch.reference}
+          >
             <p>{peopleSearch.error}</p>
             <Button
               type="button"
@@ -777,7 +795,10 @@ export function GroupEditor({
     const sticky = section !== "details";
     return (
       <>
-        <ActionError message={errors[section] ?? ""} />
+        <ActionError
+          message={errors[section]?.message ?? ""}
+          reference={errors[section]?.reference}
+        />
         {changed || undo ? (
           <div
             className={cn(
@@ -1105,7 +1126,10 @@ export function GroupEditor({
               undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <ActionError message={deleteError} />
+          <ActionError
+            message={deleteError}
+            reference={deleteErrorFailure?.reference}
+          />
           <AlertDialogFooter>
             <Button
               variant="outline"

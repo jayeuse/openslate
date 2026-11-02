@@ -70,9 +70,11 @@ import {
   type SecurityEventFilters as Filters,
 } from "./security-events-toolbar";
 import { TableSkeleton } from "./table-skeleton";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type Detail =
-  | { id: string; status: "loading" | "error" }
+  | { id: string; status: "loading" }
+  | { id: string; status: "error"; reference?: string }
   | { id: string; status: "ready"; event: AccessSecurityEvent };
 type SecurityEventsViewProps = {
   active: boolean;
@@ -285,7 +287,11 @@ export function SecurityEventsView({
         if (owns()) setDetail({ id: eventId, status: "ready", event });
       } catch (error) {
         if (!owns()) return;
-        setDetail({ id: eventId, status: "error" });
+        setDetail({
+          id: eventId,
+          status: "error",
+          reference: apiErrorReference(error),
+        });
         if (
           isAccessSecurityDenied(client, "events") &&
           error instanceof ApiError &&
@@ -365,7 +371,12 @@ export function SecurityEventsView({
         />
       </fieldset>
       {denied || events.isError ? (
-        <Alert role="alert" variant="destructive" className="space-y-3">
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="space-y-3"
+          reference={denied ? null : apiErrorReference(events.error)}
+        >
           <p>
             {denied
               ? "Only administrators can review security events. Check your access, then retry."
@@ -532,6 +543,7 @@ export function SecurityEventsView({
                 role="alert"
                 variant="destructive"
                 className="my-4 space-y-3"
+                reference={detail.reference}
               >
                 <p>Details could not be loaded. Try again.</p>
                 <Button

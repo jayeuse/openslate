@@ -3,7 +3,7 @@
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { cn } from "@/lib/utils";
@@ -232,11 +232,15 @@ export function ModuleReports({
         void restore(report, report.revision + 1).catch((reason) =>
           reportError(
             apiErrorMessage(reason, "The report could not be restored."),
+            apiErrorReference(reason),
           ),
         );
       });
     } catch (reason) {
-      reportError(apiErrorMessage(reason, "The report could not be archived."));
+      reportError(
+        apiErrorMessage(reason, "The report could not be archived."),
+        apiErrorReference(reason),
+      );
     } finally {
       setPending("");
     }
@@ -249,7 +253,10 @@ export function ModuleReports({
       await restore(report, report.revision);
       reportDone("Report restored.");
     } catch (reason) {
-      reportError(apiErrorMessage(reason, "The report could not be restored."));
+      reportError(
+        apiErrorMessage(reason, "The report could not be restored."),
+        apiErrorReference(reason),
+      );
     } finally {
       setPending("");
     }
@@ -444,6 +451,7 @@ export function ModuleReports({
                   role="alert"
                   variant="destructive"
                   className="flex flex-wrap items-center justify-between gap-3"
+                  reference={apiErrorReference(list.error)}
                 >
                   <span>Reports could not be loaded. Try again.</span>
                   <Button

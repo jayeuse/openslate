@@ -16,6 +16,7 @@ import {
   messageFromCommsError,
 } from "../state/runtime";
 import { useCommsClient } from "../state/client-context";
+import { useErrorText } from "@/lib/use-error-text";
 
 export function DirectDialog({
   onClose,
@@ -45,7 +46,8 @@ export function DirectDialog({
   const [group, setGroup] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [name, setName] = useState(""),
-    [error, setError] = useState("");
+    [submitFailure, setError] = useErrorText();
+  const error = submitFailure?.message ?? "";
   const candidates =
     choices.data?.map((person) => ({
       id: person.user_id,
@@ -93,6 +95,7 @@ export function DirectDialog({
           failure,
           "The conversation could not be started. Your selection is still available.",
         ),
+        failure,
       );
     }
   }
@@ -137,7 +140,11 @@ export function DirectDialog({
           <Alert>Guests cannot start conversations.</Alert>
         )}
         {(choices.error || actor.error) && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={choices.error ? choices.reference : actor.reference}
+          >
             {choices.error || actor.error}
             <Button
               className="min-h-11 sm:min-h-0"
@@ -152,7 +159,11 @@ export function DirectDialog({
           </Alert>
         )}
         {error && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={submitFailure?.reference}
+          >
             {error}
           </Alert>
         )}

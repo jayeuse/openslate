@@ -18,6 +18,7 @@ import {
 } from "../helpers/csv-import-rules";
 import { importFailure } from "../helpers/record-import-failure";
 import type { WorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { useErrorText } from "@/lib/use-error-text";
 
 type CsvDraft = { name: string; headers: string[]; rows: CsvRow[] };
 type Preview = { digest: string; rows: ImportResultRow[] };
@@ -36,7 +37,8 @@ export function useRecordImport() {
   const [operation, setOperation] = useState<
     "file" | "preview" | "import" | null
   >(null);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [notice, setNotice] = useState("");
   const [stopping, setStopping] = useState(false);
   const [uncertain, setUncertain] = useState(false);
@@ -105,7 +107,7 @@ export function useRecordImport() {
       setCsv({ name: file.name, headers, rows });
     } catch (error) {
       if (generation.current === started && mounted.current)
-        setError(failureMessage(error, "The CSV could not be read."));
+        setError(failureMessage(error, "The CSV could not be read."), error);
     } finally {
       if (generation.current === started && mounted.current) {
         current.current = null;
@@ -167,6 +169,7 @@ export function useRecordImport() {
             error,
             "The preview could not be completed. Try again.",
           ),
+          error,
         );
     } finally {
       if (generation.current === started && mounted.current) {
@@ -199,7 +202,7 @@ export function useRecordImport() {
         csv.rows.filter((row) => eligible.has(row.row_number)),
       );
     } catch (error) {
-      setError(failureMessage(error, "This batch is too large."));
+      setError(failureMessage(error, "This batch is too large."), error);
       return;
     }
     current.current = "import";
@@ -228,13 +231,17 @@ export function useRecordImport() {
             error instanceof ApiError &&
             [401, 403, 404, 409, 422].includes(error.status);
           if (knownFailure) {
-            setError(failureMessage(error, "Import could not be completed."));
+            setError(
+              failureMessage(error, "Import could not be completed."),
+              error,
+            );
             setPreview(null);
           } else {
             resumeAfterBatch.current = null;
             setUncertain(true);
             setError(
               `Rows ${request.rows[0].row_number}–${request.rows.at(-1)!.row_number} are unconfirmed. ${receipts.current.size} records are confirmed. Check this module before starting another import; this batch will not be retried.`,
+              error,
             );
           }
           stop.current = true;
@@ -320,6 +327,7 @@ export function useRecordImport() {
     preview,
     operation,
     error,
+    errorReference: errorFailure?.reference,
     notice,
     stopping,
     uncertain,

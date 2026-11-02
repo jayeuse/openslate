@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   apiFetchWithMetadata,
   type ApiFetchMetadata,
+  apiContractError,
 } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
@@ -33,13 +33,13 @@ function versionedReply<T>(
   result: ApiFetchMetadata<z.ZodType<T>>,
   statuses: readonly number[],
 ): C.Versioned<T> {
-  requirePrivateNoStore(result.response.headers);
+  requirePrivateNoStore(result.response);
   if (
     !statuses.includes(result.response.status) ||
     result.etag === null ||
     !S.preconditionSchema.safeParse({ if_match: result.etag }).success
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return { data: result.data, etag: result.etag };
 }
 
@@ -94,7 +94,7 @@ export async function setAccessGrant(
     result.response.status === 201 &&
     result.response.headers.get("Location") !== `/api${path}`
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return versionedReply(result, [200, 201]);
 }
 
@@ -111,7 +111,7 @@ export async function removeAccessGrant(
     z.null(),
     { ...conditionalOptions(bound, options), method: "DELETE" },
   );
-  if (result.response.status !== 204) throw new ApiContractError();
+  if (result.response.status !== 204) throw apiContractError(result);
 }
 
 export async function listAccessCandidates(
@@ -138,7 +138,7 @@ export async function listAccessCandidates(
     ),
     { ...requestOptions(bound, options), method: "GET" },
   );
-  requirePrivateNoStore(result.response.headers);
-  if (result.response.status !== 200) throw new ApiContractError();
+  requirePrivateNoStore(result.response);
+  if (result.response.status !== 200) throw apiContractError(result);
   return result.data;
 }

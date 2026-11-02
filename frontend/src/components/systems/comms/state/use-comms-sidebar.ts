@@ -7,6 +7,7 @@ import type {
 import { useCommsWorkspaceView } from "./use-comms-workspace";
 import { useCommsCommands, messageFromCommsError } from "./runtime";
 import { reportCommsError } from "./comms-feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function muteActive(
   mute: CategoryPreferences["mute"] | undefined,
@@ -136,6 +137,7 @@ export function useCommsSidebar() {
     } catch (error) {
       reportCommsError(
         messageFromCommsError(error, "The mute could not be saved. Try again."),
+        apiErrorReference(error),
       );
     }
   }
@@ -154,6 +156,7 @@ export function useCommsSidebar() {
           error,
           "Conversation preferences could not be saved.",
         ),
+        apiErrorReference(error),
       );
     }
   }
@@ -176,6 +179,7 @@ export function useCommsSidebar() {
           error,
           "Category preferences could not be saved.",
         ),
+        apiErrorReference(error),
       );
     }
   }
@@ -196,6 +200,7 @@ export function useCommsSidebar() {
           error,
           "The conversation could not be marked read.",
         ),
+        apiErrorReference(error),
       );
     }
   }

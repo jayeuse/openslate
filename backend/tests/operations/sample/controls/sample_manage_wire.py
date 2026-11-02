@@ -49,7 +49,7 @@ def _workspace_profile(dataset):
 def _manage_run(tmp_path, pack_key, problem=None):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
-    assert len(actions) == 5, "Every new noninteractive Phase B route needs its own action"
+    assert len(actions) == 6, "Every new noninteractive Phase B route needs its own action"
     people = {
         p.key: p
         for p in dataset.organization.actors.people
@@ -150,6 +150,20 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     "policy_required": False,
                     **dict.fromkeys(("required_since", "enrollment_deadline")),
                     "factors": [],
+                },
+            )
+        if path == "/api/system/status":
+            keys = ["data", "signing_in", "files", "email"]
+            if problem == "system_status_shape":
+                keys.reverse()
+            statuses = dict(zip(keys, ("working", "working", "not_working", "set_up"), strict=True))
+            return httpx.Response(
+                200,
+                headers=headers,
+                json={
+                    "parts": [{"key": key, "status": statuses[key]} for key in keys],
+                    "version": "0.1.0",
+                    "checked_at": "2026-11-02T10:42:05.123456Z",
                 },
             )
         assert actor in staff

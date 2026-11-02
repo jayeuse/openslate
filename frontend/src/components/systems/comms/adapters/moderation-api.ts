@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   apiFetchWithMetadata,
   type ApiFetchMetadata,
+  apiContractError,
 } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
@@ -190,7 +190,7 @@ function reportActionResponse(
     !cache.includes("no-store") ||
     cache.includes("public")
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   // The compound validator is opaque. Never compute a source version or hydrate
   // the reported message: this authority returns only the existing queue DTO.
   return versioned;

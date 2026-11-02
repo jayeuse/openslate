@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch, apiContractError } from "@/lib/api";
 import type { BoardAttachmentVersions } from "./board-files-api";
 
 const uuid = z.string().uuid();
@@ -74,7 +74,7 @@ export async function listBoardRecordLinks(
     pageSchema,
     { cache: "no-store" },
   );
-  if (page.offset !== requestedOffset) throw new ApiContractError();
+  if (page.offset !== requestedOffset) throw apiContractError(page);
   return { items: page.items, hasMore: page.has_more };
 }
 
@@ -93,7 +93,7 @@ export async function addBoardRecordLink(
       content_revision: versions.contentRevision,
     }),
   });
-  if (link.recordId !== recordId) throw new ApiContractError();
+  if (link.recordId !== recordId) throw apiContractError(link);
   return link;
 }
 

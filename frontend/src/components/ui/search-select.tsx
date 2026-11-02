@@ -14,6 +14,7 @@ import {
   ComboboxList,
   ComboboxTrigger,
 } from "@/components/ui/combobox";
+import { ErrorReference } from "@/components/ui/error-reference";
 import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,8 @@ export interface SearchSelectProps {
   selectedOption?: SearchSelectOption;
   loading?: boolean;
   error?: string;
+  /** The request ID of the failed option read, shown after `error` (S1-C4). */
+  reference?: string | null;
   validationError?: string;
   onRetry?: () => void;
   hasMore?: boolean;
@@ -76,6 +79,7 @@ export function SearchSelect({
   selectedOption,
   loading = false,
   error,
+  reference,
   validationError,
   onRetry,
   hasMore = false,
@@ -198,19 +202,11 @@ export function SearchSelect({
               Loading options…
             </p>
           ) : error ? (
-            <div role="alert" className="space-y-2 p-3 text-sm">
-              <p>{error}</p>
-              {onRetry ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={onRetry}
-                >
-                  Retry
-                </Button>
-              ) : null}
-            </div>
+            <SearchSelectError
+              message={error}
+              reference={reference}
+              onRetry={onRetry}
+            />
           ) : (
             <ComboboxEmpty className="text-muted-foreground p-3 text-sm empty:p-0">
               {emptyMessage}
@@ -233,5 +229,36 @@ export function SearchSelect({
         <FieldError id={validationId}>{validationError}</FieldError>
       ) : null}
     </Field>
+  );
+}
+
+/**
+ * The option popup's error: the message, Retry, and the reference of the
+ * failed read as the last part (D1.4, docs/specs/system-health.md).
+ */
+export function SearchSelectError({
+  message,
+  reference,
+  onRetry,
+}: {
+  message: string;
+  reference?: string | null;
+  onRetry?: () => void;
+}) {
+  return (
+    <div role="alert" className="space-y-2 p-3 text-sm">
+      <p>{message}</p>
+      {onRetry ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      ) : null}
+      <ErrorReference id={reference} />
+    </div>
   );
 }

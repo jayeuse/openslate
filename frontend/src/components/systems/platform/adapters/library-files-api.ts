@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  apiFetch,
+  apiRequest,
+  apiContractError,
+} from "@/lib/api";
 import {
   fileDetails,
   fileWireSchema,
@@ -81,7 +86,7 @@ export type LibraryFilePage = {
 };
 
 function checkedFile(file: LibraryFile, fileId: string): LibraryFile {
-  if (file.id !== fileId) throw new ApiContractError();
+  if (file.id !== fileId) throw apiContractError(file);
   return file;
 }
 
@@ -193,7 +198,7 @@ export async function reserveLibraryFile(
     file.filename !== input.filename ||
     file.expectedSize !== input.expectedSize
   )
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }
 
@@ -246,7 +251,7 @@ export async function archiveLibraryFile(
     fileId,
   );
   if (!file.isDeleted || ["deleting", "purged"].includes(file.state))
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }
 
@@ -266,7 +271,7 @@ export async function reopenLibraryFile(
     fileId,
   );
   if (file.isDeleted || ["deleting", "purged"].includes(file.state))
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }
 

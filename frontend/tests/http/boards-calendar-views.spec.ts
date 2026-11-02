@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  answeredHeaders,
+  expectAnsweredReference,
+} from "./helpers/test";
 import {
   calendarBoardId,
   calendarHref,
@@ -418,12 +425,19 @@ test("an alert above the month keeps its bars at 1280×720, and the page still d
   await page.setViewportSize({ width: 1280, height: 720 });
   await installCalendarApi(page);
   await page.route(`**/api/boards/${calendarBoardId}/my-access`, (route) =>
-    route.fulfill({ status: 500, json: { detail: "unavailable" } }),
+    route.fulfill({
+      status: 500,
+      headers: answeredHeaders,
+      json: { detail: "unavailable" },
+    }),
   );
   await page.goto(calendarHref());
   await expect(
     page.getByText("Could not check edit access.", { exact: false }),
   ).toBeVisible();
+  await expectAnsweredReference(
+    page.getByRole("alert").filter({ hasText: "Could not check edit access." }),
+  );
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   // A week row keeps a lane for its bars, so the expo is not "+1 more".
   await expect(
