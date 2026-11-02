@@ -12,8 +12,8 @@ from app.systems.access.users.models import Membership, User
 def _require_owned(user: ProviderUser, profile: User, membership: Membership) -> None:
     if (
         user.email != profile.email
-        or user.app_metadata.get("openslate_user_id") != str(profile.id)
-        or user.app_metadata.get("openslate_invitation_operation_id")
+        or user.app_metadata.get("slateops_user_id") != str(profile.id)
+        or user.app_metadata.get("slateops_invitation_operation_id")
         != str(membership.provider_invitation_operation_id)
     ):
         raise InvitationError("Provider invitation does not match")

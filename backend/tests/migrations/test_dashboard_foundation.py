@@ -130,7 +130,7 @@ def _assert_dashboard_privileges(connection: Connection) -> None:
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
             assert connection.scalar(
                 statement,
-                {"role": "openslate_runtime", "table": table, "privilege": privilege},
+                {"role": "slateops_runtime", "table": table, "privilege": privilege},
             ) is True
             for role in ("anon", "authenticated", "service_role"):
                 assert (

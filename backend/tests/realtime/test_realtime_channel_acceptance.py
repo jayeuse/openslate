@@ -59,7 +59,7 @@ class Organizations:
 def organizations() -> Iterator[Organizations]:
     settings = get_settings()
     assert_provider_instance(
-        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+        dict(os.environ), database_url=settings.database_url, expected_user="slateops_runtime"
     )
     owner_engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     admin = httpx.Client(
@@ -279,7 +279,7 @@ def test_channel_token_opens_neither_storage_nor_auth(organizations: Organizatio
         base_url=settings.supabase_url.rstrip("/"), timeout=10, trust_env=False
     ) as gateway:
         stored = gateway.post(
-            f"/storage/v1/object/openslate-ready/{key}",
+            f"/storage/v1/object/slateops-ready/{key}",
             headers=service,
             content=b"private bytes",
         )
@@ -287,19 +287,19 @@ def test_channel_token_opens_neither_storage_nor_auth(organizations: Organizatio
         try:
             buckets = gateway.get("/storage/v1/bucket", headers=headers)
             listed = gateway.post(
-                "/storage/v1/object/list/openslate-ready",
+                "/storage/v1/object/list/slateops-ready",
                 headers=headers,
                 json={"prefix": "", "limit": 100},
             )
-            fetched = gateway.get(f"/storage/v1/object/openslate-ready/{key}", headers=headers)
+            fetched = gateway.get(f"/storage/v1/object/slateops-ready/{key}", headers=headers)
             authenticated = gateway.get(
-                f"/storage/v1/object/authenticated/openslate-ready/{key}", headers=headers
+                f"/storage/v1/object/authenticated/slateops-ready/{key}", headers=headers
             )
             user = gateway.get("/auth/v1/user", headers=headers)
         finally:
             gateway.request(
                 "DELETE",
-                "/storage/v1/object/openslate-ready",
+                "/storage/v1/object/slateops-ready",
                 headers=service,
                 json={"prefixes": [key]},
             )

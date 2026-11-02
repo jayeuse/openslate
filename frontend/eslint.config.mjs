@@ -20,9 +20,9 @@ const eslintConfig = defineConfig([
     // catches it at edit time (tests/isolated/eslint/field-parts-in-root.spec.ts).
     files: ["src/**/*.tsx"],
     plugins: {
-      openslate: { rules: { "field-parts-in-root": fieldPartsInRoot } },
+      slateops: { rules: { "field-parts-in-root": fieldPartsInRoot } },
     },
-    rules: { "openslate/field-parts-in-root": "error" },
+    rules: { "slateops/field-parts-in-root": "error" },
   },
   {
     // Test-quality guards from item 10 of docs/plans/test-suite-tier-2-5.md.

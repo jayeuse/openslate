@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from uuid import UUID
 
-EXPECTED_DATABASE_USER = "openslate_owner"
+EXPECTED_DATABASE_USER = "slateops_owner"
 
 APPLICATION_TABLES = (
     "audit_logs",

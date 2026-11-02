@@ -13,11 +13,11 @@ Slate Operations is a self-hosted web application installed separately for each 
 | Browser routes, assets, and 404s | FastAPI static-site delivery |
 | Business API and application authorization | FastAPI with synchronous SQLAlchemy and Slate Operations roles, groups, permissions, and domain policies |
 | Relational database | Supabase Database (PostgreSQL), with separate Supabase-owned and application-owned schemas |
-| Application schema | Alembic using the owner connection; the active fresh-install root is `8db89b6c6c35` |
+| Application schema | Alembic using the owner connection; the active fresh-install root is `e46611902f25` |
 | Authentication | Supabase Auth verifies email/password and issues provider sessions and JWTs |
 | Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions`; `memberships` give each user a role in each organization |
 | Organization context | The `X-Org` request header, else the session's active organization; FastAPI binds each transaction to that organization |
-| Files | PostgreSQL file metadata; private Supabase Storage buckets `openslate-ready` (organization files) and `openslate-avatars` (account avatars), mediated by FastAPI |
+| Files | PostgreSQL file metadata; private Supabase Storage buckets `slateops-ready` (organization files) and `slateops-avatars` (account avatars), mediated by FastAPI |
 | File-type validation | FastAPI allowlist and bounded parser subprocess before the Storage write |
 | Invalidation | Other application pages retain authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; OpenComms uses private Realtime notifications |
 | Realtime channels | Private OpenComms conversation topics backed by expiring FastAPI grants, own-user topics and organization presence; joined with a five-minute purpose-specific token from `POST /api/realtime/token` |
@@ -35,7 +35,7 @@ Ordinary private-conversation reads, report-bound moderation and privileged expo
 are distinct purposes; neither cached UI state nor a Realtime grant replaces a
 current authorized content read. See the [API purpose boundaries](07-api-architecture.md#ordinary-private-reads-versus-privileged-purposes).
 
-The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `openslate_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `openslate_session_liveness` SELECT policy. It has no Auth mutation access. PostgreSQL row-level security on organization tables refuses rows of other organizations as a backstop to FastAPI's explicit filters. Slate Operations does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
+The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `slateops_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `slateops_session_liveness` SELECT policy. It has no Auth mutation access. PostgreSQL row-level security on organization tables refuses rows of other organizations as a backstop to FastAPI's explicit filters. Slate Operations does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
 
 ## Development boundary
 

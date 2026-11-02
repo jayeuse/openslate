@@ -13889,7 +13889,7 @@
             "$ref": "#/components/schemas/DesignDocument"
           },
           "kind": {
-            "const": "openslate-sandbox",
+            "const": "slateops-sandbox",
             "title": "Kind",
             "type": "string"
           },
@@ -18256,7 +18256,7 @@
             "$ref": "#/components/schemas/DesignDocument"
           },
           "kind": {
-            "const": "openslate-sandbox",
+            "const": "slateops-sandbox",
             "title": "Kind",
             "type": "string"
           },
@@ -53358,7 +53358,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-SlateOps-Server-Key"
+              "title": "X-Slateops-Server-Key"
             }
           }
         ],

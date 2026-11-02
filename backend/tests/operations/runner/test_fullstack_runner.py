@@ -24,8 +24,8 @@ class _RunnerPostgres:
 
     def urls(self) -> dict[str, str]:
         return {
-            "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/openslate",
-            "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/openslate",
+            "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/slateops",
+            "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/slateops",
         }
 
     def write_manifest(self) -> Path:

@@ -84,7 +84,7 @@ PACK = OrganizationPack(
         currency_symbol="$",
         currency_code="USD",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:lakeshore-clinic:v1",
+        uuid_namespace="slateops:lakeshore-clinic:v1",
         span="one quarter of outpatient care, including the start of flu season",
         sampling_scope=(
             "clinical records are a 3% sample of visits; lab QC, fridge logs, maintenance "

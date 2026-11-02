@@ -29,7 +29,7 @@ def _statements(db: Session) -> Iterator[list[str]]:
     engine = db.get_bind().engine
 
     def record(_connection: object, _cursor: object, statement: str, *_args: object) -> None:
-        if "set_config('openslate.org_id'" not in statement:
+        if "set_config('slateops.org_id'" not in statement:
             executed.append(" ".join(statement.split())[:160])
 
     sqlalchemy_event.listen(engine, "before_cursor_execute", record)

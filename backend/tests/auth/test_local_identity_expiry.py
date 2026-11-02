@@ -55,8 +55,8 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
         None,
         user.email,
         {
-            "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
+            "slateops_user_id": str(user.id),
+            "slateops_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
         email_confirmed_at=now - timedelta(minutes=1),
     )

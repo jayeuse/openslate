@@ -24,7 +24,7 @@ from tests import supabase_runtime as _supabase_runtime
 POSTGRES_DATABASE = "postgres"
 POSTGRES_NETWORK_ALIAS = "db"
 POSTGRES_CONTAINER_PORT = 5432
-_DATABASE_ROLES = frozenset({"openslate_owner", "openslate_runtime"})
+_DATABASE_ROLES = frozenset({"slateops_owner", "slateops_runtime"})
 
 
 def postgres_network_name(run_id: str) -> str:

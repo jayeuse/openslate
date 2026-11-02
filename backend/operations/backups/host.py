@@ -207,7 +207,7 @@ class Host:
             raise RunnerError("admission_failed")
         try:
             target = instance_target_for_process(
-                values["DATABASE_URL"], "openslate_runtime", values
+                values["DATABASE_URL"], "slateops_runtime", values
             )
             if (
                 target is None

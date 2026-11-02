@@ -82,7 +82,7 @@ claim about a particular rendered run.
 ## Private files
 
 Slate Operations stores file metadata in PostgreSQL and bytes in the private Supabase Storage
-`openslate-ready` bucket. FastAPI authorizes transfers; browsers receive no Storage
+`slateops-ready` bucket. FastAPI authorizes transfers; browsers receive no Storage
 credentials or direct object URLs. The upload request validates the file type, writes the
 bytes, and commits the file as `ready` with its digest and size.
 

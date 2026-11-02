@@ -153,11 +153,11 @@ def _environment_values() -> tuple[dict[str, str], InstanceTarget, str, str, str
     provider_url, provider_secret, timeout, _backend_host, backend_port = (
         required_storage_environment(values)
     )
-    target = instance_target_for_process(migration_url, "openslate_owner", process=values)
+    target = instance_target_for_process(migration_url, "slateops_owner", process=values)
     if target is None:
         raise InstanceTargetError("The local Slate Operations database target is unavailable")
     validate_local_database_url(migration_url, target)
-    assert_provider_instance(values, database_url=migration_url, expected_user="openslate_owner")
+    assert_provider_instance(values, database_url=migration_url, expected_user="slateops_owner")
 
     try:
         port = int(backend_port)
@@ -271,7 +271,7 @@ def _local_preflight(
     with connect(_psycopg_database_url(migration_url, target)) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
-        assert_psycopg_target(connection, target, expected_user="openslate_owner")
+        assert_psycopg_target(connection, target, expected_user="slateops_owner")
         storage = ResetStorage(provider_url, provider_secret, timeout)
         object_keys = storage.list_object_keys()
         reset_plan = build_reset_plan(connection, admin_email, storage_object_keys=object_keys)

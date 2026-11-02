@@ -738,13 +738,13 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
                 "Development PUBLIC_ORIGIN must use a permitted local or LAN IP, "
                 "and FRONTEND_DEV_PORT when BACKEND_BIND_HOST is loopback"
             )
-    database_url(values, "DATABASE_URL", "openslate_runtime")
+    database_url(values, "DATABASE_URL", "slateops_runtime")
     if operations:
-        database_url(values, "MIGRATION_DATABASE_URL", "openslate_owner")
+        database_url(values, "MIGRATION_DATABASE_URL", "slateops_owner")
         database_url(values, "DATABASE_BOOTSTRAP_URL", "supabase_admin")
         if urlsplit(required(values, "DATABASE_BOOTSTRAP_URL")).username in {
-            "openslate_owner",
-            "openslate_runtime",
+            "slateops_owner",
+            "slateops_runtime",
         }:
             raise ConfigurationError("DATABASE_BOOTSTRAP_URL must use a cluster-admin login")
     absolute_path(values, "LOG_DIR")

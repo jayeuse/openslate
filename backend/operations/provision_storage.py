@@ -17,8 +17,8 @@ from app.core.config.settings import DOTENV_PATH
 IMAGES = ["image/png", "image/jpeg"]
 # D17/D18: organization files up to 10 MiB; account avatars up to 2 MiB, images only.
 BUCKETS: dict[str, dict[str, object]] = {
-    "openslate-ready": {"file_size_limit": 10 * 1024 * 1024, "allowed_mime_types": None},
-    "openslate-avatars": {"file_size_limit": 2 * 1024 * 1024, "allowed_mime_types": IMAGES},
+    "slateops-ready": {"file_size_limit": 10 * 1024 * 1024, "allowed_mime_types": None},
+    "slateops-avatars": {"file_size_limit": 2 * 1024 * 1024, "allowed_mime_types": IMAGES},
 }
 
 
@@ -40,7 +40,7 @@ def provision_storage(
     values: Mapping[str, str], *, transport: httpx.BaseTransport | None = None,
 ) -> None:
     assert_provider_instance(
-        values, database_url=values["DATABASE_URL"], expected_user="openslate_runtime",
+        values, database_url=values["DATABASE_URL"], expected_user="slateops_runtime",
     )
     try:
         with httpx.Client(

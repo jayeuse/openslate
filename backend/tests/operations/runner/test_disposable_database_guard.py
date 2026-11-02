@@ -55,7 +55,7 @@ def test_runner_resource_inventory_matches_provider_compose() -> None:
 
 @pytest.fixture
 def disposable_target(tmp_path, monkeypatch):
-    url = "postgresql+psycopg://openslate_runtime:test-only-placeholder@127.0.0.1:49152/postgres"
+    url = "postgresql+psycopg://slateops_runtime:test-only-placeholder@127.0.0.1:49152/postgres"
     run_id = "a" * 32
     project = f"slateops-e2e-{run_id}"
     worktree = str(instance.REPOSITORY_ROOT.resolve())
@@ -211,7 +211,7 @@ def disposable_target(tmp_path, monkeypatch):
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
         "postgres",
-        "openslate_runtime",
+        "slateops_runtime",
         project,
     )
     engine = MagicMock()
@@ -268,7 +268,7 @@ def test_only_run_owned_exact_disposable_target_is_accepted(disposable_target):
         url.replace("127.0.0.1", "production.example"),
         url.replace("49152", "54322"),
         url.replace("/postgres", "/production"),
-        url.replace("openslate_runtime", "other_role"),
+        url.replace("slateops_runtime", "other_role"),
         url.replace(":49152/postgres", ":49152/postgres?host=production.example"),
     ):
         with pytest.raises(RuntimeError):
@@ -357,7 +357,7 @@ def test_swapped_authorized_roles_are_refused_before_connect(
     from tests import conftest
 
     url, _facts = disposable_target
-    owner_url = url.replace("openslate_runtime", "postgres")
+    owner_url = url.replace("slateops_runtime", "postgres")
     manifest = Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"])
     contents = json.loads(manifest.read_text())
     contents["urls"] = [url, owner_url]
@@ -484,7 +484,7 @@ def test_a_cached_owner_is_still_refused_when_the_database_identity_changes(
     _guard_for_test(_TestItem(), url)
     facts["connection"].exec_driver_sql.return_value.one.return_value = (
         "postgres",
-        "openslate_runtime",
+        "slateops_runtime",
         "another-cluster",
     )
 
@@ -507,7 +507,7 @@ def test_a_refused_guard_is_never_reused_within_a_test(disposable_target, monkey
 
 def test_runtime_database_guard_rechecks_live_database_ownership(disposable_target):
     url, facts = disposable_target
-    runtime = frozenset({"openslate_runtime"})
+    runtime = frozenset({"slateops_runtime"})
     assert_runner_database_url(url, dict(os.environ), allowed_roles=runtime)
     facts["volume"]["Labels"]["slateops.test.run"] = "other-run"
     with pytest.raises(RuntimeError, match="live runner-owned instance"):
@@ -517,16 +517,16 @@ def test_runtime_database_guard_rechecks_live_database_ownership(disposable_targ
 @pytest.mark.parametrize(
     ("database", "user", "cluster"),
     [
-        ("other", "openslate_runtime", True),
-        ("openslate", "other", True),
-        ("openslate", "openslate_runtime", False),
+        ("other", "slateops_runtime", True),
+        ("slateops", "other", True),
+        ("slateops", "slateops_runtime", False),
     ],
 )
 def test_test_mode_connected_identity_must_match_before_write(
     disposable_target, database, user, cluster
 ):
     url, facts = disposable_target
-    target = instance_target_for_process(url, "openslate_runtime", os.environ)
+    target = instance_target_for_process(url, "slateops_runtime", os.environ)
     connection = facts["connection"]
     connection.exec_driver_sql.return_value.one.return_value = (
         database,
@@ -760,7 +760,7 @@ def test_disposable_supabase_cleans_only_owned_partial_resources(
 
 
 def test_test_process_rejects_a_self_written_manifest_without_live_instance(tmp_path: Path) -> None:
-    database_url = "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate"
+    database_url = "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55322/slateops"
     manifest = tmp_path / "database.json"
     manifest.write_text(json.dumps({"run_id": "a" * 32, "urls": [database_url]}))
     manifest.chmod(0o600)
@@ -772,10 +772,10 @@ def test_test_process_rejects_a_self_written_manifest_without_live_instance(tmp_
     }
 
     with pytest.raises(InstanceTargetError):
-        instance_target_for_process(database_url, "openslate_runtime", process)
+        instance_target_for_process(database_url, "slateops_runtime", process)
     with pytest.raises(InstanceTargetError):
         instance_target_for_process(
-            database_url.replace("55322", "54322"), "openslate_runtime", process
+            database_url.replace("55322", "54322"), "slateops_runtime", process
         )
 
 
@@ -783,13 +783,13 @@ def _container_runtime_process(
     tmp_path: Path, mode: int = 0o600, network: str | None = None
 ) -> tuple[str, dict[str, str]]:
     run_id = "a" * 32
-    database_url = "postgresql+psycopg://openslate_runtime:secret@slateops-postgres:5432/openslate"
+    database_url = "postgresql+psycopg://slateops_runtime:secret@slateops-postgres:5432/slateops"
     manifest = tmp_path / "database.json"
     manifest.write_text(
         json.dumps(
             {
                 "run_id": run_id,
-                "urls": ["postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate"],
+                "urls": ["postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55322/slateops"],
                 "container_runtime": {
                     "url": database_url,
                     "network": network or f"slateops-app-e2e-{run_id}",
@@ -812,7 +812,7 @@ def _container_runtime_process(
 def test_test_process_rejects_a_container_manifest_without_live_identity(tmp_path: Path) -> None:
     database_url, process = _container_runtime_process(tmp_path)
     with pytest.raises(InstanceTargetError):
-        instance_target_for_process(database_url, "openslate_runtime", process)
+        instance_target_for_process(database_url, "slateops_runtime", process)
 
 
 @pytest.mark.parametrize(
@@ -820,7 +820,7 @@ def test_test_process_rejects_a_container_manifest_without_live_identity(tmp_pat
     [
         ("slateops-postgres", "other-postgres", None, "", ""),
         (":5432", ":5433", None, "", ""),
-        ("openslate_runtime", "openslate_owner", None, "", ""),
+        ("slateops_runtime", "slateops_owner", None, "", ""),
         ("", "", "shared-test-network", "", ""),
         ("", "", None, "E2E_ALLOW_MUTATIONS", "false"),
         ("", "", None, "SLATEOPS_FULLSTACK_RUN_ID", "b" * 32),
@@ -833,7 +833,7 @@ def test_test_process_rejects_a_wrong_container_target(
     if name:
         process[name] = value
     with pytest.raises(InstanceTargetError):
-        instance_target_for_process(database_url.replace(old, new), "openslate_runtime", process)
+        instance_target_for_process(database_url.replace(old, new), "slateops_runtime", process)
 
 
 @pytest.mark.parametrize("state", ["missing", "public"])
@@ -848,4 +848,4 @@ def test_test_process_rejects_a_missing_or_unsafe_container_manifest(
         path.chmod(0o644)
     process["SLATEOPS_TEST_DATABASE_MANIFEST"] = str(path)
     with pytest.raises(InstanceTargetError):
-        instance_target_for_process(database_url, "openslate_runtime", process)
+        instance_target_for_process(database_url, "slateops_runtime", process)

@@ -73,8 +73,8 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
     environment = tmp_path / ".env"
     environment.write_text(
         "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\n"
-        "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://openslate_runtime:pass@127.0.0.1/db\n"
-        "MIGRATION_DATABASE_URL=postgresql+psycopg://openslate_owner:pass@127.0.0.1/db\n"
+        "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://slateops_runtime:pass@127.0.0.1/db\n"
+        "MIGRATION_DATABASE_URL=postgresql+psycopg://slateops_owner:pass@127.0.0.1/db\n"
         "DATABASE_BOOTSTRAP_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
         encoding="utf-8",
     )

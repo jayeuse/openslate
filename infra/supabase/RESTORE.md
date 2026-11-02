@@ -193,7 +193,7 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   up -d auth storage imgproxy realtime meta studio api-gw
 ```
 
-Check their health, confirm target database/schema admission and application roles, verify the private `openslate-ready` Storage bucket, and confirm the target's provider configuration. Do not rerun initialization or a migration that changes restored data without a release-specific migration decision. Start the API and verify its target identity, authenticated behavior, file access, and email-template route:
+Check their health, confirm target database/schema admission and application roles, verify the private `slateops-ready` Storage bucket, and confirm the target's provider configuration. Do not rerun initialization or a migration that changes restored data without a release-specific migration decision. Start the API and verify its target identity, authenticated behavior, file access, and email-template route:
 
 ```sh
 docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV \

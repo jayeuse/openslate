@@ -276,8 +276,8 @@ def invite_user(
     try:
         provider_user = provider.admin_create_invitation_user(user.email, user.id, operation_id)
         expected_marker = {
-            "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(operation_id),
+            "slateops_user_id": str(user.id),
+            "slateops_invitation_operation_id": str(operation_id),
         }
         if provider_user.email != user.email or any(
             provider_user.app_metadata.get(k) != v for k, v in expected_marker.items()

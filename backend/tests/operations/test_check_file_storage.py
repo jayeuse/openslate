@@ -57,15 +57,15 @@ def _objects(storage: Storage) -> dict[str, dict[str, int | None]]:
 def test_an_unchanged_installation_reports_no_difference() -> None:
     inventory = check.Inventory([_row(1, READY_KEY), _row(2, AVATAR_KEY, size=7)])
     storage = Storage({
-        "openslate-ready": {READY_KEY: 10},
-        "openslate-avatars": {AVATAR_KEY: 7},
+        "slateops-ready": {READY_KEY: 10},
+        "slateops-avatars": {AVATAR_KEY: 7},
     })
 
     result = check.report(inventory, _objects(storage))
 
     assert result["status"] == "ok" and result["differences"] == []
     assert result["ready_files"] == 2
-    assert result["objects"] == {"openslate-ready": 1, "openslate-avatars": 1}
+    assert result["objects"] == {"slateops-ready": 1, "slateops-avatars": 1}
     assert set(storage.methods) == {"POST"}  # Listing only: the check changes nothing.
 
 
@@ -77,8 +77,8 @@ def test_each_difference_names_its_kind_bucket_and_file() -> None:
         _row(4, purged, state="purged", size=None),
     ])
     storage = Storage({
-        "openslate-ready": {READY_KEY: 10, resized: 11, purged: 5},
-        "openslate-avatars": {orphan: 3},
+        "slateops-ready": {READY_KEY: 10, resized: 11, purged: 5},
+        "slateops-avatars": {orphan: 3},
     })
 
     result = check.report(inventory, _objects(storage))
@@ -89,10 +89,10 @@ def test_each_difference_names_its_kind_bucket_and_file() -> None:
          item["object_size"])
         for item in result["differences"]
     ) == [
-        ("extra_object", "openslate-avatars", None, None, 3),
-        ("extra_object", "openslate-ready", str(UUID(int=4)), None, 5),
-        ("missing_object", "openslate-ready", str(UUID(int=2)), 10, None),
-        ("size_difference", "openslate-ready", str(UUID(int=3)), 10, 11),
+        ("extra_object", "slateops-avatars", None, None, 3),
+        ("extra_object", "slateops-ready", str(UUID(int=4)), None, 5),
+        ("missing_object", "slateops-ready", str(UUID(int=2)), 10, None),
+        ("size_difference", "slateops-ready", str(UUID(int=3)), 10, 11),
     ]
 
 
@@ -104,8 +104,8 @@ def test_objects_of_unfinished_operations_and_comms_exports_are_expected() -> No
         {export},
     )
     storage = Storage({
-        "openslate-ready": {uploading: 4, deleting: 4, export: 9},
-        "openslate-avatars": {},
+        "slateops-ready": {uploading: 4, deleting: 4, export: 9},
+        "slateops-avatars": {},
     })
 
     assert check.report(inventory, _objects(storage))["differences"] == []
@@ -113,11 +113,11 @@ def test_objects_of_unfinished_operations_and_comms_exports_are_expected() -> No
 
 def test_the_listing_reads_every_page_and_folder() -> None:
     keys = {f"org/{ORG}/{number:032x}": number + 1 for number in range(205)}
-    storage = Storage({"openslate-ready": keys})
+    storage = Storage({"slateops-ready": keys})
     with httpx.Client(
         base_url="http://owned.test/storage/v1/", transport=httpx.MockTransport(storage)
     ) as client:
-        assert list_bucket(client, "openslate-ready") == keys
+        assert list_bucket(client, "slateops-ready") == keys
         with pytest.raises(StorageListingError):
             list_bucket(client, "slateops-unknown")
 
@@ -125,8 +125,8 @@ def test_the_listing_reads_every_page_and_folder() -> None:
 @pytest.mark.parametrize(
     ("objects", "code"),
     [
-        pytest.param({"openslate-ready": {READY_KEY: 10}, "openslate-avatars": {}}, 0, id="ok"),
-        pytest.param({"openslate-ready": {}, "openslate-avatars": {}}, 1, id="attention"),
+        pytest.param({"slateops-ready": {READY_KEY: 10}, "slateops-avatars": {}}, 0, id="ok"),
+        pytest.param({"slateops-ready": {}, "slateops-avatars": {}}, 1, id="attention"),
         pytest.param(None, 2, id="unavailable"),
     ],
 )

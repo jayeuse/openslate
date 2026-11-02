@@ -91,7 +91,7 @@ PROVIDER_BIND_MOUNTS = {
 }
 _RUN_ID = re.compile(r"[a-f0-9]{32}\Z")
 _DOCKER_ID = re.compile(r"[a-f0-9]{12,64}\Z")
-_ROLES = frozenset({"supabase_admin", "openslate_owner", "openslate_runtime"})
+_ROLES = frozenset({"supabase_admin", "slateops_owner", "slateops_runtime"})
 
 
 class DisposableTargetError(ValueError):
@@ -209,7 +209,7 @@ def load_disposable_target(
         )
         container_url = manifest.get("container_runtime")
         container_target = (
-            expected_user == "openslate_runtime"
+            expected_user == "slateops_runtime"
             and parts.hostname == "db"
             and parts.port == 5432
             and container_url
@@ -221,7 +221,7 @@ def load_disposable_target(
             }
             and Path("/.dockerenv").is_file()
             and any(
-                (host := make_url(value)).username == "openslate_runtime"
+                (host := make_url(value)).username == "slateops_runtime"
                 and host.password == url.password
                 and host.host == "127.0.0.1"
                 and host.port == ownership["db_port"]

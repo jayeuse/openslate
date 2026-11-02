@@ -54,7 +54,7 @@ def test_load_instance_target_requires_owned_attestation_and_matching_target(
     ("name", "value"),
     [
         ("POSTGRES_PORT", "55322"),
-        ("POSTGRES_DATABASE", "openslate"),
+        ("POSTGRES_DATABASE", "slateops"),
         ("SLATEOPS_INSTANCE_ID", "slateops-other-a1b2c3d4"),
     ],
 )
@@ -86,9 +86,9 @@ def test_load_instance_target_rejects_unknown_or_shared_ownership(
 @pytest.mark.parametrize(
     ("database", "user", "cluster_name"),
     [
-        ("other", "openslate_runtime", "slateops-boards-a1b2c3d4"),
-        ("postgres", "openslate_owner", "slateops-boards-a1b2c3d4"),
-        ("postgres", "openslate_runtime", "other-cluster"),
+        ("other", "slateops_runtime", "slateops-boards-a1b2c3d4"),
+        ("postgres", "slateops_owner", "slateops-boards-a1b2c3d4"),
+        ("postgres", "slateops_runtime", "other-cluster"),
     ],
 )
 def test_assert_instance_target_rejects_live_database_user_or_cluster(
@@ -101,7 +101,7 @@ def test_assert_instance_target_rejects_live_database_user_or_cluster(
     connection.exec_driver_sql.return_value.one.return_value = (database, user, cluster_name)
 
     with pytest.raises(InstanceTargetError):
-        assert_instance_target(connection, target, expected_user="openslate_runtime")
+        assert_instance_target(connection, target, expected_user="slateops_runtime")
 
 
 def test_assert_instance_target_accepts_the_attested_live_target(
@@ -113,20 +113,20 @@ def test_assert_instance_target_accepts_the_attested_live_target(
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
         "postgres",
-        "openslate_runtime",
+        "slateops_runtime",
         "slateops-boards-a1b2c3d4",
     )
 
-    assert_instance_target(connection, target, expected_user="openslate_runtime")
+    assert_instance_target(connection, target, expected_user="slateops_runtime")
     connection.exec_driver_sql.assert_called_once()
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/postgres",
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/other",
-        "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres",
+        "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55322/postgres",
+        "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55432/other",
+        "postgresql+psycopg://slateops_owner:secret@127.0.0.1:55432/postgres",
     ],
 )
 def test_assert_database_url_rejects_wrong_port_database_or_user(
@@ -137,7 +137,7 @@ def test_assert_database_url_rejects_wrong_port_database_or_user(
     target = load_instance_target(_environment())
 
     with pytest.raises(InstanceTargetError):
-        assert_database_url(url, target, expected_user="openslate_runtime")
+        assert_database_url(url, target, expected_user="slateops_runtime")
 
 
 def test_migration_advisory_lock_is_held_for_the_entire_migration_block() -> None:
@@ -176,14 +176,14 @@ def test_migration_lock_survives_commits_until_the_block_ends() -> None:
                 first.exec_driver_sql("SELECT 1")
                 first.commit()
                 acquired = second.exec_driver_sql(
-                    "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("openslate:alembic",)
+                    "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("slateops:alembic",)
                 ).scalar_one()
                 assert acquired is False
                 second.rollback()
             assert not first.in_transaction()
 
             acquired = second.exec_driver_sql(
-                "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("openslate:alembic",)
+                "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("slateops:alembic",)
             ).scalar_one()
             assert acquired is True
             second.rollback()
@@ -264,8 +264,8 @@ def test_process_target_rechecks_live_container_network_and_volume(
     }
 
     target = instance_target_for_process(
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
-        "openslate_runtime",
+        "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55432/postgres",
+        "slateops_runtime",
         process,
     )
 
@@ -291,8 +291,8 @@ def test_process_target_rejects_live_volume_not_mounted_by_attested_container(
 
     with pytest.raises(InstanceTargetError, match="Live Docker ownership"):
         instance_target_for_process(
-            "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
-            "openslate_runtime",
+            "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55432/postgres",
+            "slateops_runtime",
             {**_environment(), "ENVIRONMENT": "development"},
         )
 
@@ -311,8 +311,8 @@ def test_production_target_is_explicit_and_does_not_require_local_docker(
     )
 
     target = instance_target_for_process(
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
-        "openslate_runtime",
+        "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55432/postgres",
+        "slateops_runtime",
         process,
     )
 
@@ -327,10 +327,10 @@ def test_production_target_is_explicit_and_does_not_require_local_docker(
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
         "postgres",
-        "openslate_runtime",
+        "slateops_runtime",
         "slateops-boards-a1b2c3d4",
     )
-    assert_instance_target(connection, target, expected_user="openslate_runtime")
+    assert_instance_target(connection, target, expected_user="slateops_runtime")
 
 
 def test_health_instance_identity_is_non_secret_and_worktree_bound(

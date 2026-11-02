@@ -47,7 +47,7 @@ def append_representative_failure(
     address = canonical_source(source)
     secret = get_settings().security_event_server_key.get_secret_value().encode()
     bucket = f"{event_type}\x00{address or '<unknown>'}\x00{start.isoformat()}".encode()
-    fingerprint = digest(secret, b"openslate:security-representative:v1:" + bucket, "sha256").hex()
+    fingerprint = digest(secret, b"slateops:security-representative:v1:" + bucket, "sha256").hex()
     lock_key = int.from_bytes(sha256(fingerprint.encode()).digest()[:8], signed=True)
     db.execute(select(func.pg_advisory_xact_lock(lock_key)))
     existing = db.scalar(

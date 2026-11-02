@@ -331,7 +331,7 @@ def _assert_post_schema_and_privileges(connection: Connection) -> None:
         for action in TABLE_ACTIONS:
             assert (
                 connection.scalar(
-                    text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
+                    text("SELECT has_table_privilege('slateops_runtime', :table, :action)"),
                     {"table": f"public.{table}", "action": action},
                 )
                 is True

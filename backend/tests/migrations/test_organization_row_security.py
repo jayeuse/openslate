@@ -137,7 +137,7 @@ def test_session_scope_survives_commit_and_rollback(two_organizations):
         db.commit()
         assert db.get(Department, world.second_department) is None
         db.rollback()
-        current = text("SELECT current_setting('openslate.org_id', true)")
+        current = text("SELECT current_setting('slateops.org_id', true)")
         assert db.connection().scalar(current) == str(world.first)
     with AuditSession(world.runtime) as db:
         assert db.get(Department, world.first_department) is None

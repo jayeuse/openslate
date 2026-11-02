@@ -18,7 +18,7 @@ def test_reused_connection_resets_session_state_and_keeps_prepared_statements_va
         os.environ["MIGRATION_DATABASE_URL"], pool_size=1, max_overflow=0
     )
     event.listen(engine, "checkin", _discard_session_state)
-    statement = "SELECT set_config('openslate.pool_reset_probe', %(value)s, true)"
+    statement = "SELECT set_config('slateops.pool_reset_probe', %(value)s, true)"
     try:
         # One test that prepares nothing, then two that commit after a prepared statement
         # (a rollback would clear psycopg's cache itself). A reset that drops psycopg's

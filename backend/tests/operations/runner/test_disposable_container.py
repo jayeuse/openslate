@@ -65,9 +65,9 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
     path.write_text(json.dumps(manifest))
     if alter is not None:
         with pytest.raises(InstanceTargetError):
-            instance_target_for_process(runtime_url, "openslate_runtime", process)
+            instance_target_for_process(runtime_url, "slateops_runtime", process)
     else:
-        target = instance_target_for_process(runtime_url, "openslate_runtime", process)
+        target = instance_target_for_process(runtime_url, "slateops_runtime", process)
         assert target is not None
         assert (target.host, target.port, target.database) == ("db", 5432, "postgres")
         assert target.cluster_name == manifest["ownership"]["cluster_name"]

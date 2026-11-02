@@ -77,7 +77,7 @@ class ApiProcess:
 def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
     settings = get_settings()
     assert_provider_instance(
-        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+        dict(os.environ), database_url=settings.database_url, expected_user="slateops_runtime"
     )
     email = f"provider-sse-{uuid4().hex}@example.test"
     password = _synthetic_password()

@@ -31,7 +31,7 @@ def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> 
     monkeypatch.setattr(
         "app.systems.platform.events.publisher.get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://user:secret@db/openslate",
+            database_url="postgresql+psycopg://user:secret@db/slateops",
             database_connect_timeout_seconds=3,
             database_statement_timeout_ms=15_000,
         ),
@@ -78,7 +78,7 @@ def test_publisher_failure_is_best_effort(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.systems.platform.events.publisher.get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://user:secret@db/openslate",
+            database_url="postgresql+psycopg://user:secret@db/slateops",
             database_connect_timeout_seconds=3,
             database_statement_timeout_ms=15_000,
         ),
@@ -108,7 +108,7 @@ def test_large_commit_collapses_to_one_resync_notification(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.systems.platform.events.publisher.get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://user:secret@db/openslate",
+            database_url="postgresql+psycopg://user:secret@db/slateops",
             database_connect_timeout_seconds=3,
             database_statement_timeout_ms=15_000,
         ),
@@ -146,7 +146,7 @@ def test_private_notification_overflow_never_emits_a_global_resync(monkeypatch) 
     monkeypatch.setattr(
         "app.systems.platform.events.publisher.get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://user:secret@db/openslate",
+            database_url="postgresql+psycopg://user:secret@db/slateops",
             database_connect_timeout_seconds=3,
             database_statement_timeout_ms=15_000,
         ),
@@ -231,7 +231,7 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
 
         listener = PostgresInvalidationListener(
             hub,
-            "postgresql://user:secret@db/openslate",
+            "postgresql://user:secret@db/slateops",
             connect=connect,
             connect_timeout_seconds=3,
             statement_timeout_ms=15_000,
@@ -245,7 +245,7 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
             assert attempts >= 2
             # The live connection: autocommit (LISTEN needs it) and the bounded timeouts.
             assert connects[-1] == (
-                ("postgresql://user:secret@db/openslate",),
+                ("postgresql://user:secret@db/slateops",),
                 {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"},
             )
             assert statements == ["LISTEN slateops_invalidation"]
@@ -291,7 +291,7 @@ def test_listener_reconnect_resyncs_subscribers_and_keeps_a_live_thread_referenc
 
         listener = PostgresInvalidationListener(
             hub,
-            "postgresql://user:secret@db/openslate",
+            "postgresql://user:secret@db/slateops",
             connect=connect,
             connect_timeout_seconds=3,
             statement_timeout_ms=15_000,
@@ -316,7 +316,7 @@ def test_stop_retains_a_thread_reference_when_bounded_shutdown_times_out(monkeyp
     release = threading.Event()
     listener = PostgresInvalidationListener(
         EventHub(),
-        "postgresql://user:secret@db/openslate",
+        "postgresql://user:secret@db/slateops",
         connect_timeout_seconds=3,
         statement_timeout_ms=15_000,
     )
@@ -357,7 +357,7 @@ def test_stop_returns_cleanly_while_the_database_refuses_connections(monkeypatch
 
     listener = PostgresInvalidationListener(
         EventHub(),
-        "postgresql://user:secret@db/openslate",
+        "postgresql://user:secret@db/slateops",
         connect=connect,
         connect_timeout_seconds=3,
         statement_timeout_ms=15_000,

@@ -117,7 +117,7 @@ PACK = OrganizationPack(
         currency_symbol="₱",
         currency_code="PHP",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:dalisay-city:v1",
+        uuid_namespace="slateops:dalisay-city:v1",
         span=(
             "one calendar year of city hall work, with the January permit renewal peak and the "
             "June to November rains"

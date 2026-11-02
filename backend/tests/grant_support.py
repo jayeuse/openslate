@@ -1,6 +1,6 @@
 """Table grant checks with the real PostgreSQL roles (plan item 20).
 
-Every application table grants exactly the four data privileges to ``openslate_runtime``
+Every application table grants exactly the four data privileges to ``slateops_runtime``
 and none of them to the Supabase provider roles. Rows of the table under test name it.
 """
 
@@ -15,7 +15,7 @@ def assert_runtime_only_grants(connection: Connection, table_name: str) -> None:
 
     statement = text("SELECT has_table_privilege(:role, :table_name, :privilege)")
     for privilege in RUNTIME_PRIVILEGES:
-        granted = {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege}
+        granted = {"role": "slateops_runtime", "table_name": table_name, "privilege": privilege}
         assert connection.scalar(statement, granted) is True, granted
         for role in PROVIDER_ROLES:
             denied = {"role": role, "table_name": table_name, "privilege": privilege}

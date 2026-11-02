@@ -25,7 +25,7 @@ def test_select_relationship_mapping_translates_independent_ids_by_shared_label(
     source_id, target_id = str(uuid7()), str(uuid7())
     document = SandboxDocument.model_validate(
         {
-            "kind": "openslate-sandbox",
+            "kind": "slateops-sandbox",
             "schemaVersion": 4,
             "design": {
                 "departments": [{"id": "department", "name": "Department"}],

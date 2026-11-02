@@ -13,7 +13,7 @@ const selectedOptionId = "00000000-0000-4000-8000-000000000031";
 const userId = "00000000-0000-4000-8000-000000000032";
 
 type DocumentV4Fixture = {
-  kind: "openslate-sandbox";
+  kind: "slateops-sandbox";
   schemaVersion: 4;
   design: {
     departments: Array<{ id: string; name: string; closed: boolean }>;
@@ -53,7 +53,7 @@ type DocumentV4Fixture = {
 
 function documentFixture(): DocumentV4Fixture {
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: 4,
     design: {
       departments: [{ id: "ops", name: "Operations", closed: false }],

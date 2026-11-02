@@ -68,7 +68,7 @@ def test_saved_chart_catalog_roles_and_runtime_crud(chart_migration: ChartMigrat
         } <= indexes
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
             assert connection.scalar(
-                text("SELECT has_table_privilege('openslate_runtime', 'public.charts', :p)"),
+                text("SELECT has_table_privilege('slateops_runtime', 'public.charts', :p)"),
                 {"p": privilege},
             )
             for role in ("anon", "authenticated", "service_role"):
@@ -82,7 +82,7 @@ def test_saved_chart_catalog_roles_and_runtime_crud(chart_migration: ChartMigrat
             WHERE c.oid = 'public.charts'::regclass AND a.grantee = 0
         """)) == 0
     with fixture.runtime.begin() as connection:
-        assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+        assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
         _chart(connection, fixture)
         assert connection.scalar(
             text("SELECT revision FROM public.charts WHERE id = :id"), {"id": fixture.ids["chart"]}

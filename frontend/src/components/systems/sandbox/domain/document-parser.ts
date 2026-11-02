@@ -1421,8 +1421,8 @@ function parseDocument(
     ["kind", "schemaVersion", "design", "triggers", "scenarios", "versions"],
     "sandbox document",
   );
-  if (source.kind !== "openslate-sandbox")
-    throw new Error("File kind must be openslate-sandbox");
+  if (source.kind !== "slateops-sandbox")
+    throw new Error("File kind must be slateops-sandbox");
   if (source.schemaVersion !== SANDBOX_DOCUMENT_SCHEMA_VERSION)
     throw new Error("Sandbox schema version is not supported");
   const contents = parseDocumentContents(source, semantic);
@@ -1445,7 +1445,7 @@ function parseDocument(
     throw new Error("Version limit exceeded");
   assertUnique(versions?.map((item) => item.id) ?? [], "version snapshot IDs");
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     ...contents,
     ...(versions === undefined ? {} : { versions }),

@@ -14,7 +14,7 @@ from app.systems.platform.events.models import InvalidationEvent
 
 MODULE = uuid7()
 ORGANIZATION = uuid7()
-COMMITTED_URL = "postgresql+psycopg://owner:secret@db.test:5432/openslate"
+COMMITTED_URL = "postgresql+psycopg://owner:secret@db.test:5432/slateops"
 RESYNC = '{"entity":"resync"}'
 
 
@@ -65,7 +65,7 @@ def database(monkeypatch: pytest.MonkeyPatch) -> FakeDatabase:
         publisher,
         "get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://user:secret@configured.test/openslate",
+            database_url="postgresql+psycopg://user:secret@configured.test/slateops",
             database_connect_timeout_seconds=3,
             database_statement_timeout_ms=15_000,
         ),
@@ -132,7 +132,7 @@ def test_two_hundred_commits_enqueue_without_connecting_and_share_one_connection
     assert [url for thread, url in database.connects if thread == committing] == []
     assert instance.drain(5)
     assert database.connects == [
-        ("slateops-invalidations", "postgresql://owner:secret@db.test:5432/openslate")
+        ("slateops-invalidations", "postgresql://owner:secret@db.test:5432/slateops")
     ]
     assert [payload for _url, payload in database.notifies] == [_payload(i) for i in ids]
 
@@ -197,16 +197,16 @@ def test_each_commit_notifies_only_the_database_it_committed_to(
     on_a, on_b = uuid7(), uuid7()
 
     publisher.publish_invalidations(
-        (_record(on_a),), database_url="postgresql+psycopg://owner:secret@db-a.test/openslate"
+        (_record(on_a),), database_url="postgresql+psycopg://owner:secret@db-a.test/slateops"
     )
     publisher.publish_invalidations(
-        (_record(on_b),), database_url="postgresql+psycopg://owner:secret@db-b.test/openslate"
+        (_record(on_b),), database_url="postgresql+psycopg://owner:secret@db-b.test/slateops"
     )
 
     assert instance.drain(5)
     assert database.notifies == [
-        ("postgresql://owner:secret@db-a.test/openslate", _payload(on_a)),
-        ("postgresql://owner:secret@db-b.test/openslate", _payload(on_b)),
+        ("postgresql://owner:secret@db-a.test/slateops", _payload(on_a)),
+        ("postgresql://owner:secret@db-b.test/slateops", _payload(on_b)),
     ]
     assert all("configured.test" not in url for _thread, url in database.connects)
 

@@ -261,7 +261,7 @@ def import_bundle(
     for imported in imported_versions:
         snapshot = SandboxDocument.model_validate(
             {
-                "kind": "openslate-sandbox",
+                "kind": "slateops-sandbox",
                 "schemaVersion": DOCUMENT_SCHEMA_VERSION,
                 **imported.document.model_dump(by_alias=True),
             }

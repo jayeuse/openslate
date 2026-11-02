@@ -18,7 +18,7 @@ def main() -> None:
             "DATABASE_URL",
         )
     )
-    target = instance_target_for_process(owner, "openslate_owner", env)
+    target = instance_target_for_process(owner, "slateops_owner", env)
     if (
         target is None
         or env.get("ENVIRONMENT") != "test"
@@ -33,7 +33,7 @@ def main() -> None:
         with connect(connection_url) as connection:
             assert_psycopg_target(connection, target, expected_user="supabase_admin")
             connection.execute(
-                "ALTER POLICY openslate_realtime_member_write ON realtime.messages "
+                "ALTER POLICY slateops_realtime_member_write ON realtime.messages "
                 f"WITH CHECK ({expression})"
             )
 
@@ -58,7 +58,7 @@ def main() -> None:
             expression = connection.execute(
                 "SELECT pg_get_expr(polwithcheck, polrelid) "
                 "FROM pg_policy WHERE polrelid='realtime.messages'::regclass "
-                "AND polname='openslate_realtime_member_write'"
+                "AND polname='slateops_realtime_member_write'"
             ).fetchone()
             if expression != ("true",):
                 raise RuntimeError("An unknown policy was mutated before refusal")

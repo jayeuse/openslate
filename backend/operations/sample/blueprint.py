@@ -255,7 +255,7 @@ def _build_document(
         "relationship_ids": relationship_ids,
     }
     payload = {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 4,
         "design": {
             "departments": department_documents,

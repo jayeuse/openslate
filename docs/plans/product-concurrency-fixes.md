@@ -111,7 +111,7 @@ Exit: recorded numbers. Production uses the measured best worker count for 8 cor
 
 Result 4.1 (2026-10-29): `API_WORKERS` (default 1, range 1 to 8) is read by `app/__main__.py` and passed to Uvicorn; the smoke runner passes it through. Audit: every background claim takes a row lock (`SKIP LOCKED` or `FOR UPDATE` with a state recheck), an advisory lock or a unique key, and SSE `LISTEN` and the invalidation publisher are per-process broadcast, so they stay correct with several processes; they multiply connections, threads and memory. One item was wrong with several processes: the provider-account cache is per process, so a factor verified in one process stayed hidden in the others for up to 10 s. Fixed: a cached account without a verified factor is not reused when the person's committed MFA observation records one (`test_a_factor_verified_in_another_api_process_requires_aal2_on_the_next_request`). Measured with `tests.smoke_runner --seed-only --parallel --packs harbor,school`, defaults otherwise (4 automation threads per process), all packs passed:
 
-| Workers | Seeding s | Requests | Requests/s | p50 / p99 ms (Harbor, School) | Peak API RSS | Peak `openslate_runtime` conn. | Peak client conn. |
+| Workers | Seeding s | Requests | Requests/s | p50 / p99 ms (Harbor, School) | Peak API RSS | Peak `slateops_runtime` conn. | Peak client conn. |
 |---|---|---|---|---|---|---|---|
 | 1 | 690 | 18,225 | 26.4 | 27/240, 27/213 | 309 MB | 11 | 22 |
 | 1 (repeat) | 804 | 18,203 | 22.6 | 30/245, 28/251 | 286 MB | 11 | 20 |

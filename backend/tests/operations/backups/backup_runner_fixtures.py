@@ -69,7 +69,7 @@ def runner_config(tmp_path: Path, *, deployment: str = "production") -> tuple[Pa
         tmp_path / "app.env",
         "ENVIRONMENT=production\nSLATEOPS_INSTANCE_ID=client-a\n"
         "POSTGRES_HOST=db\nPOSTGRES_PORT=5432\nPOSTGRES_DATABASE=postgres\n"
-        "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres\n"
+        "DATABASE_URL=postgresql://slateops_runtime:synthetic@db:5432/postgres\n"
         "PUBLIC_ORIGIN=https://example.invalid\n"
         "BACKUP_EXPORT_ROOT=/var/lib/slateops/backup-exports\n",
     )
@@ -197,7 +197,7 @@ class SyntheticCommands:
                     "POSTGRES_HOST=db",
                     "POSTGRES_PORT=5432",
                     "POSTGRES_DATABASE=postgres",
-                    "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres",
+                    "DATABASE_URL=postgresql://slateops_runtime:synthetic@db:5432/postgres",
                     "PUBLIC_ORIGIN=https://example.invalid",
                     "BACKUP_EXPORT_ROOT=/var/lib/slateops/backup-exports",
                 ],

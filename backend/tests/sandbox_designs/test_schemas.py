@@ -85,7 +85,7 @@ def test_document_typed_values_reject_non_finite_json_numbers() -> None:
 def test_v4_frontend_fixture_preserves_exact_trigger_and_scenario_shapes() -> None:
     document = SandboxDocument.model_validate(
         {
-            "kind": "openslate-sandbox",
+            "kind": "slateops-sandbox",
             "schemaVersion": 4,
             "design": {
                 "departments": [{"id": "department-1", "name": "Operations", "closed": False}],

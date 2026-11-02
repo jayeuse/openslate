@@ -137,9 +137,9 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
     from app.systems.access.users.models import UserStatus
     from tests.conftest import create_member, create_organization
 
-    target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
+    target = instance_target_for_process(owner_url, "slateops_owner", database_environment)
     assert_provider_instance(
-        database_environment, database_url=owner_url, expected_user="openslate_owner"
+        database_environment, database_url=owner_url, expected_user="slateops_owner"
     )
     engine = create_engine(owner_url)
     identities = {}
@@ -147,7 +147,7 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
         with Session(engine) as db:
             if target is None:
                 raise RuntimeError("Disposable seed target identity is unavailable")
-            assert_instance_target(db.connection(), target, expected_user="openslate_owner")
+            assert_instance_target(db.connection(), target, expected_user="slateops_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
             organization = create_organization(
@@ -187,7 +187,7 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
                 # Same empty Sandbox document as operations/create_organization.py, so the
                 # journey can publish its own department into the primary organization.
                 document, digest, size = canonical_document(
-                    Document(kind="openslate-sandbox", schema_version=4, design=DesignDocument())
+                    Document(kind="slateops-sandbox", schema_version=4, design=DesignDocument())
                 )
                 db.add(
                     SandboxDocument(
@@ -358,7 +358,7 @@ def main(arguments=()):
             "SLATEOPS_FULLSTACK_RUN_ID": run_id,
             "SLATEOPS_TEST_DATABASE_MANIFEST": str(database_manifest),
         }
-        if instance_target_for_process(owner_url, "openslate_owner", migration_env) is None:
+        if instance_target_for_process(owner_url, "slateops_owner", migration_env) is None:
             raise RuntimeError("Disposable PostgreSQL target identity is unavailable")
         timed("database role bootstrap")
         run(
@@ -372,7 +372,7 @@ def main(arguments=()):
         if realtime_only:
             timed("Realtime forward migration roundtrip")
             run(
-                [sys.executable, "-m", "alembic", "downgrade", "8464b72e2cd5"],
+                [sys.executable, "-m", "alembic", "downgrade", "base"],
                 BACKEND,
                 migration_env,
             )

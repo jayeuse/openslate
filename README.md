@@ -88,8 +88,8 @@ uv run python operations/supabase_keys.py --output /absolute/private/path/provid
 
 Set `DATABASE_BOOTSTRAP_URL` to the provider's `supabase_admin` connection using
 `POSTGRES_PASSWORD`. Set `MIGRATION_DATABASE_URL` to the application owner
-login `openslate_owner` and `DATABASE_URL` to the constrained runtime login
-`openslate_runtime`; supply separate passwords for those application roles.
+login `slateops_owner` and `DATABASE_URL` to the constrained runtime login
+`slateops_runtime`; supply separate passwords for those application roles.
 The role provisioning command creates and checks the application roles. Never
 put the bootstrap URL or `SUPABASE_SECRET_KEY` in frontend configuration or a
 browser bundle. Production uses separate owner-only provider and application

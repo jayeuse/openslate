@@ -72,13 +72,13 @@ Non-goals (the speculative-schema rule in `AGENTS.md` applies, even though this 
 
 **Connections outside the request dependency.** `get_db` opens the request session (`core/database/session.py:48-62`). There are also 14 direct `AuditSession(get_engine())` sites, 4 raw REPEATABLE READ connections (`run_service.py:155`, `export.py:270`, `aggregation.py:355,371`), and psycopg connections for NOTIFY and LISTEN (`events/publisher.py:42`, `events/hub.py:299`). An organization setting applied only in `get_db` misses all of them.
 
-**Roles and RLS.** `openslate_owner` owns the tables. `openslate_runtime` inherits `openslate_app` privileges and has `NOBYPASSRLS` (`provision_database_role.py:239-273`). The only RLS policy is on Supabase's `auth.sessions` (`:211`). `retain_security_events()` is `SECURITY DEFINER`, owned by `openslate_owner`, and reads the workspace row directly (`dfa5340b47ba:47-63,97`).
+**Roles and RLS.** `slateops_owner` owns the tables. `slateops_runtime` inherits `slateops_app` privileges and has `NOBYPASSRLS` (`provision_database_role.py:239-273`). The only RLS policy is on Supabase's `auth.sessions` (`:211`). `retain_security_events()` is `SECURITY DEFINER`, owned by `slateops_owner`, and reads the workspace row directly (`dfa5340b47ba:47-63,97`).
 
 **Migrations.** 20 revisions in one chain. The root `089c54b88aa6` has 4,244 lines, 8 trigger functions, all grants, and 3 seed rows (workspace, sandbox document, Company board). 17 test files exercise single revisions. `migrations/AGENTS.md` says an applied root is immutable.
 
 **SSE.** One global `pg_notify` channel (`events/publisher.py:42`). The payload has no organization (`events/models.py:179`). "All authenticated" and "admins only" events reach everyone (`events/models.py:27-38`). The viewer record has no organization (`events/router.py:259-264`).
 
-**Storage.** One bucket `openslate-ready`, flat `uuid4().hex` keys (`files/service.py:139,163`). No bucket `file_size_limit`, no MIME list, no `storage.objects` policies (live check). Size limits differ by layer: middleware 25 MiB (`core/middleware/file_transfers.py:43`), validation 25 MiB and 2 MiB for logos and avatars (`files/validation.py:18-19`), Storage 50 MiB (`compose.yaml:202`). imgproxy runs, but nothing calls it. Avatars exist end to end (`frontend/src/components/profile/adapters/profile-api.ts:195-256`) and are served full size.
+**Storage.** One bucket `slateops-ready`, flat `uuid4().hex` keys (`files/service.py:139,163`). No bucket `file_size_limit`, no MIME list, no `storage.objects` policies (live check). Size limits differ by layer: middleware 25 MiB (`core/middleware/file_transfers.py:43`), validation 25 MiB and 2 MiB for logos and avatars (`files/validation.py:18-19`), Storage 50 MiB (`compose.yaml:202`). imgproxy runs, but nothing calls it. Avatars exist end to end (`frontend/src/components/profile/adapters/profile-api.ts:195-256`) and are served full size.
 
 **Gateway.** Envoy returns 404 for `/rest/`, `/realtime/`, `/graphql/`, and `/functions/` (`upstream/envoy/lds.template.yaml:229-287`). WebSocket upgrade is already on (`:24-25`). Nothing in the backend or frontend calls PostgREST.
 
@@ -221,7 +221,7 @@ Steps:
 12. Add the shared test fixtures: `create_organization`, `create_member(org, role)`, and an updated `create_owned_admin`. Update the backend tests that this slice breaks (85 `User(` constructions, 16 raw inserts, 38 `get_current_user` overrides). A slice fixes the tests it breaks.
 13. Rebuild the owned development database once. Its `alembic_version` holds `d3703f345c2f`, which the new root does not contain. Caution: do not run `docker compose down -v`; the volumes hold the Auth accounts and Storage bytes.
     1. Take a backup with the backup runner.
-    2. Drop the objects that `openslate_owner` owns in `public`. Keep the `auth`, `storage`, `realtime`, `vault`, and other Supabase schemas.
+    2. Drop the objects that `slateops_owner` owns in `public`. Keep the `auth`, `storage`, `realtime`, `vault`, and other Supabase schemas.
     3. Run `alembic upgrade head` and `alembic check`.
     4. Record the commands and their output in the run record. S05 creates the first organization on this database.
 
@@ -250,9 +250,9 @@ Acceptance: `alembic upgrade head` on an empty database builds the schema. `alem
 9. Run bootstrap on the development database, so that Phase C and the S13 and S14 screenshots have a real organization.
 
 **S06 — RLS on every connection path (D11, D12).**
-1. Add one helper that runs `SET LOCAL openslate.org_id = '<uuid>'` at the start of each transaction. Call it from `get_db`, all 14 `AuditSession(get_engine())` sites, and the 4 raw REPEATABLE READ connections.
-2. Add an RLS policy on every organization table: `org_id = current_setting('openslate.org_id', true)::uuid`. When the setting is missing, no rows match, so the query fails closed.
-3. Background workers claim due work through `SECURITY DEFINER` claim functions that return the job id and its `org_id`. The worker then sets `openslate.org_id` for that job's transaction.
+1. Add one helper that runs `SET LOCAL slateops.org_id = '<uuid>'` at the start of each transaction. Call it from `get_db`, all 14 `AuditSession(get_engine())` sites, and the 4 raw REPEATABLE READ connections.
+2. Add an RLS policy on every organization table: `org_id = current_setting('slateops.org_id', true)::uuid`. When the setting is missing, no rows match, so the query fails closed.
+3. Background workers claim due work through `SECURITY DEFINER` claim functions that return the job id and its `org_id`. The worker then sets `slateops.org_id` for that job's transaction.
 4. Rewrite `retain_security_events()` so it reads the retention value of each organization, and the install value for rows without an organization.
 5. The LISTEN connection stays unscoped. The hub filters events by organization (S09).
 
@@ -304,8 +304,8 @@ Acceptance: a test with two organizations shows that an event in A never reaches
 
 ### 5.7 W7. Storage (S10)
 
-1. Object keys become `org/<org_id>/<uuid>` in `openslate-ready`. Update the key check (`supabase_storage.py:12`).
-2. Add the bucket `openslate-avatars` with keys `user/<user_id>/<uuid>` (D17). Avatars are account files, so a person keeps one avatar across organizations.
+1. Object keys become `org/<org_id>/<uuid>` in `slateops-ready`. Update the key check (`supabase_storage.py:12`).
+2. Add the bucket `slateops-avatars` with keys `user/<user_id>/<uuid>` (D17). Avatars are account files, so a person keeps one avatar across organizations.
 3. Set `file_size_limit` and `allowed_mime_types` on each bucket in `provision_storage.py`. Add the new bucket to `provision_storage.py:17` and `reset/storage.py:17`.
 4. Set the upload limit to 10 MiB in validation, in the transfer middleware, and in the bucket limit (D18). Logos and avatars stay at 2 MiB. The global Storage limit stays at 50 MiB for later exports and backups.
 5. Serve avatar thumbnails at 64 and 256 pixels. FastAPI fetches them from the Storage image transformation endpoint and returns them with the existing cache headers (D19). Superseded by the D19 amendment: FastAPI resizes with Pillow.
@@ -448,13 +448,13 @@ Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands 
 | D08 | Operator | `platform_operators` table; CLI only; no access to organization data | Owner | S04, S05 |
 | D09 | Cross-organization references | Composite `(org_id, id)` foreign keys between organization tables | Default | S04 |
 | D10 | Unique constraints per organization | `uq_departments_name_active`, `uq_groups_name_active_ci`, `uq_boards_company`, the sandbox document and binding uniques, `uq_sandbox_publications_actor_key` | Exploration | S04 |
-| D11 | RLS policy | `org_id = nullif(current_setting('openslate.org_id', true), '')::uuid`; no `FORCE` (the owner role runs migrations); missing setting returns no rows. No error in development and test: `tests/migrations/test_organization_row_security.py` and the serial shard lane find a missing scope (migration `f5a100021193`) | Amended (S06) | S06 |
+| D11 | RLS policy | `org_id = nullif(current_setting('slateops.org_id', true), '')::uuid`; no `FORCE` (the owner role runs migrations); missing setting returns no rows. No error in development and test: `tests/migrations/test_organization_row_security.py` and the serial shard lane find a missing scope (migration `f5a100021193`) | Amended (S06) | S06 |
 | D12 | Setting the organization on connections | One session `after_begin` listener and one Engine `begin` listener (`organization_scope.py`). Workers loop over `active_organization_ids()` with `worker_organization()`, not `SECURITY DEFINER` claim functions; one organization's failure does not stop the others. Claim functions are Phase 3 cloud-scale work | Amended (S06, S08) | S06 |
 | D13 | Migration root | New single root replaces 20 revisions; documented exception in `migrations/AGENTS.md`; revision tests retired with consolidation evidence | Owner (resets allowed) | S04 |
 | D14 | Admin lock and last admin | Per organization: advisory lock `pg_advisory_xact_lock(0x4F534144, hashtext(org_id))`; the last-admin count is per organization | Amended (S07) | S07 |
 | D15 | Mixed and per-user tables | `security_events.org_id` nullable for pre-organization events; avatars are account files; `backup-failed` notifications go to operators; lifecycle buckets keyed by organization and actor; identity buckets stay account-level | Exploration | S04, S08 |
 | D16 | SSE | Foundation streams bind one organization; payload/viewer carry `org_id`. OpenComms S27 consolidates connection ownership per verified account/organization through Web Locks/BroadcastChannel, with per-tab fallback when unavailable; this grants no content authority | Foundation default; extended by OpenComms S27 | S09 |
-| D17 | Buckets | `openslate-ready` with `org/<org_id>/<uuid>`; `openslate-avatars` with `user/<user_id>/<uuid>`; no `storage.objects` policies for `anon` or `authenticated` | Default | S10 |
+| D17 | Buckets | `slateops-ready` with `org/<org_id>/<uuid>`; `slateops-avatars` with `user/<user_id>/<uuid>`; no `storage.objects` policies for `anon` or `authenticated` | Default | S10 |
 | D18 | Upload limit | 10 MiB in validation, middleware, and bucket limit; logos and avatars 2 MiB; global Storage limit 50 MiB. Done in S10 | Owner (10 MB) | S10 |
 | D19 | Thumbnails | FastAPI makes 64 and 256 pixel thumbnails with Pillow. Digest verification stays on the original bytes. No dependency on Storage image transformation, so the Cloud free plan works | Amended (S10) | S10 |
 | D20 | PostgREST | Remove; if storage does not start without it, keep it internal and blocked | Exploration | S01 |
@@ -513,7 +513,7 @@ The owner answered the S07 checkpoint on 2026-10-16. The priority stays on-premi
 
 The design must allow these without schema changes to the Phase 1 tables. None of them adds a column in Phase 1.
 
-- **Phase 2 (OpenComms):** organization-scoped chat tables, D24 private topics, HTTP-authorized presence/typing and private `openslate-ready` attachments are implemented. SSE remains for other application invalidations. Ordinary private readability, report-only moderation and privileged export are distinct purposes; Realtime grants do not bypass current content reads. The `/comms` page and its administrator tools use those APIs; no browser-local example tools remain. Full browser/provider-pack/load proof and the deferred capacity, purge-timing and timeline-opening measurements are still pending; service implementation is not completion of those measurements.
+- **Phase 2 (OpenComms):** organization-scoped chat tables, D24 private topics, HTTP-authorized presence/typing and private `slateops-ready` attachments are implemented. SSE remains for other application invalidations. Ordinary private readability, report-only moderation and privileged export are distinct purposes; Realtime grants do not bypass current content reads. The `/comms` page and its administrator tools use those APIs; no browser-local example tools remain. Full browser/provider-pack/load proof and the deferred capacity, purge-timing and timeline-opening measurements are still pending; service implementation is not completion of those measurements.
 - **Phase 3 (Cloud launch):** signup that creates an account with no membership (D06); organization creation by users; plans and limits per organization; the operator console on `platform_operators`; Google and Microsoft identities linked to one account; the Cloud target and its test matrix; organization-branded email (D36).
 - **Phase 4 (installer):** passkeys and the local CA; Supabase Logs on-premise; the host specification from the D30 figures; the Docker-or-native runtime test.
 

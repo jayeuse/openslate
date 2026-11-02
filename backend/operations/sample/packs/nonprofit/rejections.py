@@ -17,8 +17,8 @@ from operations.sample.packs.types import RejectionCase
 FORBIDDEN = "Forbidden"
 HIDDEN = "Record not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:nonprofit:invalid-select-option"
-INVALID_FIELD_KEY = "openslate:nonprofit:unknown-field"
+INVALID_OPTION_KEY = "slateops:nonprofit:invalid-select-option"
+INVALID_FIELD_KEY = "slateops:nonprofit:unknown-field"
 _DONOR_CLERK = "internal_resource_mobilization_02"
 
 ACTIVITY_CASES = (

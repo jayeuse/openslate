@@ -36,7 +36,7 @@ def test_a_huge_parametrized_id_is_shortened_and_keeps_its_outcome() -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "postgresql://openslate_runtime:synthetic-password@127.0.0.1:5432/postgres",
+        "postgresql://slateops_runtime:synthetic-password@127.0.0.1:5432/postgres",
         "E   AssertionError: assert 'synthetic-secret' == 'other'",
         " Container slateops-e2e-abc-db-1  Started",
         "tests/auth/test_login.py ....F.....                                  [ 12%]",

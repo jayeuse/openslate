@@ -129,7 +129,7 @@ def test_concurrent_lost_response_replay_commits_only_one_request() -> None:
 
 def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
     runtime = os.environ["TEST_DATABASE_URL"]
-    target = instance_target_for_process(runtime, "openslate_runtime")
+    target = instance_target_for_process(runtime, "slateops_runtime")
     assert target is not None
     instance = target.instance_id
     engine = guarded_create_engine(runtime)

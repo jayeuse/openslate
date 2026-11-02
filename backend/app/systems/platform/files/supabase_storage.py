@@ -12,8 +12,8 @@ from app.systems.platform.files.validation import MAX_BYTES
 # Organization files live under their organization; avatars are account files (D17).
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _KEY = re.compile(rf"(org|user)/{_UUID}/[0-9a-f]{{32}}\Z")
-_READY = "openslate-ready"
-_AVATARS = "openslate-avatars"
+_READY = "slateops-ready"
+_AVATARS = "slateops-avatars"
 
 
 def bucket_for(key: str) -> str:

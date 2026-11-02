@@ -19,8 +19,8 @@ from operations.sample.packs.types import RejectionCase
 FORBIDDEN = "Forbidden"
 HIDDEN = "Record not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:fmcg-distributor:invalid-select-option"
-INVALID_FIELD_KEY = "openslate:fmcg-distributor:unknown-field"
+INVALID_OPTION_KEY = "slateops:fmcg-distributor:invalid-select-option"
+INVALID_FIELD_KEY = "slateops:fmcg-distributor:unknown-field"
 
 ACTIVITY_CASES = (
     # Cash custody stays apart from receivables: the van salesman reads invoices only.

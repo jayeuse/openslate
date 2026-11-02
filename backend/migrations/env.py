@@ -38,12 +38,12 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    target = instance_target_for_process(settings.migration_database_url, "openslate_owner")
+    target = instance_target_for_process(settings.migration_database_url, "slateops_owner")
     if target is not None:
         assert_database_url(
             settings.migration_database_url,
             target,
-            expected_user="openslate_owner",
+            expected_user="slateops_owner",
         )
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -52,7 +52,7 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         if target is not None:
-            assert_instance_target(connection, target, expected_user="openslate_owner")
+            assert_instance_target(connection, target, expected_user="slateops_owner")
             connection.rollback()
         # A session lock held for the whole run, so a second run waits through every
         # autocommit block and then reads the new alembic_version.

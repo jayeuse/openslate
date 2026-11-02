@@ -406,7 +406,7 @@ def _remove_module_grant(engine: Engine, member_id: UUID, group_id: UUID) -> Non
 @contextmanager
 def _committed_publisher(pool_size: int, live_session: bool) -> Iterator[Publisher]:
     database_url = os.environ["MIGRATION_DATABASE_URL"]
-    assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    assert_runner_database_url(database_url, allowed_roles=frozenset({"slateops_owner"}))
     engine = create_engine(database_url, pool_size=pool_size, max_overflow=0)
     actor_id: UUID | None = None
     session_id: UUID | None = None

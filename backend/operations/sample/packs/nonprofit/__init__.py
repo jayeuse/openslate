@@ -103,7 +103,7 @@ PACK = OrganizationPack(
         currency_symbol="₱",
         currency_code="PHP",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:fairhaven-nonprofit:v1",
+        uuid_namespace="slateops:fairhaven-nonprofit:v1",
         span="twelve months of programs and fundraising, with a year-end appeal and a "
         "typhoon response",
         sampling_scope=(

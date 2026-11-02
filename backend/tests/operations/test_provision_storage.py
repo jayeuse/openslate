@@ -31,9 +31,9 @@ def test_storage_initialization_creates_private_buckets_and_repeats_without_over
 
     for _ in range(2):
         operation.provision_storage(VALUES, transport=httpx.MockTransport(handler))
-    assert created == ["openslate-ready", "openslate-avatars"]
-    assert buckets["openslate-ready"]["file_size_limit"] == 10 * 1024 * 1024
-    assert buckets["openslate-avatars"]["allowed_mime_types"] == ["image/png", "image/jpeg"]
+    assert created == ["slateops-ready", "slateops-avatars"]
+    assert buckets["slateops-ready"]["file_size_limit"] == 10 * 1024 * 1024
+    assert buckets["slateops-avatars"]["allowed_mime_types"] == ["image/png", "image/jpeg"]
 
 
 def test_existing_private_bucket_takes_the_current_limits(monkeypatch):
@@ -61,7 +61,7 @@ def test_public_bucket_is_refused_without_mutation(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        return httpx.Response(200, json={"id": "openslate-ready", "public": True})
+        return httpx.Response(200, json={"id": "slateops-ready", "public": True})
 
     with pytest.raises(operation.StorageProvisionError):
         operation.provision_storage(VALUES, transport=httpx.MockTransport(handler))

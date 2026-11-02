@@ -10,7 +10,7 @@ def sandbox_document_payload(
     scenarios: list[dict[str, object]],
 ) -> dict[str, object]:
     return {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 4,
         "design": design,
         "triggers": triggers,

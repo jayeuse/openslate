@@ -443,8 +443,8 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
         "email": email,
         "email_confirmed_at": "2026-01-01T00:00:00Z",
         "app_metadata": {
-            "openslate_user_id": str(world.target_id),
-            "openslate_invitation_operation_id": str(operation),
+            "slateops_user_id": str(world.target_id),
+            "slateops_invitation_operation_id": str(operation),
         },
     }
 

@@ -11,9 +11,9 @@ from operations.reset.storage import ResetStorage
 
 def _storage_api(*, public_bucket: str | None = None):
     buckets = {
-        "openslate-ready": {"folder/orphan", "folder/deep/unlinked"}
+        "slateops-ready": {"folder/orphan", "folder/deep/unlinked"}
         | {f"root-{index:03d}" for index in range(101)},
-        "openslate-avatars": {"user/account/avatar"},
+        "slateops-avatars": {"user/account/avatar"},
     }
     deleted: list[tuple[str, tuple[str, ...]]] = []
 
@@ -60,24 +60,24 @@ def test_storage_reset_lists_every_private_object_across_pages_and_nested_paths(
     keys = storage.list_object_keys()
 
     assert len(keys) == 104
-    assert "openslate-avatars/user/account/avatar" in keys
-    assert "openslate-ready/folder/deep/unlinked" in keys
-    assert "openslate-ready/folder/orphan" in keys
-    assert "openslate-ready/root-100" in keys
+    assert "slateops-avatars/user/account/avatar" in keys
+    assert "slateops-ready/folder/deep/unlinked" in keys
+    assert "slateops-ready/folder/orphan" in keys
+    assert "slateops-ready/root-100" in keys
     storage.delete_and_verify_empty(keys)
-    assert buckets == {"openslate-ready": set(), "openslate-avatars": set()}
+    assert buckets == {"slateops-ready": set(), "slateops-avatars": set()}
     assert {bucket for bucket, _ in deleted} == set(buckets)
     assert storage.list_object_keys() == ()
 
 
 def test_storage_reset_rejects_public_bucket_without_deleting_anything() -> None:
-    client, buckets, deleted = _storage_api(public_bucket="openslate-ready")
+    client, buckets, deleted = _storage_api(public_bucket="slateops-ready")
     storage = ResetStorage("http://provider.local", "server-secret", 2, client=client)
 
     with pytest.raises(ResetError, match="private"):
         storage.list_object_keys()
 
-    assert len(buckets["openslate-ready"]) == 103
+    assert len(buckets["slateops-ready"]) == 103
     assert deleted == []
 
 
@@ -85,7 +85,7 @@ def test_storage_reset_rejects_changed_inventory_before_cleanup() -> None:
     client, buckets, deleted = _storage_api()
     storage = ResetStorage("http://provider.local", "server-secret", 2, client=client)
     keys = storage.list_object_keys()
-    buckets["openslate-ready"].add("new-orphan")
+    buckets["slateops-ready"].add("new-orphan")
 
     with pytest.raises(ResetError, match="plan changed"):
         storage.delete_and_verify_empty(keys)
@@ -95,16 +95,16 @@ def test_storage_reset_rejects_changed_inventory_before_cleanup() -> None:
 def test_prefixed_cleanup_lists_and_deletes_only_the_named_prefixes() -> None:
     client, buckets, _deleted = _storage_api()
     storage = ResetStorage("http://provider.local", "server-secret", 2, client=client)
-    prefixes = ("openslate-avatars/user/account", "openslate-ready/folder/deep")
+    prefixes = ("slateops-avatars/user/account", "slateops-ready/folder/deep")
 
     keys = storage.list_prefixed_keys(prefixes)
 
-    assert keys == ("openslate-avatars/user/account/avatar", "openslate-ready/folder/deep/unlinked")
+    assert keys == ("slateops-avatars/user/account/avatar", "slateops-ready/folder/deep/unlinked")
     with pytest.raises(ResetError, match="plan is invalid"):
-        storage.delete_prefixed_and_verify_empty(("openslate-ready/folder/orphan",), prefixes)
+        storage.delete_prefixed_and_verify_empty(("slateops-ready/folder/orphan",), prefixes)
     storage.delete_prefixed_and_verify_empty(keys, prefixes)
-    assert buckets["openslate-avatars"] == set()
-    assert buckets["openslate-ready"] == {"folder/orphan"} | {
+    assert buckets["slateops-avatars"] == set()
+    assert buckets["slateops-ready"] == {"folder/orphan"} | {
         f"root-{index:03d}" for index in range(101)
     }
     assert storage.list_prefixed_keys(prefixes) == ()

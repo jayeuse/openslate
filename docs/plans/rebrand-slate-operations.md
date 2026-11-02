@@ -1,6 +1,6 @@
 # Rebrand: OpenSlate to Slate Operations
 
-Status: slices 1 to 3 committed (2026-11-02). Slice 4 is pending.
+Status: slices 1 to 4 committed (2026-11-02). The development sample data is not repopulated yet.
 
 ## Decisions
 
@@ -16,10 +16,10 @@ Examples of the stem: roles `slateops_owner` and `slateops_runtime`, buckets `sl
 
 ## Fixed limits
 
-1. Do not edit files in `backend/migrations/`. Migration history does not change. Old migrations keep the `openslate` name.
+1. Do not edit applied revisions. Slice 4 archives them unchanged; they keep the `openslate` names.
 2. Do not read or print `.env` (SEC-R3). Edit `.env.example`. Give the owner the list of key renames for `.env`, or rename keys in place with no output.
 3. Do not remove Docker volumes from other worktrees or earlier runs.
-4. Do not reset the development database. The Harbor and School sample packs are permanent.
+4. Do not reset the development database, except for the slice 4 rebuild that the owner approved on 2026-11-02.
 
 ## Slices
 
@@ -34,27 +34,25 @@ One pull request for each slice. Run the pre-push gate once for each push.
    4. Compare entries, file checksums, owners, and modes. All four volumes matched.
    5. Start the stack. Alembic is at head, all 7 sample packs are present, and a sample account signs in.
    - The old `openslate-supabase-local-d131ecd3` containers and volumes are stopped and kept. Remove them only when the owner approves.
-4. **Database names, roles, and buckets.** There is no `openslate` schema: the application tables are in `public`, and `alembic_version` is in `public` too. So this slice needs no schema rename. It covers:
-   - The roles `openslate_owner`, `openslate_runtime`, `openslate_app`, `openslate_provider`, and `openslate_inspector`, and the `DATABASE_URL` and `MIGRATION_DATABASE_URL` values that contain them.
-   - The session setting `openslate.org_id` and the other `openslate.*` settings that row-level security policies and functions read. A new Alembic migration must replace those policies.
-   - The policies `openslate_session_liveness`, `openslate_realtime_member_read`, and `openslate_realtime_member_write`.
-   - The Storage buckets `openslate-ready` and `openslate-avatars`. Copy them, check a download, then remove the old buckets.
-   - The stored values in the table below.
-   - Caution: `ALTER ROLE ... RENAME` clears MD5 passwords. Make sure that the roles use SCRAM before the rename.
-   - Caution: update the database URLs in the same step as the role rename, or the API cannot connect.
+4. **Database names, roles, and buckets: new migration root.** Decided with the owner on 2026-11-02. There is no production installation, so the development database is rebuilt instead of renamed in place.
+   - **Outcome:** one new model-generated root replaces the 28 active revisions, with `slateops_owner`, `slateops_runtime`, `slateops_app`, the `slateops.org_id` setting, and the `slateops-ready` and `slateops-avatars` buckets. The old revisions move unchanged to `migrations/history/organization_root/`.
+   - **Proof:** a schema-only dump of the new database must equal the reference dump of the old database after the name changes. The roles, default privileges, provider policies, provider privileges, and buckets must also match.
+   - **This decision removes:** the operator rename command, the Auth metadata rewrite, the bucket copy, the policy rewrite, the import rule for Sandbox files exported before the rename (they are now rejected; development data only), and 11 tests that downgrade to archived revisions.
+   - **Not kept:** the development data. The owner repopulates the sample packs and the testing accounts. The old `openslate-supabase-local-d131ecd3` volumes stay until the owner approves their removal.
+   - **Exceptions in the rules:** `backend/migrations/AGENTS.md` records this as the second authorized rebuild after S04/D13.
 
 ### Names that slices 2 and 3 keep, and why
 
 | Name | Reason | Owner |
 |---|---|---|
 | `openslate-accent`, `openslate-radius`, `openslate.sample.draft-text.v1.`, `openslate.sample.v1.` | Legacy browser keys. The code reads or removes them because old browsers still hold them. | Keep |
-| `openslate_user_id`, `openslate_invitation_operation_id` | Keys in Supabase Auth `app_metadata`. Each existing user stores them. | Slice 4 (data update) |
-| `openslate-sandbox` (design file `kind`) | Stored in design rows and in exported design files. | Slice 4 (data update, import decision) |
-| `openslate.backup.export.request.v1` | Encryption context of backup export requests. | Slice 4 |
-| `openslate-sample-people-v1` | File format of sample-run records on disk. | Slice 4 |
-| `openslate_session_liveness` | Policy on `auth.sessions`. | Slice 4 |
-| Sample-pack `uuid_namespace` values (`openslate:harbor-operations:v4` and others) | They decide the IDs of the permanent sample data. A change creates duplicates on the next run. | Keep |
-| Hash domain strings (`openslate:identity-rate-limit:v1:`, `openslate:security-representative:v1:`) | Stored digests depend on them. | Keep |
+| `slateops_user_id`, `slateops_invitation_operation_id` | Keys in Supabase Auth `app_metadata`. Each existing user stores them. | Slice 4 (data update) |
+| `slateops-sandbox` (design file `kind`) | Stored in design rows and in exported design files. | Slice 4 (data update, import decision) |
+| `slateops.backup.export.request.v1` | Encryption context of backup export requests. | Slice 4 |
+| `slateops-sample-people-v1` | File format of sample-run records on disk. | Slice 4 |
+| `slateops_session_liveness` | Policy on `auth.sessions`. | Slice 4 |
+| Sample-pack `uuid_namespace` values (`slateops:harbor-operations:v4` and others) | They decide the IDs of the permanent sample data. A change creates duplicates on the next run. | Keep |
+| Hash domain strings (`slateops:identity-rate-limit:v1:`, `slateops:security-representative:v1:`) | Stored digests depend on them. | Keep |
 | `openslate-quarantine` | Name of a retired bucket that the cleanup command removes. | Keep |
 | `~/.config/openslate-handson/` | Owner-only file outside the repository. | Owner choice |
 | `github.com/jayeuse/openslate` URLs | They change when the repository is renamed. | Owner step 1 |

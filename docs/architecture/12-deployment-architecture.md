@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | Development provider stack | Implemented | Pinned Supabase Compose base and development overlay; `scripts/dev.py` and `scripts/environment.py` guard the project, environment, image, and owned database resources. FastAPI and Next development server remain host-run. |
 | Production Compose definition | Implemented artifacts | Provider base plus production overlay define PostgreSQL, Auth, Storage, Studio, metadata/API gateway, the unified FastAPI/static UI image, and Caddy. Per-client paths, secrets, images, and TLS must be supplied by the operator. |
-| Application data and identity | Implemented paths | SQLAlchemy/Alembic own Slate Operations schema. Supabase Auth authenticates; FastAPI resolves the explicitly bound application profile and authorizes requests. Private Storage uses the `openslate-ready` bucket through the server-side API. |
+| Application data and identity | Implemented paths | SQLAlchemy/Alembic own Slate Operations schema. Supabase Auth authenticates; FastAPI resolves the explicitly bound application profile and authorizes requests. Private Storage uses the `slateops-ready` bucket through the server-side API. |
 | Linux server operation | Partially implemented | The Compose path is checked in. A production Compose rehearsal using Linux containers on macOS Docker Desktop exercised TLS, bounded readiness, five-volume restore, target session finalization, authorization, file access, and service restart. Native Linux host installation, boot/reboot, retention, and general customer acceptance remain separate requirements. |
 | Windows server operation | Pending | The intended host uses Docker Desktop/WSL2 with Linux containers. A Windows host has not completed startup, reboot, persistent-volume, or restore acceptance. Linux-container evidence from another operating system does not prove this path. |
 | macOS server | Not a target | macOS remains available for development. It is not a supported customer server target. |
@@ -36,8 +36,8 @@ Production uses separate owner-only provider and application environment files. 
 The production path keeps three distinct credentials and schema responsibilities:
 
 - `DATABASE_BOOTSTRAP_URL` uses `supabase_admin` for guarded role provisioning.
-- `MIGRATION_DATABASE_URL` uses `openslate_owner` for application Alembic migrations.
-- `DATABASE_URL` uses `openslate_runtime` for normal application queries, including in-process workers.
+- `MIGRATION_DATABASE_URL` uses `slateops_owner` for application Alembic migrations.
+- `DATABASE_URL` uses `slateops_runtime` for normal application queries, including in-process workers.
 
 A fresh installation explicitly provisions roles, applies the current Alembic head, checks for drift, and creates the private Storage bucket before bootstrapping the first administrator by email invitation. Compose container health alone does not prove these application contracts. `README.md` documents the production app environment, image tags, logs, and Caddy/TLS inputs; [`Configuration`](17-configuration.md) describes their ownership.
 

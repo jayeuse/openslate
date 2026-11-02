@@ -27,7 +27,7 @@ import { documentTextField } from "../../helpers/sandbox-fixtures";
 const versionId = "00000000-0000-4000-8000-000000000001";
 
 const document: SandboxDocumentV4 = {
-  kind: "openslate-sandbox",
+  kind: "slateops-sandbox",
   schemaVersion: 4,
   design: {
     departments: [{ id: "operations", name: "Operations", closed: false }],

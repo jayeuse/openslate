@@ -82,7 +82,7 @@ def budget_clock(comms_world, monkeypatch, record_property):
     record_property("send_budget_runtime_role", role)
     record_property("send_budget_postgres_version", version)
     assert isolation == default == "read committed"
-    assert role == "openslate_runtime"
+    assert role == "slateops_runtime"
     buckets = _bucket_count(comms_world)
     yield clock
     assert _bucket_count(comms_world) == buckets, "send attempts must not persist bucket rows"

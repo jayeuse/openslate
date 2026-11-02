@@ -452,8 +452,8 @@ class DisposablePostgres:
         host = f"127.0.0.1:{self.port}/{DB_NAME}"
         return {
             "DATABASE_BOOTSTRAP_URL": f"postgresql+psycopg://supabase_admin:{self.passwords['bootstrap']}@{host}",
-            "MIGRATION_DATABASE_URL": f"postgresql+psycopg://openslate_owner:{self.passwords['owner']}@{host}",
-            "DATABASE_URL": f"postgresql+psycopg://openslate_runtime:{self.passwords['runtime']}@{host}",
+            "MIGRATION_DATABASE_URL": f"postgresql+psycopg://slateops_owner:{self.passwords['owner']}@{host}",
+            "DATABASE_URL": f"postgresql+psycopg://slateops_runtime:{self.passwords['runtime']}@{host}",
         }
 
     @property

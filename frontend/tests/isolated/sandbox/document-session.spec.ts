@@ -19,7 +19,7 @@ function response(revision = 7): SandboxDocumentResponse {
     latestPublishedVersion: null,
     publishedHash: null,
     document: {
-      kind: "openslate-sandbox",
+      kind: "slateops-sandbox",
       schemaVersion: 4,
       design: {
         departments: [{ id: "operations", name: "Operations", closed: false }],

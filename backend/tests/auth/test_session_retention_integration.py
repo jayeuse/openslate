@@ -266,7 +266,7 @@ def test_global_10k_plan_real_cap_backlog_empty_and_held_rows(world, request):
                     "global_sessions": db.scalar(select(func.count()).select_from(IdentitySession)),
                 }
             )
-            assert plans[-1]["runtime_role"] == "openslate_runtime"
+            assert plans[-1]["runtime_role"] == "slateops_runtime"
             db.rollback()
 
     plan("backlog_1500")

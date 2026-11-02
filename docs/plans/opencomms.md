@@ -58,7 +58,7 @@ What "done" means for the owner:
 ## 2. Starting point
 
 - **Frontend:** about 16,300 lines under `frontend/src/components/systems/comms/`, all on browser session storage through a sample provider in `comms/layout.tsx`. The page never wrote the URL, many controls were inert previews, and it held 38 settings in three scopes with workspace locks, 24 permissions and 10 tool views. The shell already had a per-tab organization (`frontend/src/lib/organization-context.ts`), `apiFetch` sent `X-Org`, and the shell remounted per user and organization.
-- **Backend:** `backend/app/systems/comms/` was an empty reserved package. Tenancy (`org_id`, composite keys, `organization_rows` RLS, per-transaction organization binding), membership-based access (`scope.py`), per-organization workers and Storage (`openslate-ready`, 10 MiB, file-type allowlist, pending-upload quota) already existed.
+- **Backend:** `backend/app/systems/comms/` was an empty reserved package. Tenancy (`org_id`, composite keys, `organization_rows` RLS, per-transaction organization binding), membership-based access (`scope.py`), per-organization workers and Storage (`slateops-ready`, 10 MiB, file-type allowlist, pending-upload quota) already existed.
 - **Realtime:** `supabase/realtime` ran in every stack. `POST /api/realtime/token` issued a five-minute ES256 token with `purpose=realtime` and an `org_id` claim. There was no browser route to the service, no Realtime client in the frontend and no publish path in the backend.
 - **SSE:** four streams per user, 128 per process, `SERVER_MAX_CONCURRENCY=64`, a 32-event queue; each stream is pinned to one organization and re-authorizes on heartbeat and on each dequeued event.
 - **Entitlements:** none. Plans and limits are Phase 3; on-premises installations have no limits.
@@ -103,7 +103,7 @@ OpenComms builds on these foundation pieces and never adds a parallel one:
 | Realtime token `POST /api/realtime/token` (F-D23) | `platform/realtime/` | Extended, not replaced: it reconciles grants and returns the conversation topic list. |
 | Topic naming `org:<org_id>:<kind>:<id>` (F-D24) | [Supabase foundation plan](supabase-foundation.md) | Adds the kinds `conversation` and `user`, and uses `org:<id>:presence`. |
 | Join function `can_join_realtime_topic` and the `realtime.messages` policies | `operations/provision_database_role.py` | Its body is replaced by a forward revision with the same signature; provisioning still refuses any other policy. |
-| Storage bucket `openslate-ready`, file validation and quota | `platform/files/` | Chat attachments are a new file purpose in the same bucket. |
+| Storage bucket `slateops-ready`, file validation and quota | `platform/files/` | Chat attachments are a new file purpose in the same bucket. |
 | Avatars and person card | `person-avatar.tsx`, `/api/users/{id}/card` | Message authors and members. |
 | Per-organization workers, audit, notifications, SSE | `platform/scheduling/`, `manage/audit/`, `platform/events/` | Comms jobs, audit rows and notifications reuse them; SSE stays for the other pages. |
 | Frontend organization context | `frontend/src/lib/organization-context.ts`, `app-page.tsx` | The Comms client, drafts, outbox and Realtime connection are keyed by user and organization. |

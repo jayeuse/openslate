@@ -192,8 +192,8 @@ not a separate permission system or an execution result.
 | Provider schema | — | Supabase-owned database objects, such as Auth or Storage metadata, which Slate Operations' Alembic migrations do not own. | Internal |
 | `DATABASE_BOOTSTRAP_URL` | — | Operator-only Supabase database connection used to provision Slate Operations database roles and grants. | Internal |
 | `MIGRATION_DATABASE_URL` | — | Owner connection used by Alembic for Slate Operations application-schema changes. | Internal |
-| `DATABASE_URL` | — | Constrained `openslate_runtime` connection used by FastAPI and application workers. | Internal |
-| Ready object | — | Immutable private Storage object in `openslate-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
+| `DATABASE_URL` | — | Constrained `slateops_runtime` connection used by FastAPI and application workers. | Internal |
+| Ready object | — | Immutable private Storage object in `slateops-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
 | Supabase Compose installation | — | One self-hosted Supabase and Slate Operations deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
 | Supabase Storage | — | Provider-managed object API and persistent volume for Slate Operations' private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
 | Supabase Realtime | — | Provider WebSocket service for private OpenComms conversation, own-user and organization-presence topics. Joins use a five-minute purpose-specific FastAPI token and current membership/topic checks; conversation topics additionally require an expiring grant. Other application pages retain SSE. | Internal |

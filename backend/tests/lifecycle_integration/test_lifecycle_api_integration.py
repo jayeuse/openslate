@@ -151,7 +151,7 @@ def lifecycle_api_client() -> Callable[[], LifecycleApiClient]:
     try:
         with readiness_engine.connect() as connection:
             _assert_alembic_head(connection)
-            assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+            assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
     finally:
         readiness_engine.dispose()
     actor = create_owned_admin(database_url, owner_url, "lifecycle-api")

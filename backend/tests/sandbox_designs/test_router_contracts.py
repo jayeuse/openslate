@@ -79,7 +79,7 @@ def test_document_write_refuses_an_older_format_with_a_clear_422(monkeypatch) ->
     replace = Mock()
     monkeypatch.setattr(designs_router, "replace_document", replace)
     older = {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 2,
         "design": {"departments": [], "modules": [], "relationships": [], "layout": {}},
         "automations": [],

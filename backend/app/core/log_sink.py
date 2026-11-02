@@ -16,7 +16,7 @@ class DailyLogHandler(logging.Handler):
     Use local storage: network filesystems need their own append guarantees.
     """
 
-    _openslate_observability = True
+    _slateops_observability = True
 
     def __init__(self, directory: Path, stream: TextIO | None = None) -> None:
         super().__init__()

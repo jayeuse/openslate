@@ -37,7 +37,7 @@ type MembershipBody = {
 export const defaultOrganization = {
   org_id: "00000000-0000-4000-8000-000000000102",
   name: "Slate Operations",
-  slug: "openslate",
+  slug: "slateops",
 } as const;
 
 /** The `/api/auth/me` body: one account and its group access rows. */

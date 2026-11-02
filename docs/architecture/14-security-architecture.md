@@ -55,7 +55,7 @@ The browser receives no database credentials, and provider user metadata is
 never an authorization source.
 
 File metadata and authorization state remain application-owned. File bytes use
-opaque keys in the private Supabase Storage `openslate-ready` bucket through a
+opaque keys in the private Supabase Storage `slateops-ready` bucket through a
 server-only [Storage client](../../backend/app/systems/platform/files/supabase_storage.py).
 FastAPI authorizes every transfer. Uploads pass a file-extension
 allowlist, and a [bounded parser subprocess](../../backend/app/systems/platform/files/validation_worker.py)

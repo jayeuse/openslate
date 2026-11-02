@@ -117,7 +117,7 @@ Pain point: identity resolution runs before the user is charged, so a flood with
 ## Automation token
 
 - Setting `RATE_LIMIT_AUTOMATION_SECRET`. No default and no line in `.env.example` with a value. Unset: the header is ignored and budgets are normal. Set but shorter than 32 bytes: startup refuses with a clear error.
-- Header `X-SlateOps-Automation: v1.<run_id>.<expires_unix>.<signature>`. The signature is base64url HMAC-SHA256 over `openslate:rate-limit-automation:v1`, `run_id`, and `expires_unix`. A token with a bad signature, an expiry in the past, or an expiry more than 24 hours ahead counts as absent.
+- Header `X-SlateOps-Automation: v1.<run_id>.<expires_unix>.<signature>`. The signature is base64url HMAC-SHA256 over `slateops:rate-limit-automation:v1`, `run_id`, and `expires_unix`. A token with a bad signature, an expiry in the past, or an expiry more than 24 hours ahead counts as absent.
 - Effect: multiplies every new budget by M = 30. The global cap still applies. The token never authenticates; the request still needs a session.
 - The request log records the `run_id` when a token is accepted.
 - `app/core/rate_limits/automation.py` has `mint_token(secret, run_id, ttl)`. The sample client, `tests/smoke_runner.py` and `tests/smoke_seed.py`, and the Playwright fullstack runner (through `extraHTTPHeaders`) use it. Hands-on accounts never send it.

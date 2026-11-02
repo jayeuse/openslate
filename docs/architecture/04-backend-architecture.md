@@ -37,7 +37,7 @@ membership, presence and typing notifications; it does not replace the other
 systems' SSE transport or move authorized content reads out of FastAPI.
 
 File services use the server-only [Supabase Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py)
-and the private `openslate-ready` bucket. They validate the file type in a
+and the private `slateops-ready` bucket. They validate the file type in a
 bounded [parser subprocess](../../backend/app/systems/platform/files/validation_worker.py),
 record digest and size, and mark the file ready when the upload request
 finishes. Downloads are served as attachments with `nosniff`. Every public file operation is

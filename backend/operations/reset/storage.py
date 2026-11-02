@@ -14,7 +14,7 @@ import httpx
 
 from operations.reset.models import ResetError
 
-_BUCKETS = ("openslate-avatars", "openslate-ready")
+_BUCKETS = ("slateops-avatars", "slateops-ready")
 _PAGE_SIZE = 100
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
@@ -224,7 +224,7 @@ class ResetStorage:
 
     def list_prefixed_keys(self, prefixes: Sequence[str]) -> tuple[str, ...]:
         """List only the objects under each ``<bucket>/<folder>`` prefix, for example one
-        organization's ``openslate-ready/org/<id>``; the rest of the bucket is not read."""
+        organization's ``slateops-ready/org/<id>``; the rest of the bucket is not read."""
         keys: list[str] = []
         checked: set[str] = set()
         for prefix in prefixes:

@@ -70,7 +70,7 @@ def test_reconciliation_requires_exact_provider_admin_marker() -> None:
                                            supabase_user_id=None)
     client = Mock()
     client.find_invitation_user.return_value = ProviderUser(
-        provider_id, None, "person@example.test", {"openslate_user_id": "wrong"}
+        provider_id, None, "person@example.test", {"slateops_user_id": "wrong"}
     )
     db.scalar.return_value = profile
 
@@ -89,8 +89,8 @@ def test_reconciliation_binds_only_owned_provider_user() -> None:
                                           supabase_user_id=None)
     client = Mock()
     marker = {
-        "openslate_user_id": str(local_id),
-        "openslate_invitation_operation_id": str(operation_id),
+        "slateops_user_id": str(local_id),
+        "slateops_invitation_operation_id": str(operation_id),
     }
     client.find_invitation_user.return_value = ProviderUser(
         provider_id, None, "person@example.test", marker
@@ -150,8 +150,8 @@ def test_invitation_persists_pending_profile_before_provider_email(
             None,
             email,
             {
-                "openslate_user_id": str(local_id),
-                "openslate_invitation_operation_id": str(marker),
+                "slateops_user_id": str(local_id),
+                "slateops_invitation_operation_id": str(marker),
             },
         )
 
@@ -178,7 +178,7 @@ def test_resend_rechecks_bound_provider_identity_before_mail(
                                            supabase_user_id=provider_id)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(
-        provider_id, None, profile.email, {"openslate_user_id": "wrong"}
+        provider_id, None, profile.email, {"slateops_user_id": "wrong"}
     )
     monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
     monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args, **_kw: None)
@@ -211,8 +211,8 @@ def test_resend_rejects_admin_response_with_a_different_bound_identity(
         None,
         profile.email,
         {
-            "openslate_user_id": str(local_id),
-            "openslate_invitation_operation_id": str(operation_id),
+            "slateops_user_id": str(local_id),
+            "slateops_invitation_operation_id": str(operation_id),
         },
     )
     monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
@@ -235,8 +235,8 @@ def test_reconcile_creates_missing_provider_user_from_committed_pending_marker()
     profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
                                           supabase_user_id=None)
     marker = {
-        "openslate_user_id": str(local_id),
-        "openslate_invitation_operation_id": str(operation_id),
+        "slateops_user_id": str(local_id),
+        "slateops_invitation_operation_id": str(operation_id),
     }
     client = Mock()
     client.find_invitation_user.return_value = None
@@ -280,8 +280,8 @@ def test_resend_replaces_owned_confirmed_identity_after_revoked_link(
     profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
                                           supabase_user_id=old_id)
     marker = {
-        "openslate_user_id": str(local_id),
-        "openslate_invitation_operation_id": str(operation_id),
+        "slateops_user_id": str(local_id),
+        "slateops_invitation_operation_id": str(operation_id),
     }
     confirmed = SimpleNamespace(
         id=old_id,
@@ -324,8 +324,8 @@ def test_reconcile_resumes_replacement_after_old_identity_was_deleted() -> None:
     profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
                                           supabase_user_id=old_id)
     marker = {
-        "openslate_user_id": str(local_id),
-        "openslate_invitation_operation_id": str(operation_id),
+        "slateops_user_id": str(local_id),
+        "slateops_invitation_operation_id": str(operation_id),
     }
     client = Mock()
     client.get_admin_user.side_effect = ProviderUserNotFound()
@@ -381,8 +381,8 @@ def test_reconcile_does_not_delete_identity_with_recorded_acceptance() -> None:
         None,
         profile.email,
         {
-            "openslate_user_id": str(local_id),
-            "openslate_invitation_operation_id": str(operation_id),
+            "slateops_user_id": str(local_id),
+            "slateops_invitation_operation_id": str(operation_id),
         },
         datetime.now(UTC),
     )
@@ -409,8 +409,8 @@ def test_reconcile_never_rebinds_deleted_old_identity_from_stale_search() -> Non
     profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
                                            supabase_user_id=old_id)
     marker = {
-        "openslate_user_id": str(local_id),
-        "openslate_invitation_operation_id": str(operation_id),
+        "slateops_user_id": str(local_id),
+        "slateops_invitation_operation_id": str(operation_id),
     }
     client = Mock()
     client.get_admin_user.side_effect = ProviderUserNotFound()
@@ -550,8 +550,8 @@ def test_bootstrap_reconciles_only_the_sole_pending_administrator(
         None,
         "admin@example.test",
         {
-            "openslate_user_id": str(local_id),
-            "openslate_invitation_operation_id": str(operation_id),
+            "slateops_user_id": str(local_id),
+            "slateops_invitation_operation_id": str(operation_id),
         },
     )
     client.admin_send_invitation.return_value = ProviderUser(provider_id, None)

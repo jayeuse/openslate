@@ -16,7 +16,7 @@ def test_all_twenty_tables_fail_closed_and_keep_two_organization_rows_separate(c
     first = comms_world.seed_graph(comms_world.first)
     second = comms_world.seed_graph(comms_world.second)
     with comms_world.runtime.connect() as connection:
-        assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+        assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
         for name in sorted(COMMS_TABLES):
             assert connection.scalar(text(f"SELECT count(*) FROM {name}")) == 0
         connection.rollback()
@@ -80,7 +80,7 @@ def test_application_default_grants_do_not_expose_comms_to_provider_browser_role
         for name in sorted(COMMS_TABLES):
             for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
                 assert connection.scalar(text(
-                    "SELECT has_table_privilege('openslate_runtime', :table, :privilege)"
+                    "SELECT has_table_privilege('slateops_runtime', :table, :privilege)"
                 ), {"table": f"public.{name}", "privilege": privilege}) is True
                 for role in ("anon", "authenticated", "service_role"):
                     assert connection.scalar(text(

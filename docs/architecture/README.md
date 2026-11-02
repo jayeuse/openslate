@@ -24,7 +24,7 @@ flowchart LR
     API -->|Password login, email actions, JWT keys and provider checks| Auth[Supabase Auth]
     API -->|Constrained SQLAlchemy role| DB[(Supabase Database: PostgreSQL)]
     Alembic[Alembic: application schema only] -->|Owner connection| DB
-    API -->|Authorized private object operations| Storage[Supabase Storage: openslate-ready]
+    API -->|Authorized private object operations| Storage[Supabase Storage: slateops-ready]
     DB -. Opaque invalidations .-> API
     API -->|Authenticated SSE| Browser
     Operator[Local operator] -->|Loopback and Basic Auth| Studio[Supabase Studio]
@@ -84,7 +84,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - Supabase Auth authenticates. FastAPI owns explicit provider-subject binding, revocable application sessions, and all application authorization decisions.
 - Application roles and group access, Board groups, and report-run eligibility remain Slate Operations data; Auth metadata is never an authorization source. The Workspace profile stores shared settings, not an access policy. Server-backed Views and Reports are shared with module readers; each retained Report run records its eligible readers and still checks current module access when read.
 - Normal domain mutations use audited ORM sessions and explicit commits. Provider Auth and Storage operations are separate service boundaries.
-- Private file bytes live in the Supabase Storage `openslate-ready` bucket; FastAPI authorizes each operation and validates each upload's file type. There is no antivirus scan.
+- Private file bytes live in the Supabase Storage `slateops-ready` bucket; FastAPI authorizes each operation and validates each upload's file type. There is no antivirus scan.
 - Close/reopen is the default hierarchical lifecycle; purge is explicit and enabled in new-installation examples. Existing installations retain their required `LIFECYCLE_PURGE_ENABLED` value.
 - Authenticated SSE carries private invalidation events, never row snapshots. OpenComms also uses private Supabase Realtime topics for opaque invalidations, presence and typing; message content still loads through FastAPI.
 - Supabase Studio is an operator-only database console that replaces pgweb in the Compose topology; it is more privileged than the former read-only inspector.

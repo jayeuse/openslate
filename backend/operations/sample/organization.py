@@ -165,7 +165,7 @@ def create_sample_organization(
 
     def owner_connection() -> Any:
         connection = connect(database_url)
-        assert_psycopg_target(connection, target, expected_user="openslate_owner")
+        assert_psycopg_target(connection, target, expected_user="slateops_owner")
         connection.rollback()
         return connection
 

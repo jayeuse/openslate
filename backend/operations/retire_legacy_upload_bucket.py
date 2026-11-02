@@ -10,7 +10,7 @@ holds, and changes nothing. `--execute` deletes every object, lists the bucket a
 prove it is empty, deletes the bucket, and asks the provider to confirm that the bucket
 is gone. Outside local development `--execute` also needs `--confirm`. A missing bucket
 means there is nothing to retire. Any provider failure exits non-zero without claiming
-success; run the command again after the provider recovers. The `openslate-ready` bucket
+success; run the command again after the provider recovers. The `slateops-ready` bucket
 is never read or changed.
 """
 
@@ -80,7 +80,7 @@ def retire_legacy_upload_bucket(
 ) -> str:
     """Report, or with ``execute`` delete, the legacy bucket; return the outcome line."""
     assert_provider_instance(
-        values, database_url=values["DATABASE_URL"], expected_user="openslate_runtime",
+        values, database_url=values["DATABASE_URL"], expected_user="slateops_runtime",
     )
     try:
         with httpx.Client(

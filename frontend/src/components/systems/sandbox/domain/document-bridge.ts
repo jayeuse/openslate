@@ -538,7 +538,7 @@ export function mergeProjectedDesign(
     return documentRecordTrigger(rule, nextDesign, priority);
   });
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: documentDesign(nextDesign),
     triggers: orderChanged

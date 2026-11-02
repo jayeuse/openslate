@@ -121,7 +121,7 @@ def test_two_sessions_dedupe_schedule_and_claim_one_event() -> None:
     database_url = os.getenv("MIGRATION_DATABASE_URL")
     if database_url is None:
         pytest.skip("requires the disposable PostgreSQL integration database")
-    assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    assert_runner_database_url(database_url, allowed_roles=frozenset({"slateops_owner"}))
     engine = create_engine(database_url, pool_size=4, max_overflow=0)
     instant = datetime(2026, 9, 21, 8, 30, tzinfo=UTC)
     cleanup_state: tuple[UUID, UUID, UUID, DocumentBaseline] | None = None

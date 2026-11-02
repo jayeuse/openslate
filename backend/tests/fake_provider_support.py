@@ -66,7 +66,7 @@ class RealSessionPool:
     def _admin(self) -> httpx.Client:
         settings = get_settings()
         assert_provider_instance(
-            dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+            dict(os.environ), database_url=settings.database_url, expected_user="slateops_runtime"
         )
         return httpx.Client(
             base_url=settings.supabase_url.rstrip("/") + "/auth/v1/",

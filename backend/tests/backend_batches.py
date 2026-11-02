@@ -69,8 +69,8 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
         from postgres_runtime import assert_runner_database_url
 
     for name, role in (
-        ("TEST_DATABASE_URL", "openslate_runtime"),
-        ("MIGRATION_DATABASE_URL", "openslate_owner"),
+        ("TEST_DATABASE_URL", "slateops_runtime"),
+        ("MIGRATION_DATABASE_URL", "slateops_owner"),
     ):
         assert_runner_database_url(environment[name], environment, allowed_roles=frozenset({role}))
     env = {

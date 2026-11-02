@@ -56,7 +56,7 @@ def _workspace(**changes: object) -> dict[str, object]:
 
 def _document(**changes: object) -> dict[str, object]:
     document: dict[str, object] = {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 4,
         "design": {"departments": [], "modules": [], "relationships": [], "layout": {}},
         "triggers": [],
@@ -353,7 +353,7 @@ def test_baseline_refuses_partial_workspace_or_sandbox_without_any_write() -> No
         _workspace(),
         _document(
             document={
-                "kind": "openslate-sandbox",
+                "kind": "slateops-sandbox",
                 "schemaVersion": 4,
                 "design": {
                     "departments": [{"id": "partial"}],
@@ -415,7 +415,7 @@ def test_mailpit_preflight_rejects_an_unowned_project_network(
     auth = {
         "Config": {
             "Labels": {
-                "com.docker.compose.project": "openslate",
+                "com.docker.compose.project": "slateops",
                 "com.docker.compose.service": "auth",
                 "com.docker.compose.project.working_dir": expected_workdir,
             },
@@ -428,7 +428,7 @@ def test_mailpit_preflight_rejects_an_unowned_project_network(
         "Config": {
             "Image": PROVIDER_IMAGES["mailpit"],
             "Labels": {
-                "com.docker.compose.project": "openslate",
+                "com.docker.compose.project": "slateops",
                 "com.docker.compose.service": "mailpit",
                 "com.docker.compose.project.working_dir": expected_workdir,
             },
@@ -450,7 +450,7 @@ def test_mailpit_preflight_rejects_an_unowned_project_network(
         return [network] if arguments[0] == "network" else [auth, mailpit]
 
     monkeypatch.setattr(seed_operator, "_docker_json", inspect)
-    target = InstanceTarget("openslate", "127.0.0.1", 55432, "postgres", None, "openslate")
+    target = InstanceTarget("slateops", "127.0.0.1", 55432, "postgres", None, "slateops")
 
     with pytest.raises(SampleOperationError, match="Mailpit ownership"):
         _assert_owned_mailpit({"SUPABASE_MAIL_PORT": "58025"}, target)

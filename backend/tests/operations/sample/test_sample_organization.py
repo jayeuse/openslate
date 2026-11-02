@@ -27,11 +27,11 @@ ADMIN_PROVIDER = UUID("0190a000-0000-7000-8000-000000000001")
 
 def test_storage_objects_count_only_the_pack_organization_folder() -> None:
     keys = (
-        f"openslate-avatars/org/{SCHOOL_ORG}/avatar",
-        f"openslate-ready/org/{HARBOR_ORG}/file-a",
-        f"openslate-ready/org/{SCHOOL_ORG}/file-b",
-        f"openslate-ready/org/{SCHOOL_ORG}-other/file-c",
-        "openslate-ready/user/0190a000-0000-7000-8000-000000000002/avatar",
+        f"slateops-avatars/org/{SCHOOL_ORG}/avatar",
+        f"slateops-ready/org/{HARBOR_ORG}/file-a",
+        f"slateops-ready/org/{SCHOOL_ORG}/file-b",
+        f"slateops-ready/org/{SCHOOL_ORG}-other/file-c",
+        "slateops-ready/user/0190a000-0000-7000-8000-000000000002/avatar",
     )
 
     assert organization_storage_objects(keys, SCHOOL_ORG) == 2
@@ -165,7 +165,7 @@ def test_pack_organization_writes_publish_to_the_database_they_commit_to(monkeyp
     from app.core.database import session as database_session
     from operations.sample import organization as sample_organization
 
-    owner = "postgresql://openslate_owner:owner-secret@127.0.0.1:55432/postgres"
+    owner = "postgresql://slateops_owner:owner-secret@127.0.0.1:55432/postgres"
     monkeypatch.setattr(planning, "required_environment", lambda values: (owner, None))
     monkeypatch.setattr(planning, "_validated_database_url", lambda value, target: value)
     seen: list[str] = []

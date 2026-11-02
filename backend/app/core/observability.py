@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.core.log_sink import DailyLogHandler
 from app.core.middleware.request_context import get_current_request_context
 
-LOGGER_NAME: Final = "openslate.observability"
+LOGGER_NAME: Final = "slateops.observability"
 ALLOWED_EVENTS: Final = frozenset(
     {
         "http_request",
@@ -47,7 +47,7 @@ def configure_observability_logging() -> None:
     # a route template instead.
     logging.getLogger("uvicorn.access").disabled = True
     logger = logging.getLogger(LOGGER_NAME)
-    if any(getattr(handler, "_openslate_observability", False) for handler in logger.handlers):
+    if any(getattr(handler, "_slateops_observability", False) for handler in logger.handlers):
         return
     handler = DailyLogHandler(get_settings().log_dir)
     logger.addHandler(handler)

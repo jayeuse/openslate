@@ -290,7 +290,7 @@ def test_listener_start_is_idempotent_and_stop_tolerates_connection_close_failur
 
     listener = PostgresInvalidationListener(
         EventHub(),
-        "postgresql://events:test@localhost/openslate",
+        "postgresql://events:test@localhost/slateops",
         connect=lambda *_args, **_kwargs: Connection(),
         connect_timeout_seconds=1,
         statement_timeout_ms=1_000,
@@ -339,7 +339,7 @@ def test_listener_uses_settings_defaults_and_stops_without_a_started_thread(
     monkeypatch.setattr(
         "app.systems.platform.events.hub.get_settings",
         lambda: SimpleNamespace(
-            database_url="postgresql+psycopg://events:secret@localhost/openslate",
+            database_url="postgresql+psycopg://events:secret@localhost/slateops",
             database_connect_timeout_seconds=7,
             database_statement_timeout_ms=9_000,
         ),
@@ -347,7 +347,7 @@ def test_listener_uses_settings_defaults_and_stops_without_a_started_thread(
 
     listener = PostgresInvalidationListener(EventHub())
 
-    assert listener._database_url == "postgresql://events:secret@localhost/openslate"
+    assert listener._database_url == "postgresql://events:secret@localhost/slateops"
     assert listener._connect_options == {
         "autocommit": True,
         "connect_timeout": 7,
@@ -463,9 +463,9 @@ def test_a_failed_publish_logs_its_cause_and_uses_the_committing_database(
     event = InvalidationEvent(entity="records", org_id=ORGANIZATION)
 
     assert not publish_invalidations(
-        (event,), database_url="postgresql+psycopg://owner:secret@db.test:5432/openslate"
+        (event,), database_url="postgresql+psycopg://owner:secret@db.test:5432/slateops"
     )
-    assert targets == ["postgresql://owner:secret@db.test:5432/openslate"]
+    assert targets == ["postgresql://owner:secret@db.test:5432/slateops"]
     assert events[0]["reason_code"] == "publish_failed"
     assert events[0]["cause"] == "OperationalError"
 
@@ -476,7 +476,7 @@ def test_the_commit_hook_publishes_to_the_session_database(monkeypatch) -> None:
     from app.systems.manage.audit import listeners
 
     published = []
-    engine = create_engine("postgresql+psycopg://owner:secret@db.test:5432/openslate")
+    engine = create_engine("postgresql+psycopg://owner:secret@db.test:5432/slateops")
     session = SimpleNamespace(
         info={listeners.REALTIME_INVALIDATION_KEY: [object()]},
         in_nested_transaction=lambda: False,
@@ -489,5 +489,5 @@ def test_the_commit_hook_publishes_to_the_session_database(monkeypatch) -> None:
     listeners.broadcast_committed_changes(session)
 
     assert published == [
-        {"database_url": "postgresql+psycopg://owner:secret@db.test:5432/openslate"}
+        {"database_url": "postgresql+psycopg://owner:secret@db.test:5432/slateops"}
     ]

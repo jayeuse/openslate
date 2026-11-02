@@ -121,8 +121,8 @@ The schema plumbing investigation found that a table change touches more than th
 ### 3.1 New table
 
 1. Add the model to `backend/app/systems/<page>/<capability>/models.py` and import it in `backend/app/core/database/model_registry.py`.
-2. Generate the revision and review it by hand. Default privileges from the baseline grant `SELECT, INSERT, UPDATE, DELETE` to `openslate_app` automatically. An append-only table also needs `REVOKE UPDATE, DELETE, TRUNCATE ... FROM openslate_app`.
-3. A new database function needs `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` and `GRANT EXECUTE ... TO openslate_app`. Default privileges do not cover functions.
+2. Generate the revision and review it by hand. Default privileges from the baseline grant `SELECT, INSERT, UPDATE, DELETE` to `slateops_app` automatically. An append-only table also needs `REVOKE UPDATE, DELETE, TRUNCATE ... FROM slateops_app`.
+3. A new database function needs `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` and `GRANT EXECUTE ... TO slateops_app`. Default privileges do not cover functions.
 4. Classify the table in `backend/app/systems/platform/events/models.py`: private, administrator, all authenticated, entity only, or capability-filtered. A table in no set is broadcast to all authenticated users.
 5. Add the table to `APPLICATION_TABLES`, `NON_PRESERVED_TABLES` if applicable, `DELETE_ORDER` and `_LOCK_APPLICATION_STATEMENT` in `backend/operations/reset/models.py`. `reset/planning.py` compares these with the live schema.
 6. Audit is on by default. Set `__audit_enabled__ = False` only for session, rate-limit or queue data. Set `__audit_redacted_fields__` for sensitive columns.

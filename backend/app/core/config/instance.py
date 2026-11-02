@@ -28,7 +28,7 @@ from app.core.config.settings import DOTENV_PATH, get_instance_settings
 
 _IDENTITY = re.compile(r"[a-z][a-z0-9-]{2,62}\Z")
 _DOCKER_ID = re.compile(r"[a-f0-9]{12,64}\Z")
-_MIGRATION_LOCK_NAME = "openslate:alembic"
+_MIGRATION_LOCK_NAME = "slateops:alembic"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 
 

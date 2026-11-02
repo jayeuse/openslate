@@ -24,7 +24,7 @@ not a claim of browser-unreachability. See the
 [Envoy listeners](../../infra/supabase/upstream/envoy/lds.template.yaml) and
 [operator boundary](../../infra/supabase/README.md#opencomms-ingress-and-private-publication).
 
-The stack has no pgweb service or `openslate_inspector` login. Supabase Studio replaces pgweb as the provider operator interface and has broader administrative power than a read-only database viewer. Keep it on its loopback-only gateway path and use its configured operator credentials.
+The stack has no pgweb service or `slateops_inspector` login. Supabase Studio replaces pgweb as the provider operator interface and has broader administrative power than a read-only database viewer. Keep it on its loopback-only gateway path and use its configured operator credentials.
 
 ## Database and application authority
 
@@ -33,8 +33,8 @@ PostgreSQL remains the relational engine. Provider initialization owns Supabase 
 The application database uses three separate connections:
 
 - `DATABASE_BOOTSTRAP_URL` uses the pinned provider's `supabase_admin` login to provision application roles and grants. It is an operator-only input.
-- `MIGRATION_DATABASE_URL` uses `openslate_owner` for Alembic operations.
-- `DATABASE_URL` uses the constrained `openslate_runtime` role for FastAPI and its in-process workers.
+- `MIGRATION_DATABASE_URL` uses `slateops_owner` for Alembic operations.
+- `DATABASE_URL` uses the constrained `slateops_runtime` role for FastAPI and its in-process workers.
 
 The role provisioner, [`backend/operations/provision_database_role.py`](../../backend/operations/provision_database_role.py), verifies the runtime grants and installs a narrowly scoped read-only `auth.sessions` policy. The runtime role can read only the provider session identifiers it needs to confirm that an Auth session remains live. It receives no Auth mutation rights. Application tables remain inaccessible to browser provider keys, and ordinary domain reads and mutations go through FastAPI's SQLAlchemy boundary.
 
@@ -46,7 +46,7 @@ Provider roles and user metadata do not grant application permissions. Workspace
 
 ## Storage
 
-The application provisions two private buckets through [`backend/operations/provision_storage.py`](../../backend/operations/provision_storage.py): `openslate-ready` for organization files, including conversation attachments, and `openslate-avatars` for account avatars. File metadata and application authorization remain in PostgreSQL; bytes move through the server-side Supabase Storage API and persist in the provider's `supabase-storage-data` volume. There is no local-filesystem storage mode and no direct browser access to object bytes.
+The application provisions two private buckets through [`backend/operations/provision_storage.py`](../../backend/operations/provision_storage.py): `slateops-ready` for organization files, including conversation attachments, and `slateops-avatars` for account avatars. File metadata and application authorization remain in PostgreSQL; bytes move through the server-side Supabase Storage API and persist in the provider's `supabase-storage-data` volume. There is no local-filesystem storage mode and no direct browser access to object bytes.
 
 FastAPI authorizes upload and download. The upload request validates the file type with an allowlist and a bounded parser subprocess, writes the bytes to the ready bucket, and commits the file as `ready` with its digest and size. There is no antivirus scan. The application denies reads in every other state and rechecks access on download. The provider adapter is [`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py); upload, reconciliation, and purge behavior remains in the platform file service.
 

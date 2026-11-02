@@ -18,7 +18,7 @@ from tests.files.conftest import library_department
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
-BUCKET = "openslate-ready"
+BUCKET = "slateops-ready"
 
 
 @pytest.fixture

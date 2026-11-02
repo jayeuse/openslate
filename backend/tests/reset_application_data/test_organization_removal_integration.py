@@ -152,10 +152,10 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
         database.commit()
 
         storage_keys = {
-            f"openslate-ready/org/{org_id}/logo",
-            f"openslate-ready/org/{second.org_id}/kept",
-            f"openslate-avatars/user/{solo_id}/avatar",
-            f"openslate-avatars/user/{shared_id}/avatar",
+            f"slateops-ready/org/{org_id}/logo",
+            f"slateops-ready/org/{second.org_id}/kept",
+            f"slateops-avatars/user/{solo_id}/avatar",
+            f"slateops-avatars/user/{shared_id}/avatar",
         }
         storage = Mock()
         storage.list_prefixed_keys.side_effect = lambda prefixes: tuple(
@@ -210,8 +210,8 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
         ) == (2, 6, 2, 1, 1)
         assert confirmed.retained["memberships"][str(second.org_id)] == 4
         assert confirmed.storage_object_keys == (
-            f"openslate-avatars/user/{solo_id}/avatar",
-            f"openslate-ready/org/{org_id}/logo",
+            f"slateops-avatars/user/{solo_id}/avatar",
+            f"slateops-ready/org/{org_id}/logo",
         )
 
         # An account that sponsors a guest in another organization is not the pack's alone.

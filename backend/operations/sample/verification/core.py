@@ -295,7 +295,7 @@ def assert_pristine_workspace(workspace: Mapping[str, Any]) -> None:
 
 def assert_pristine_sandbox(document_response: Mapping[str, Any]) -> None:
     expected: dict[str, object] = {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 4,
         "design": {"departments": [], "modules": [], "relationships": [], "layout": {}},
         "triggers": [],

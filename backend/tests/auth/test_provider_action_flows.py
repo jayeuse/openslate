@@ -209,8 +209,8 @@ def _bind_invitation(user, membership, client) -> None:
         None,
         user.email,
         app_metadata={
-            "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
+            "slateops_user_id": str(user.id),
+            "slateops_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
     )
 
@@ -706,9 +706,9 @@ def test_an_invitation_completes_only_for_the_exactly_bound_pending_profile(
     elif mismatch == "no_operation":
         membership.provider_invitation_operation_id = None
     elif mismatch == "other_profile":
-        provider.app_metadata["openslate_user_id"] = str(uuid7())
+        provider.app_metadata["slateops_user_id"] = str(uuid7())
     else:
-        provider.app_metadata["openslate_invitation_operation_id"] = str(uuid7())
+        provider.app_metadata["slateops_invitation_operation_id"] = str(uuid7())
 
     with pytest.raises(InvitationError):
         provider_actions.complete_invitation(db, "a" * 56, "New secure password", client)

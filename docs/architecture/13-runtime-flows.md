@@ -6,8 +6,8 @@
 
 1. The developer keeps a private root `.env` with a unique `SLATEOPS_INSTANCE_ID`, instance root, loopback ports, provider values, and application connection URLs. `scripts/environment.py` validates it before a Compose mutation.
 2. `./scripts/dev.py db` starts the pinned Supabase development stack. Project labels, expected image, database volume, provider network, role, and live database target are checked by the instance guard before mutations are admitted.
-3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `openslate_owner` and `openslate_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
-4. `uv run python operations/provision_storage.py` creates and verifies the private `openslate-ready` and `openslate-avatars` buckets. It requires the admitted runtime database and server-only Supabase credentials.
+3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `slateops_owner` and `slateops_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
+4. `uv run python operations/provision_storage.py` creates and verifies the private `slateops-ready` and `slateops-avatars` buckets. It requires the admitted runtime database and server-only Supabase credentials.
 5. Start FastAPI with `uv run python -m app --reload`, then the frontend with `npm run dev`. The API must serve the Auth email-template route before an invitation is sent. HTTP `/api` requests use the development proxy to loopback FastAPI; the frontend launcher separately proxies the exact-origin Realtime WebSocket upgrade to the provider gateway.
 6. With the API running, `uv run python operations/bootstrap_admin.py` reserves the first administrator profile and sends a Supabase Auth invitation. The recipient sets a password through the Slate Operations invite page.
 
@@ -42,11 +42,11 @@ FastAPI does not keep local password hashes, a local invitation/recovery token s
 ## File upload and download
 
 This sequence describes organization files. Account avatars use the separate
-private `openslate-avatars` bucket and their account-scoped authorization path.
+private `slateops-avatars` bucket and their account-scoped authorization path.
 
 1. FastAPI checks the caller's file and parent-resource permissions in the bound organization and reserves metadata in PostgreSQL.
 2. The upload request validates the file type in a bounded parser subprocess. An invalid file is refused with 422, and its reservation stays unused.
-3. The server writes the validated bytes through the Storage API to the private `openslate-ready` bucket under the key `org/<org_id>/<hex>`, then commits the file as `ready` with its digest and size in the same request. The provider stores the bytes in the installation's Storage volume. A timeout or uncertain Storage operation leaves access denied and the operation visible for reconciliation, which sets `ready` only when the exact bytes exist.
+3. The server writes the validated bytes through the Storage API to the private `slateops-ready` bucket under the key `org/<org_id>/<hex>`, then commits the file as `ready` with its digest and size in the same request. The provider stores the bytes in the installation's Storage volume. A timeout or uncertain Storage operation leaves access denied and the operation visible for reconciliation, which sets `ready` only when the exact bytes exist.
 4. Download again checks the caller and parent-resource permissions, fetches the complete ready object through the server-side adapter, verifies it, and rechecks authorization after I/O. The browser receives bytes only in the authorized FastAPI response, as an attachment with `nosniff`; it never receives Storage credentials or a direct bucket URL.
 
 ## Mutation and invalidation

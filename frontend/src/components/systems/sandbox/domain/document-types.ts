@@ -160,7 +160,7 @@ export type SandboxVersionSnapshot = {
   note?: string;
 };
 export type SandboxDocumentV4 = {
-  kind: "openslate-sandbox";
+  kind: "slateops-sandbox";
   schemaVersion: typeof SANDBOX_DOCUMENT_SCHEMA_VERSION;
   design: SandboxDocumentDesign;
   triggers: SandboxTrigger[];

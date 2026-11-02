@@ -118,7 +118,7 @@ def _apply_test_scope(connection: Connection) -> None:
     org_id = _bound_threads.get(threading.get_ident())
     if org_id is not None:
         connection.exec_driver_sql(
-            "SELECT set_config('openslate.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
+            "SELECT set_config('slateops.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
         )
 
 

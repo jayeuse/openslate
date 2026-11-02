@@ -27,7 +27,7 @@ def provider() -> Iterator[tuple[dict[str, str], httpx.Client]]:
     if not owner_url:
         raise RuntimeError("Runner-owned PostgreSQL is required for Storage integration tests")
     _guard_integration_database(owner_url)
-    assert_provider_instance(values, database_url=owner_url, expected_user="openslate_owner")
+    assert_provider_instance(values, database_url=owner_url, expected_user="slateops_owner")
     key = values["SUPABASE_SECRET_KEY"]
     client = httpx.Client(
         base_url=values["SUPABASE_URL"].rstrip("/") + "/storage/v1/",
@@ -67,7 +67,7 @@ def test_execute_empties_and_removes_the_legacy_bucket_and_keeps_the_ready_bucke
     assert outcome.startswith(f"Deleted {len(KEYS)} objects")
     gone = client.get(f"bucket/{LEGACY}")
     assert gone.status_code in {400, 404} and gone.json().get("code") == "NoSuchBucket"
-    assert client.get("bucket/openslate-ready").json().get("id") == "openslate-ready"
+    assert client.get("bucket/slateops-ready").json().get("id") == "slateops-ready"
     assert operation.retire_legacy_upload_bucket(values, execute=True).startswith(
         "Nothing to retire"
     )

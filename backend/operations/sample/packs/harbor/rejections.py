@@ -5,8 +5,8 @@ from operations.sample.packs.types import RejectionCase
 FORBIDDEN = "Forbidden"
 HIDDEN = "Module not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:harbor-operations:not-an-option"
-INVALID_FIELD_KEY = "openslate:harbor-operations:never-a-field"
+INVALID_OPTION_KEY = "slateops:harbor-operations:not-an-option"
+INVALID_FIELD_KEY = "slateops:harbor-operations:never-a-field"
 
 ACTIVITY_CASES = (
     RejectionCase(

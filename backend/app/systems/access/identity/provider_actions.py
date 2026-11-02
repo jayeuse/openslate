@@ -270,8 +270,8 @@ def complete_invitation(
             or membership.invitation_sent_at is None
             or membership.provider_invitation_operation_id is None
             or not is_identity_eligible(local, membership)
-            or provider_user.app_metadata.get("openslate_user_id") != str(local.id)
-            or provider_user.app_metadata.get("openslate_invitation_operation_id")
+            or provider_user.app_metadata.get("slateops_user_id") != str(local.id)
+            or provider_user.app_metadata.get("slateops_invitation_operation_id")
             != str(membership.provider_invitation_operation_id)
         ):
             raise InvitationError("Invitation token is invalid")

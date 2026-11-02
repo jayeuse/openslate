@@ -109,7 +109,7 @@ class CredentialRoster:
                 row["password"] = password
             rows.append(row)
         document: dict[str, Any] = {
-            "format": "openslate-sample-people-v1",
+            "format": "slateops-sample-people-v1",
             "accounts": rows,
             "groups": {},
             "last_operation": {"operation": "preflight", "state": "ready"},

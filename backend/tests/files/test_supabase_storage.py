@@ -62,7 +62,7 @@ def test_upload_writes_one_immutable_ready_object() -> None:
     api = StorageAPI()
     storage = make_storage(api)
     storage.upload(KEY, CONTENT, "application/octet-stream")
-    assert api.objects == {("openslate-ready", KEY): CONTENT}
+    assert api.objects == {("slateops-ready", KEY): CONTENT}
     assert storage.download(KEY) == CONTENT
     with pytest.raises(ProviderRejected):
         storage.upload(KEY, b"replacement", "application/octet-stream")
@@ -71,7 +71,7 @@ def test_upload_writes_one_immutable_ready_object() -> None:
 
 def test_delete_confirms_the_object_is_absent_and_retries_idempotently() -> None:
     api = StorageAPI()
-    api.objects[("openslate-ready", KEY)] = CONTENT
+    api.objects[("slateops-ready", KEY)] = CONTENT
     storage = make_storage(api)
     storage.delete(KEY)
     storage.delete(KEY)
@@ -80,11 +80,11 @@ def test_delete_confirms_the_object_is_absent_and_retries_idempotently() -> None
 
 def test_failed_delete_keeps_the_object_and_reports_uncertainty() -> None:
     api = StorageAPI()
-    api.objects[("openslate-ready", KEY)] = CONTENT
+    api.objects[("slateops-ready", KEY)] = CONTENT
     api.fail_delete = 503
     with pytest.raises(ProviderUnavailable):
         make_storage(api).delete(KEY)
-    assert api.objects == {("openslate-ready", KEY): CONTENT}
+    assert api.objects == {("slateops-ready", KEY): CONTENT}
 
 
 def test_confirmed_missing_object_code_at_live_provider_status_is_absent() -> None:
@@ -129,7 +129,7 @@ def test_redirect_and_oversized_download_fail_closed() -> None:
         storage.download(KEY)
 
     api = StorageAPI()
-    api.objects[("openslate-ready", KEY)] = b"x" * (10 * 1024 * 1024 + 1)
+    api.objects[("slateops-ready", KEY)] = b"x" * (10 * 1024 * 1024 + 1)
     with pytest.raises(ProviderUnavailable):
         make_storage(api).download(KEY)
 
@@ -138,7 +138,7 @@ def test_avatars_live_in_their_own_bucket_under_the_account() -> None:
     api = StorageAPI()
     key = f"user/{ORG}/" + "b" * 32
     make_storage(api).upload(key, CONTENT, "image/png")
-    assert api.objects == {("openslate-avatars", key): CONTENT}
+    assert api.objects == {("slateops-avatars", key): CONTENT}
 
 
 def test_invalid_key_and_content_size_are_rejected_before_request() -> None:

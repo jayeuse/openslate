@@ -45,7 +45,7 @@ class Metrics:
     def __init__(self):
         env = dict(os.environ)
         self.target = instance_target_for_process(
-            env["MIGRATION_DATABASE_URL"], "openslate_owner", env
+            env["MIGRATION_DATABASE_URL"], "slateops_owner", env
         )
         if self.target is None:
             raise RuntimeError("A guarded disposable target is required")

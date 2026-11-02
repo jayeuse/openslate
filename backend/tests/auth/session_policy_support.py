@@ -135,7 +135,7 @@ def shared_provider_sessions():
     """
     settings = get_settings()
     assert_provider_instance(
-        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+        dict(os.environ), database_url=settings.database_url, expected_user="slateops_runtime"
     )
     email = f"policy-{uuid4().hex}@example.test"
     password = token_urlsafe(32)

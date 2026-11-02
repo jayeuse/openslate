@@ -20,7 +20,7 @@ from tests.files.test_workspace_policy_integration import _actor_with_record, _c
 
 pytestmark = pytest.mark.integration
 
-_READY = "openslate-ready"
+_READY = "slateops-ready"
 _MEDIA_TYPE = "application/octet-stream"
 
 
@@ -65,7 +65,7 @@ def live_provider_storage() -> Iterator[tuple[Settings, SupabaseStorage, httpx.C
     if not owner_url:
         raise RuntimeError("Runner-owned PostgreSQL is required for Storage integration tests")
     _guard_integration_database(owner_url)
-    assert_provider_instance(values, database_url=owner_url, expected_user="openslate_owner")
+    assert_provider_instance(values, database_url=owner_url, expected_user="slateops_owner")
 
     settings = get_settings()
     storage, client = _new_storage(settings)

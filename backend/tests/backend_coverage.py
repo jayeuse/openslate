@@ -124,8 +124,8 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
     before = source_inventory(backend)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
     for name, role in (
-        ("TEST_DATABASE_URL", "openslate_runtime"),
-        ("MIGRATION_DATABASE_URL", "openslate_owner"),
+        ("TEST_DATABASE_URL", "slateops_runtime"),
+        ("MIGRATION_DATABASE_URL", "slateops_owner"),
     ):
         assert_runner_database_url(environment[name], environment, allowed_roles=frozenset({role}))
     env = {

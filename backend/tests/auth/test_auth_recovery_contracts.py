@@ -56,8 +56,8 @@ def _action(monkeypatch, db, *, pending=False):
         None,
         user.email,
         app_metadata={
-            "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
+            "slateops_user_id": str(user.id),
+            "slateops_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
     )
     client.get_user.return_value = verified

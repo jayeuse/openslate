@@ -33,33 +33,33 @@ class ProviderSignoutWorker:
     def run_once(self) -> int:
         values = environment_inputs(DOTENV_PATH)
         url = self._settings.database_url
-        assert_provider_instance(values, database_url=url, expected_user="openslate_runtime")
-        target = instance_target_for_process(url, "openslate_runtime", process=values)
+        assert_provider_instance(values, database_url=url, expected_user="slateops_runtime")
+        target = instance_target_for_process(url, "slateops_runtime", process=values)
         with AuditSession(bind=get_engine()) as db:
             if target is not None:
-                assert_instance_target(db.connection(), target, expected_user="openslate_runtime")
+                assert_instance_target(db.connection(), target, expected_user="slateops_runtime")
                 db.rollback()
             return drain_provider_signouts(db, get_supabase_auth_client())
 
     def _run_retention_once(self) -> int:
         values = environment_inputs(DOTENV_PATH)
         url = self._settings.database_url
-        assert_provider_instance(values, database_url=url, expected_user="openslate_runtime")
-        target = instance_target_for_process(url, "openslate_runtime", process=values)
+        assert_provider_instance(values, database_url=url, expected_user="slateops_runtime")
+        target = instance_target_for_process(url, "slateops_runtime", process=values)
         with AuditSession(bind=get_engine()) as db:
             if target is not None:
-                assert_instance_target(db.connection(), target, expected_user="openslate_runtime")
+                assert_instance_target(db.connection(), target, expected_user="slateops_runtime")
                 db.rollback()
             return retain_terminal_sessions(db)
 
     def _run_event_retention_once(self) -> int:
         values = environment_inputs(DOTENV_PATH)
         url = self._settings.database_url
-        assert_provider_instance(values, database_url=url, expected_user="openslate_runtime")
-        target = instance_target_for_process(url, "openslate_runtime", process=values)
+        assert_provider_instance(values, database_url=url, expected_user="slateops_runtime")
+        target = instance_target_for_process(url, "slateops_runtime", process=values)
         with AuditSession(bind=get_engine()) as db:
             if target is not None:
-                assert_instance_target(db.connection(), target, expected_user="openslate_runtime")
+                assert_instance_target(db.connection(), target, expected_user="slateops_runtime")
                 db.rollback()
             return retain_security_events(db)
 

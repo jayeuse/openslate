@@ -46,7 +46,7 @@ def development_reset_cli(monkeypatch, tmp_path):
     values = {
         "ENVIRONMENT": "development",
         "MIGRATION_DATABASE_URL": (
-            "postgresql+psycopg://openslate_owner:fixture-only@127.0.0.1:55432/postgres"
+            "postgresql+psycopg://slateops_owner:fixture-only@127.0.0.1:55432/postgres"
         ),
         "ADMIN_EMAIL": plan.sample_email,
         "SUPABASE_URL": "http://127.0.0.1:58000",
@@ -145,7 +145,7 @@ def test_noninteractive_reset_refuses_outside_development_before_setup(
     (
         (
             "MIGRATION_DATABASE_URL",
-            "postgresql+psycopg://openslate_owner:fixture-only@192.168.1.4:55432/postgres",
+            "postgresql+psycopg://slateops_owner:fixture-only@192.168.1.4:55432/postgres",
         ),
         ("SUPABASE_URL", "http://192.168.1.4:58000"),
     ),

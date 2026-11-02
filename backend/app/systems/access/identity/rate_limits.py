@@ -47,7 +47,7 @@ def normalize_identifier(value: str) -> str:
 
 def rate_limit_fingerprint(namespace: str, value: str, source: str | None) -> str:
     secret = get_settings().security_event_server_key.get_secret_value().encode("utf-8")
-    content = b"openslate:identity-rate-limit:v1:" + (
+    content = b"slateops:identity-rate-limit:v1:" + (
         f"{namespace}-rate-limit\x00{value}\x00{source or ''}".encode()
     )
     return hmac_digest(secret, content, "sha256").hex()

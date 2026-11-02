@@ -80,7 +80,7 @@ class AuthAccount:
 
     id: UUID
     email: str
-    openslate_user_id: UUID | None = None
+    slateops_user_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -283,7 +283,7 @@ def _provider_account_ids(
     """Removed accounts' provider ids, plus pack-domain Auth accounts that no profile holds."""
     removed_profiles = {user_id for user_id, _ in removable}
     account_ids = [account.id for account in accounts]
-    owners = [account.openslate_user_id for account in accounts if account.openslate_user_id]
+    owners = [account.slateops_user_id for account in accounts if account.slateops_user_id]
     held = (
         {
             _as_uuid(row[0])
@@ -302,7 +302,7 @@ def _provider_account_ids(
     )
     selected = {provider_id for _, provider_id in removable if provider_id is not None}
     for account in accounts:
-        owner = account.openslate_user_id
+        owner = account.slateops_user_id
         # An unbound account whose metadata names a kept profile stays with that profile.
         if account.id not in held and (
             owner is None or owner in removed_profiles or owner not in existing
@@ -318,8 +318,8 @@ def storage_prefixes(
 ) -> tuple[str, ...]:
     return tuple(
         sorted(
-            [f"openslate-ready/org/{org_id}" for org_id in organization_ids]
-            + [f"openslate-avatars/user/{user_id}" for user_id in removable_user_ids]
+            [f"slateops-ready/org/{org_id}" for org_id in organization_ids]
+            + [f"slateops-avatars/user/{user_id}" for user_id in removable_user_ids]
         )
     )
 

@@ -136,7 +136,7 @@ def _assert_report_schema(connection: Connection) -> None:
 
 
 def _assert_runtime_privileges(connection: Connection) -> None:
-    statement = text("SELECT has_table_privilege('openslate_runtime', 'public.reports', :action)")
+    statement = text("SELECT has_table_privilege('slateops_runtime', 'public.reports', :action)")
     for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert connection.scalar(statement, {"action": action}) is True
 

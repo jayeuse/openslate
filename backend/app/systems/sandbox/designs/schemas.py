@@ -270,7 +270,7 @@ class SandboxSnapshot(StrictModel):
 
 
 class SandboxDocument(SandboxSnapshot):
-    kind: Literal["openslate-sandbox"]
+    kind: Literal["slateops-sandbox"]
     schema_version: Literal[4] = Field(alias="schemaVersion")
 
     @model_validator(mode="before")

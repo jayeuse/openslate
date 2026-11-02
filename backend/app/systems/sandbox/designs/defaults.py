@@ -3,7 +3,7 @@
 from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION, SandboxDocument
 
 EMPTY_SANDBOX_DOCUMENT: dict[str, object] = {
-    "kind": "openslate-sandbox",
+    "kind": "slateops-sandbox",
     "schemaVersion": DOCUMENT_SCHEMA_VERSION,
     "design": {
         "departments": [],

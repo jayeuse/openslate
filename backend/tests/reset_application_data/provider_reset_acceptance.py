@@ -50,7 +50,7 @@ def _owned_environment() -> tuple[dict[str, str], str, str]:
     if not owner_url or not runtime_url or not run_id:
         raise RuntimeError("Provider reset acceptance inputs are incomplete")
     _guard_integration_database(runtime_url)
-    assert_provider_instance(values, database_url=runtime_url, expected_user="openslate_runtime")
+    assert_provider_instance(values, database_url=runtime_url, expected_user="slateops_runtime")
     return values, owner_url, run_id
 
 
@@ -228,7 +228,7 @@ def _storage_bytes(
         bucket, separator, object_key = full_key.partition("/")
         if not separator:
             raise RuntimeError("The disposable Storage inventory was invalid")
-        content = objects.download(object_key) if bucket == "openslate-ready" else None
+        content = objects.download(object_key) if bucket == "slateops-ready" else None
         if content is None:
             raise RuntimeError("A listed disposable Storage object could not be read")
         observed.append((full_key, len(content), hashlib.sha256(content).hexdigest()))
@@ -361,7 +361,7 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         if before[1] != (True, True):
             raise RuntimeError("The disposable reset fixture did not bind both Auth identities")
         expected_objects = sorted(
-            zip((f"openslate-ready/{key}" for key in object_keys), content, strict=True)
+            zip((f"slateops-ready/{key}" for key in object_keys), content, strict=True)
         )
         if tuple(key for key, _size, _digest in before[2]) != tuple(
             key for key, _content in expected_objects

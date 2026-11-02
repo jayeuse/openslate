@@ -14,8 +14,8 @@ The root validator is [`backend/app/core/config/environment.py`](../../backend/a
 | `SLATEOPS_INSTANCE_ROOT` | Local instance paths and log-root validation | Private absolute path. Production overlay has separately named absolute paths below. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE` | Direct SQLAlchemy/Psycopg connection and instance admission | Internal endpoint; use `db:5432/postgres` inside the production Compose network and the admitted loopback mapping in development. `POSTGRES_PORT` must match `SUPABASE_DB_PORT`. |
 | `DATABASE_BOOTSTRAP_URL` | `operations/provision_database_role.py` only | High-privilege `supabase_admin` URL using the provider bootstrap password. Never pass it to the API, frontend, or tests as a runtime connection. |
-| `MIGRATION_DATABASE_URL` | Alembic and guarded operator/reset commands | Secret URL for `openslate_owner`; owns application schema changes. |
-| `DATABASE_URL` | FastAPI and Storage provisioning | Secret URL for constrained `openslate_runtime` in normal runtime. Direct PostgreSQL access remains server-side. |
+| `MIGRATION_DATABASE_URL` | Alembic and guarded operator/reset commands | Secret URL for `slateops_owner`; owns application schema changes. |
+| `DATABASE_URL` | FastAPI and Storage provisioning | Secret URL for constrained `slateops_runtime` in normal runtime. Direct PostgreSQL access remains server-side. |
 
 `POSTGRES_PASSWORD` is the provider bootstrap password, not the application runtime password. The key generator [`backend/operations/supabase_keys.py`](../../backend/operations/supabase_keys.py) writes generated per-installation key material to a new owner-only file and refuses to overwrite an existing file. Connection URLs must target the same admitted installation and use their intended role; no SQLite or legacy inspector connection is supported.
 
