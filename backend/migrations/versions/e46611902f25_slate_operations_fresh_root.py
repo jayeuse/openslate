@@ -9762,6 +9762,12 @@ def upgrade() -> None:
         *PRIVILEGES,
     ):
         op.execute(statement)
+    # New functions are not executable by default. A schema-only dump of public does
+    # not show this installation-wide default, so it is stated here.
+    op.execute(
+        "ALTER DEFAULT PRIVILEGES FOR ROLE slateops_owner "
+        "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role"
+    )
     # Audit and security events are append-only for the application role. The default
     # privileges above grant every table full DML, so remove the rest explicitly.
     op.execute(
