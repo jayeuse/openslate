@@ -145,13 +145,15 @@ export function VirtualMessageList({
       alignedTarget.current = "";
       // Mount starts at the estimated end. Only subsequent explicit latest/send
       // transitions need a command; measurements preserve the end themselves.
+      // An explicit command cancels pending anchor work (virtual-core 3.19.7),
+      // so target the last row, which scrollToIndex keeps aligned as it measures.
       if (
         followLatest &&
         (previous.targetId ||
           !previous.followLatest ||
           previous.lastId !== lastId)
       )
-        virtual.scrollToOffset(virtual.getTotalSize() + margin);
+        virtual.scrollToIndex(count - 1, { align: "end" });
       return;
     }
     if (targetIndex < 0 || alignedTarget.current === targetId) return;
