@@ -46,6 +46,19 @@ test("the list path carries each filter, the trimmed search and the page", () =>
   );
 });
 
+test("D7-C1: the list path finds an entry by its reference", () => {
+  expect(
+    manageAuditListPath({
+      reference: "4f9c2e1a",
+      sortOrder: "desc",
+      limit: 10,
+      offset: 0,
+    }),
+  ).toBe(
+    "/audit-logs?reference=4f9c2e1a&sort_by=created_at&sort_order=desc&limit=10&offset=0",
+  );
+});
+
 test("the list path leaves out empty filters and a blank search", () => {
   expect(
     manageAuditListPath({

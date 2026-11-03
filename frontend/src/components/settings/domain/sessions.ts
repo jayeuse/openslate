@@ -1,4 +1,7 @@
-import type { AccountSession } from "@/components/systems/platform/adapters/account-api";
+import type {
+  AccountSession,
+  SignInEvent,
+} from "@/components/systems/platform/adapters/account-api";
 import {
   formatWorkspaceDateTime,
   type WorkspaceRegion,
@@ -80,4 +83,56 @@ export function endSessionTitle(userAgent: string | null): string {
   return device === "Unknown device"
     ? "End the session on an unknown device?"
     : `End the session on ${device.replace(" on ", ", ")}?`;
+}
+
+const SIGN_IN_SENTENCES: Readonly<
+  Record<
+    SignInEvent["kind"],
+    { sentence: string; tone: "muted" | "danger" | "warn" }
+  >
+> = {
+  signed_in: { sentence: "Signed in", tone: "muted" },
+  sign_in_failed: { sentence: "Sign-in failed", tone: "danger" },
+  locked_out: {
+    sentence: "Sign-in paused after too many failed attempts",
+    tone: "warn",
+  },
+  // The contract stores no ender, so D9.2's fallback words apply to all.
+  session_ended: { sentence: "Session ended", tone: "muted" },
+};
+
+export type SignInEventWords = {
+  /** Unique as `kind:id`: a session's sign-in and its end share the id. */
+  key: string;
+  kind: SignInEvent["kind"];
+  sentence: string;
+  tone: "muted" | "danger" | "warn";
+  device: string;
+  /** The full user agent, as the device name's title. */
+  userAgent: string | null;
+  address: string;
+  time: string;
+};
+
+/** One row of Your sign-in history (D9.2). */
+export function signInEventWords(
+  event: SignInEvent,
+  region: WorkspaceRegion | undefined,
+): SignInEventWords {
+  let time = "Time unavailable";
+  if (region && !Number.isNaN(new Date(event.occurred_at).getTime()))
+    try {
+      time = formatWorkspaceDateTime(event.occurred_at, region);
+    } catch {
+      // An unsupported zone or locale keeps "Time unavailable".
+    }
+  return {
+    key: `${event.kind}:${event.id}`,
+    kind: event.kind,
+    ...SIGN_IN_SENTENCES[event.kind],
+    device: accountDeviceLabel(event.user_agent),
+    userAgent: event.user_agent,
+    address: event.ip_address ?? "Unknown address",
+    time,
+  };
 }

@@ -38,7 +38,10 @@ from app.systems.access.users.sessions_schemas import (
     AdminSessionListResponse,
     AdminSessionResponse,
     AdminSessionSortField,
+    SignInEventListRequest,
+    SignInEventListResponse,
 )
+from app.systems.access.users.sign_in_history import list_sign_in_events
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
@@ -202,6 +205,23 @@ def list_sessions(
         )
         for item in sessions
     ]
+
+
+@auth_router.get(
+    "/sign-in-events",
+    response_model=SignInEventListResponse,
+    operation_id="list_own_sign_in_events",
+)
+def list_own_sign_in_events(
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    params: Annotated[SignInEventListRequest, Query()],
+    response: Response,
+) -> SignInEventListResponse:
+    """The caller's own history; no organization binding, so blocked entry still shows it."""
+    identity = _require_completed_identity(identity)
+    response.headers["Cache-Control"] = "no-store"
+    return list_sign_in_events(db, identity.user.id, params)
 
 
 @auth_router.get("/admin-sessions", response_model=AdminSessionCollectionResponse)

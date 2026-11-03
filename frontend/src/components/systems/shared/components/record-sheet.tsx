@@ -65,7 +65,11 @@ export type RecordControls = {
   onLoadMoreFields?: () => void;
   dataSources: readonly OpenViewDataSource[];
   canWrite: boolean;
+  /** The record is open and the sheet knows its department (S4-C5). */
   canReadHistory: boolean;
+  /** An admin or a manager of the record's department: the history reads
+   * through the department and keeps today's text rule (D10.1, D10.2). */
+  managesHistory: boolean;
   onChanged: (message: string) => void;
   onEditingChange: (editing: boolean) => void;
 };
@@ -293,6 +297,8 @@ export function LiveRecordInspector({
                   moduleId={controls.moduleId}
                   departmentId={controls.departmentId}
                   fields={controls.editableFields}
+                  fieldsComplete={!controls.fieldsHasMore}
+                  manages={controls.managesHistory}
                   version={`${record.updatedAt}:${String(record.isDeleted)}`}
                 />
               </TabsContent>

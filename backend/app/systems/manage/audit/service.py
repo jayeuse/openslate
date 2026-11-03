@@ -39,6 +39,7 @@ from app.systems.manage.audit.models import (
     SecurityEvent,
     SecurityEventOutcome,
 )
+from app.systems.manage.audit.reference import reference_condition
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.access import readable_link_clause
@@ -175,6 +176,7 @@ def audit_log_statement(
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    reference: str | None = None,
 ) -> Select[tuple[AuditLog]]:
     conditions: list[ColumnElement[bool]] = [_audit_rows_of_bound_organization()]
     if action is not None:
@@ -189,6 +191,8 @@ def audit_log_statement(
         conditions.append(AuditLog.performed_by == performed_by)
     if request_id is not None:
         conditions.append(AuditLog.request_id == request_id)
+    if reference is not None:
+        conditions.append(reference_condition(AuditLog.request_id, reference))
     if created_after is not None:
         conditions.append(AuditLog.created_at >= created_after)
     if created_before is not None:
@@ -210,6 +214,7 @@ def list_audit_logs(
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    reference: str | None = None,
 ) -> ListQueryResult[AuditLog]:
     statement = audit_log_statement(
         action=action,
@@ -220,6 +225,7 @@ def list_audit_logs(
         request_id=request_id,
         created_after=created_after,
         created_before=created_before,
+        reference=reference,
     ).where(*_reader_conditions(db, reader))
     return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
 
@@ -439,6 +445,7 @@ def list_security_events(
     person_id: UUID | None = None,
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
+    reference: str | None = None,
 ) -> ListQueryResult[SecurityEvent]:
     conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization(
         operator=reader is not None and is_platform_operator(db, reader.id),
@@ -457,6 +464,8 @@ def list_security_events(
         conditions.append(SecurityEvent.occurred_at >= occurred_after)
     if occurred_before is not None:
         conditions.append(SecurityEvent.occurred_at < occurred_before)
+    if reference is not None:
+        conditions.append(reference_condition(SecurityEvent.request_id, reference))
 
     statement = select(SecurityEvent).where(*conditions)
     return execute_standard_list(db, statement, params, SECURITY_EVENT_LIST_SPEC)

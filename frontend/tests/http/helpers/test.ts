@@ -309,6 +309,27 @@ export const test = base.extend({
           })
         : route.fallback(),
     );
+    // Settings → Sessions reads the own sign-in history (S4-C2); by default
+    // none is recorded. Journeys that show events route it at page level.
+    await context.route(
+      (url) => url.pathname === "/api/auth/sign-in-events",
+      (route) => {
+        const url = new URL(route.request().url());
+        return route.fulfill({
+          headers: { "Cache-Control": "no-store" },
+          json: {
+            items: [],
+            pagination: {
+              limit: Number(url.searchParams.get("limit") ?? 10),
+              offset: Number(url.searchParams.get("offset") ?? 0),
+              count: 0,
+              total: 0,
+              has_more: false,
+            },
+          },
+        });
+      },
+    );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );

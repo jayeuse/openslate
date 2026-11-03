@@ -223,6 +223,11 @@ export function useAccountSecurity() {
           queryKey: platformKeys.accountSessions(accountId),
           exact: true,
         }),
+        // The ended session shows in Your sign-in history (D9.4).
+        queryClient.invalidateQueries({
+          queryKey: platformKeys.signInHistory(accountId),
+          exact: true,
+        }),
         queryClient.invalidateQueries({ queryKey: accessKeys.directory() }),
       ]);
     } catch (error) {
@@ -233,6 +238,8 @@ export function useAccountSecurity() {
 
   return {
     accountId,
+    /** The identity read failed and no account is known (D13 item 4). */
+    identityFailed: identity.isError && !identity.data,
     password: {
       open: passwordOpen,
       setOpen: (next: boolean) => {

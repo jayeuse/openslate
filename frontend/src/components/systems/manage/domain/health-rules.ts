@@ -161,21 +161,32 @@ export function checkTime(value: string, region?: WorkspaceRegion): string {
   return formatter(region, { timeStyle: "short" })(value);
 }
 
+/** The time alone when `value` is from today, else its date and time. */
+function dayAndTime(
+  value: string,
+  now: Date,
+  region: WorkspaceRegion | undefined,
+): { today: boolean; date: string; time: string } {
+  const day = formatter(region, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return {
+    today: day(value) === day(now.toISOString()),
+    date: formatter(region, { month: "short", day: "numeric" })(value),
+    time: checkTime(value, region),
+  };
+}
+
 /** "Checked at 10:42", or "Checked on Nov 1 at 23:58" when not from today. */
 export function checkTimeText(
   value: string,
   now: Date,
   region?: WorkspaceRegion,
 ): string {
-  const day = formatter(region, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const time = checkTime(value, region);
-  if (day(value) === day(now.toISOString())) return `Checked at ${time}`;
-  const date = formatter(region, { month: "short", day: "numeric" })(value);
-  return `Checked on ${date} at ${time}`;
+  const { today, date, time } = dayAndTime(value, now, region);
+  return today ? `Checked at ${time}` : `Checked on ${date} at ${time}`;
 }
 
 /** A person's "Check again", or the 60-second and focus refresh. */
@@ -185,12 +196,26 @@ export type CheckSuffix = "latest" | "no-change" | null;
 export type StatusCheck = {
   parts: readonly SystemPart[];
   checked_at: string;
+  /** Block 3's values; part of "the same result" (D8.6). */
+  organization?: OrganizationStatus | null;
 };
 
+/** Block 3's shown values; `since` moves with every request and is not one. */
+function organizationValues(check: StatusCheck): string {
+  const organization = check.organization;
+  if (!organization) return "null";
+  const { backups, failed_jobs, failed_sign_ins, lockouts } = organization;
+  return JSON.stringify([backups, failed_jobs, failed_sign_ins, lockouts]);
+}
+
+/** The same parts and, for an admin, the same organization values. */
 function sameParts(left: StatusCheck, right: StatusCheck): boolean {
   const a = statusesInOrder(left.parts);
   const b = statusesInOrder(right.parts);
-  return a.every((part, index) => part.status === b[index].status);
+  return (
+    a.every((part, index) => part.status === b[index].status) &&
+    organizationValues(left) === organizationValues(right)
+  );
 }
 
 /**
@@ -275,4 +300,135 @@ export function createAnnouncer(
     },
     stop,
   };
+}
+
+// Block 3, Your organization (S3, D8).
+
+export type BackupState =
+  "on_time" | "late" | "no_schedule" | "never_backed_up" | "unknown";
+export type BackupResult = "verified" | "failed" | "interrupted";
+/** The admin-only `organization` part of the status (API contract S3). */
+export type OrganizationStatus = {
+  since: string;
+  backups: {
+    state: BackupState;
+    last_success_at: string | null;
+    last_result: BackupResult | null;
+  };
+  failed_jobs: number | null;
+  failed_sign_ins: number;
+  lockouts: number;
+};
+
+const BACKUP_WORDS: Readonly<Record<BackupState, string>> = {
+  on_time: "On time",
+  late: "Late",
+  no_schedule: "No backup schedule",
+  never_backed_up: "No backup yet",
+  // D13 item 1: the server could not read the installation.
+  unknown: "Cannot be checked",
+};
+
+// The Backup page's run words (`backupRunStatus`) for the results the
+// contract sends.
+const RESULT_WORDS: Readonly<Record<BackupResult, string>> = {
+  verified: "Verified",
+  failed: "Failed",
+  interrupted: "Interrupted",
+};
+
+export type BackupsRow = {
+  state: BackupState;
+  word: string;
+  /** Line 2 in its parts, joined by " · "; each part stays whole. */
+  detail: string[];
+  /** Line 3: the owner's "Open Backup", or the note that someone else
+   * manages backups. For every state but On time (D8.3, D13 item 1). */
+  followUp: "open-backup" | "owner-manages" | null;
+};
+
+/** The Backups row (D8.3). */
+export function backupsRow(
+  backups: OrganizationStatus["backups"],
+  {
+    now,
+    region,
+    installationOwner,
+  }: {
+    now: Date;
+    region: WorkspaceRegion | undefined;
+    installationOwner: boolean;
+  },
+): BackupsRow {
+  const { state } = backups;
+  const followUp =
+    state === "on_time"
+      ? null
+      : installationOwner
+        ? ("open-backup" as const)
+        : ("owner-manages" as const);
+  if (state === "unknown")
+    return {
+      state,
+      word: BACKUP_WORDS[state],
+      detail: ["Slate Operations cannot read the backup state now."],
+      followUp,
+    };
+  const parts: string[] = [];
+  if (backups.last_success_at) {
+    const { today, date, time } = dayAndTime(
+      backups.last_success_at,
+      now,
+      region,
+    );
+    parts.push(
+      today
+        ? `Last good backup today at ${time}`
+        : `Last good backup on ${date} at ${time}`,
+    );
+  }
+  if (backups.last_result)
+    parts.push(`Latest run: ${RESULT_WORDS[backups.last_result]}`);
+  return {
+    state,
+    word: BACKUP_WORDS[state],
+    detail: parts.length ? parts : ["No backup has run yet."],
+    followUp,
+  };
+}
+
+function count(value: number, region: WorkspaceRegion | undefined): string {
+  return new Intl.NumberFormat(region?.locale).format(value);
+}
+
+/** The Failed jobs line (D8.4, D13 item 1 for a count it cannot read). */
+export function failedJobsText(
+  failed: number | null,
+  region: WorkspaceRegion | undefined,
+): string {
+  if (failed === null) return "The failed job count cannot be read now.";
+  if (failed === 0) return "No failed jobs in the last 7 days";
+  return failed === 1
+    ? "1 job failed in the last 7 days"
+    : `${count(failed, region)} jobs failed in the last 7 days`;
+}
+
+/** The Sign-in activity line (D8.5): each nonzero count, joined by "and". */
+export function signInActivityText(
+  failedSignIns: number,
+  lockouts: number,
+  region: WorkspaceRegion | undefined,
+): string {
+  const named = [
+    ...(failedSignIns
+      ? [
+          `${count(failedSignIns, region)} failed sign-in${failedSignIns === 1 ? "" : "s"}`,
+        ]
+      : []),
+    ...(lockouts
+      ? [`${count(lockouts, region)} lockout${lockouts === 1 ? "" : "s"}`]
+      : []),
+  ];
+  if (!named.length) return "No failed sign-ins or lockouts in the last 7 days";
+  return `${named.join(" and ")} in the last 7 days`;
 }

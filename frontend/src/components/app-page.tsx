@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { useServerUnreachable } from "@/components/server-connection-banner";
@@ -45,6 +45,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ApiErrorText } from "@/lib/api-errors";
+import { referenceViewerFor, setReferenceViewer } from "@/lib/reference-viewer";
 import { useErrorText } from "@/lib/use-error-text";
 import {
   WorkspaceNavigationGuardProvider,
@@ -167,6 +168,22 @@ function RefreshIdentityAfterCheck({ version }: { version: number }) {
     if (version > 0)
       void client.invalidateQueries({ queryKey: authMeOptions().queryKey });
   }, [client, version]);
+  return null;
+}
+
+/**
+ * Gives every error reference its viewer (D6, docs/specs/system-health.md):
+ * the bound organization's role from the identity this account already
+ * reads. It never fetches on its own; until the identity arrives, and after
+ * the account or organization changes, references keep the member words.
+ */
+function ReferenceViewerFromIdentity() {
+  const identity = useQuery({ ...authMeOptions(), enabled: false });
+  const viewer = referenceViewerFor(identity.data);
+  useEffect(() => {
+    setReferenceViewer(viewer);
+  }, [viewer]);
+  useEffect(() => () => setReferenceViewer("member"), []);
   return null;
 }
 
@@ -992,6 +1009,7 @@ export function AppPage({ children }: AppPageProps) {
         >
           <AppQueryProvider>
             <RefreshIdentityAfterCheck version={identityCheck} />
+            <ReferenceViewerFromIdentity />
             {accountOnly ? (
               <WorkspaceNavigationGuardProvider
                 onAcceptedNavigation={() => undefined}

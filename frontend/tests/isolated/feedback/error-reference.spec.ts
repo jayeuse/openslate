@@ -18,6 +18,11 @@ import {
   errorTextFor,
 } from "../../../src/lib/api-errors";
 import { reportError } from "../../../src/lib/feedback";
+import {
+  referenceField,
+  referenceSearch,
+} from "../../../src/lib/reference-search";
+import { referenceViewerFor } from "../../../src/lib/reference-viewer";
 import { installFetch } from "../helpers/fake-fetch";
 import { staticMarkup } from "../sandbox/static-markup";
 
@@ -320,4 +325,114 @@ test("a screen's error state keeps the message and the reference of its cause to
     reference: undefined,
   });
   expect(errorTextFor("", caught)).toBeNull();
+});
+
+test("D6-C1: line 2 names whom to give the reference to, by viewer", () => {
+  // D6: members and guests (and a page with no identity yet) keep the
+  // administrator sentence; an organization admin gives it to the person who
+  // runs the server; the installation owner reads no line 2 at all.
+  const member = reference({ id: bodyId, copy: "idle", onCopy: () => {} });
+  expect(member).toContain(
+    "<span>Give this reference to your administrator.</span>",
+  );
+  const admin = reference({
+    id: bodyId,
+    copy: "idle",
+    onCopy: () => {},
+    viewer: "admin",
+  });
+  expect(admin).toContain(
+    "<span>Give this reference to the person who runs your server.</span>",
+  );
+  expect(admin).not.toContain("your administrator");
+  const owner = reference({
+    id: bodyId,
+    copy: "idle",
+    onCopy: () => {},
+    viewer: "owner",
+  });
+  expect(owner).not.toMatch(/Give this reference/);
+  // No empty line 2 either: the reference row is followed by the end.
+  expect(owner).toMatch(/<span role="status"><\/span><\/span><\/span>$/);
+  // Line 3, the full ID after a refused copy, is unchanged for the owner.
+  const ownerFailed = reference({
+    id: bodyId,
+    copy: "failed",
+    onCopy: () => {},
+    viewer: "owner",
+  });
+  expect(ownerFailed).toContain(`>${bodyId}</code>`);
+  expect(ownerFailed).not.toMatch(/Give this reference/);
+});
+
+test("D6-C1: the viewer is the bound organization's role, and the owner wins", () => {
+  const identity = (
+    role: "admin" | "member" | "guest" | null,
+    operator = false,
+  ) => ({
+    role,
+    operator,
+  });
+  expect(referenceViewerFor(undefined)).toBe("member");
+  expect(referenceViewerFor(identity(null))).toBe("member");
+  expect(referenceViewerFor(identity("guest"))).toBe("member");
+  expect(referenceViewerFor(identity("member"))).toBe("member");
+  // An installation owner who is a member here is not this organization's
+  // admin, so the member words show (installationOwnerFor).
+  expect(referenceViewerFor(identity("member", true))).toBe("member");
+  expect(referenceViewerFor(identity("admin"))).toBe("admin");
+  expect(referenceViewerFor(identity("admin", true))).toBe("owner");
+});
+
+test("D7-C1: the Reference filter accepts the 8 characters or the full ID, lowercased", () => {
+  for (const [input, value] of [
+    ["", ""],
+    ["   ", ""],
+    ["4f9c2e1a", "4f9c2e1a"],
+    [" 4F9C2E1A ", "4f9c2e1a"],
+    [bodyId, bodyId],
+    [bodyId.toUpperCase(), bodyId],
+  ] as const)
+    expect(referenceSearch(input), JSON.stringify(input)).toEqual({
+      value,
+      error: "",
+    });
+  // Anything else stays out of the request (the server answers 422) and
+  // says what to enter beside the field.
+  for (const input of ["4f9c2e1", "4f9c2e1a0", "zz9c2e1a", "019a4c2e7b1d"])
+    expect(referenceSearch(input), input).toEqual({
+      value: "",
+      error: "Enter the 8 characters of a reference, or its full ID.",
+    });
+});
+
+test("D7-C1, D13 item 3: the Reference field checks on blur and Enter, never while typing", () => {
+  const error = "Enter the 8 characters of a reference, or its full ID.";
+  let state = { draft: "", applied: "", error: "" };
+  // While typing, no error and nothing applied: the list stays.
+  state = referenceField(state, { type: "type", value: "4F9C" });
+  expect(state).toEqual({ draft: "4F9C", applied: "", error: "" });
+  // Blur or Enter checks it: invalid shows the error and applies none.
+  state = referenceField(state, { type: "commit" });
+  expect(state).toEqual({ draft: "4F9C", applied: "", error });
+  // The error clears as soon as the field holds a valid reference...
+  state = referenceField(state, { type: "type", value: "4F9C2E1A" });
+  expect(state).toEqual({ draft: "4F9C2E1A", applied: "", error: "" });
+  // ...which applies, lowercased, only when checked.
+  state = referenceField(state, { type: "commit" });
+  expect(state).toEqual({ draft: "4f9c2e1a", applied: "4f9c2e1a", error: "" });
+  // Typing an invalid value keeps the last valid reference applied.
+  state = referenceField(state, { type: "type", value: "4f9c2e1" });
+  expect(state).toEqual({ draft: "4f9c2e1", applied: "4f9c2e1a", error: "" });
+  state = referenceField(state, { type: "commit" });
+  expect(state).toEqual({ draft: "4f9c2e1", applied: "", error });
+  // An empty field clears the error at once; checked, it applies none.
+  state = referenceField(state, { type: "type", value: "" });
+  expect(state).toEqual({ draft: "", applied: "", error: "" });
+  // A chip removed or filters cleared elsewhere resets the field.
+  state = referenceField(
+    { draft: "4f9c2e1a", applied: "4f9c2e1a", error: "" },
+    { type: "reset", applied: "" },
+  );
+  expect(state).toEqual({ draft: "", applied: "", error: "" });
 });

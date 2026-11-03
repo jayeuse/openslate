@@ -2,6 +2,7 @@
 
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CircleAlert,
   CircleCheck,
   CircleDashed,
   CircleMinus,
@@ -10,7 +11,8 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Route } from "next";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
+import {
+  notLoadingAdvice,
+  referenceAdvice,
+  type ReferenceViewer,
+} from "@/lib/reference-viewer";
 import { cn } from "@/lib/utils";
 
 import {
@@ -30,15 +37,20 @@ import {
   type SystemStatus,
 } from "../adapters/system-status-api";
 import {
+  backupsRow,
   checkAnnouncement,
   createAnnouncer,
   checkTime,
   checkTimeText,
+  failedJobsText,
   nextCheckSuffix,
   PART_NAMES,
   PART_ORDER,
   partRows,
+  signInActivityText,
   systemHeadline,
+  type BackupState,
+  type BackupsRow,
   type CheckSuffix,
   type CheckTrigger,
   type HeadlineTone,
@@ -48,6 +60,13 @@ import { useWorkspaceRegion } from "./backup-time";
 
 const CONNECTION_MESSAGE =
   "Could not connect. Check your connection and try again.";
+
+/**
+ * Block 3's values (D8), or "pending" for an admin's card before any result:
+ * a skeleton while the first read runs, dashes when it failed.
+ */
+export type OrganizationBlock =
+  { backups: BackupsRow; failedJobs: string; signIns: string } | "pending";
 
 /** What the page shows for its status read (D2.7). */
 export type SystemHealthState =
@@ -75,6 +94,19 @@ const PART_ICONS: Readonly<
   not_set_up: { icon: CircleMinus, className: "text-warn-text" },
   not_working: { icon: CircleX, className: "text-danger-text" },
   unknown: null,
+};
+
+// D8.3: these words extend R2 for the Backups row only; Late has its own
+// shape, and CircleMinus means "not set up" here as in block 2.
+const BACKUP_ICONS: Readonly<
+  Record<BackupState, { icon: LucideIcon; className: string } | null>
+> = {
+  on_time: { icon: CircleCheck, className: "text-flow-text" },
+  late: { icon: CircleAlert, className: "text-warn-text" },
+  no_schedule: { icon: CircleMinus, className: "text-warn-text" },
+  never_backed_up: { icon: CircleX, className: "text-danger-text" },
+  // D13 item 1: in block 2 this shape already means "cannot confirm".
+  unknown: { icon: CircleDashed, className: "text-muted-foreground" },
 };
 
 /** A failed status read as the page words it; a refused session shows
@@ -124,13 +156,11 @@ export const systemHealthStatusOptions = () =>
  * Operations works now, for every role. The status loads in the page frame
  * and refreshes every 60 seconds while visible and when the window regains
  * focus; neither refresh is the person's activity. Opening the page and
- * "Check again" are (`systemHealthStatusOptions`).
+ * "Check again" are (`systemHealthStatusOptions`). An admin's block 3 comes
+ * from the same read (S3-C5), so nobody makes an extra request for it.
  */
-export function SystemHealth({
-  installationOwner,
-}: {
-  installationOwner: boolean;
-}) {
+export function SystemHealth({ viewer }: { viewer: ReferenceViewer }) {
+  const installationOwner = viewer === "owner";
   const client = useQueryClient();
   const region = useWorkspaceRegion();
   const status = useQuery(systemHealthStatusOptions());
@@ -256,6 +286,27 @@ export function SystemHealth({
     </GuardedWorkspaceLink>
   );
 
+  // D8.1: after a result, the card shows only when the response carries the
+  // part; before one, only when the identity says this person is an admin.
+  const organizationPart = data?.organization;
+  const organization: OrganizationBlock | null = organizationPart
+    ? {
+        backups: backupsRow(organizationPart.backups, {
+          now: new Date(status.dataUpdatedAt),
+          region,
+          installationOwner,
+        }),
+        failedJobs: failedJobsText(organizationPart.failed_jobs, region),
+        signIns: signInActivityText(
+          organizationPart.failed_sign_ins,
+          organizationPart.lockouts,
+          region,
+        ),
+      }
+    : !data && viewer !== "member"
+      ? "pending"
+      : null;
+
   return (
     <SystemHealthView
       state={state}
@@ -263,6 +314,13 @@ export function SystemHealth({
       onCheckAgain={() => void checkAgain()}
       announcement={spoken}
       releaseLink={releaseLink}
+      viewer={viewer}
+      organization={organization}
+      linkTo={(href, label) => (
+        <GuardedWorkspaceLink href={href} className={linkClassName}>
+          {label}
+        </GuardedWorkspaceLink>
+      )}
     />
   );
 }
@@ -328,21 +386,158 @@ function PartList({ rows }: { rows: ReturnType<typeof partRows> | null }) {
   );
 }
 
-/** The page body for one state: blocks 1, 2, 5 and 6 in reading order. Block
- * 3 (Your organization) belongs between 2 and 5 from S3; nothing renders for
- * it now. */
+/** One labelled row of block 3, in the block 2 grid (D8.2). */
+function OrganizationRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="flex min-w-0 flex-col items-start">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * Block 3's rows (D8.2): Backups, Failed jobs and Sign-in activity, always in
+ * this order. Line 1 is the value, line 2 is muted, the link comes last.
+ * `skeleton` is the first load (a 160px bar each, a circle before Backups);
+ * `dash` is a failed first read, which keeps the links (D8.6).
+ */
+function OrganizationList({
+  cells,
+  linkTo,
+}: {
+  cells: Exclude<OrganizationBlock, "pending"> | "skeleton" | "dash";
+  linkTo: (href: Route, label: string) => ReactNode;
+}) {
+  const values = typeof cells === "string" ? null : cells;
+  const placeholder = (withIcon: boolean) =>
+    cells === "skeleton" ? (
+      <span className="flex items-center gap-2">
+        {withIcon ? <Skeleton className="size-4 rounded-full" /> : null}
+        <Skeleton className="h-3.5 w-40" />
+      </span>
+    ) : (
+      <span className="font-medium">—</span>
+    );
+  const links = cells !== "skeleton";
+  const backups = values?.backups;
+  const icon = backups ? BACKUP_ICONS[backups.state] : null;
+  return (
+    <dl className="grid min-w-0 gap-3 px-4 py-3 text-sm sm:gap-0 sm:py-2">
+      <OrganizationRow label="Backups">
+        {backups ? (
+          <>
+            <span className="flex items-center gap-2 font-medium">
+              {icon ? (
+                <icon.icon
+                  aria-hidden="true"
+                  className={cn("size-4 shrink-0", icon.className)}
+                />
+              ) : null}
+              {backups.word}
+            </span>
+            {/* Finding 4: each part stays whole; the line wraps only
+                between parts. */}
+            <span className="text-muted-foreground tabular-nums">
+              {backups.detail.map((part, index) => (
+                <Fragment key={part}>
+                  {index > 0 ? " · " : null}
+                  <span className="whitespace-nowrap">{part}</span>
+                </Fragment>
+              ))}
+            </span>
+            {backups.followUp === "open-backup" ? (
+              linkTo("/manage?view=backup", "Open Backup")
+            ) : backups.followUp === "owner-manages" ? (
+              <span className="text-muted-foreground">
+                The person who runs your server manages backups.
+              </span>
+            ) : null}
+          </>
+        ) : (
+          placeholder(true)
+        )}
+      </OrganizationRow>
+      <OrganizationRow label="Failed jobs">
+        {values ? (
+          <span className="font-medium tabular-nums">{values.failedJobs}</span>
+        ) : (
+          placeholder(false)
+        )}
+        {links ? linkTo("/manage?view=jobs", "Open Jobs") : null}
+      </OrganizationRow>
+      <OrganizationRow label="Sign-in activity">
+        {values ? (
+          <span className="font-medium tabular-nums">{values.signIns}</span>
+        ) : (
+          placeholder(false)
+        )}
+        {links
+          ? linkTo("/access?view=security", "Open Security in Access")
+          : null}
+      </OrganizationRow>
+    </dl>
+  );
+}
+
+/** Block 3, Your organization (D8), with one loading region (D8.6). */
+function OrganizationCard({
+  block,
+  loading,
+  linkTo,
+}: {
+  block: OrganizationBlock;
+  loading: boolean;
+  linkTo: (href: Route, label: string) => ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby="system-health-organization"
+      className={cardClassName}
+    >
+      <CardHeader id="system-health-organization">Your organization</CardHeader>
+      <LoadingRegion
+        loading={loading}
+        label="Loading system status"
+        skeleton={<OrganizationList cells="skeleton" linkTo={linkTo} />}
+      >
+        <OrganizationList
+          cells={block === "pending" ? "dash" : block}
+          linkTo={linkTo}
+        />
+      </LoadingRegion>
+    </section>
+  );
+}
+
+/** The page body for one state: blocks 1, 2, 3 (admins), 5 and 6 in reading
+ * order. */
 export function SystemHealthView({
   state,
   busy,
   onCheckAgain,
   announcement,
   releaseLink,
+  viewer,
+  organization,
+  linkTo,
 }: {
   state: SystemHealthState;
   busy: boolean;
   onCheckAgain: () => void;
   announcement: string;
   releaseLink: ReactNode;
+  /** Whom block 6 tells the reader to contact (D6). */
+  viewer: ReferenceViewer;
+  /** Block 3; null renders no card, heading or gap (D8.1). */
+  organization: OrganizationBlock | null;
+  linkTo: (href: Route, label: string) => ReactNode;
 }) {
   const loading = state.kind === "loading";
   const result = state.kind === "result" ? state : null;
@@ -350,6 +545,7 @@ export function SystemHealthView({
   const HeadlineIcon = headline ? TONE_ICONS[headline.tone] : null;
   const failure = state.kind === "loading" ? null : state.failure;
   const rows = partRows(result?.status.parts ?? []);
+  const advice = referenceAdvice(viewer);
   return (
     <div className="flex max-w-2xl min-w-0 flex-col gap-4">
       <section
@@ -450,6 +646,14 @@ export function SystemHealthView({
         </LoadingRegion>
       </section>
 
+      {organization ? (
+        <OrganizationCard
+          block={organization}
+          loading={loading}
+          linkTo={linkTo}
+        />
+      ) : null}
+
       <section aria-labelledby="system-health-about" className={cardClassName}>
         <CardHeader id="system-health-about">About this system</CardHeader>
         <dl className="grid min-w-0 px-4 py-2 text-sm">
@@ -489,12 +693,9 @@ export function SystemHealthView({
           <p>
             When an action fails, its message shows a reference, for example
             “Reference <code className="font-mono">4f9c2e1a</code>”, with a Copy
-            button. Give this reference to your administrator.
+            button.{advice ? ` ${advice}` : ""}
           </p>
-          <p>
-            When Slate Operations does not load: wait a minute and reload. If it
-            still does not load, tell your administrator.
-          </p>
+          <p>{notLoadingAdvice(viewer)}</p>
         </div>
       </section>
     </div>

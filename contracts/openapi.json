@@ -13168,6 +13168,56 @@
         "title": "OccurrenceSummary",
         "type": "object"
       },
+      "OrganizationBackups": {
+        "properties": {
+          "last_result": {
+            "anyOf": [
+              {
+                "enum": [
+                  "verified",
+                  "failed",
+                  "interrupted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Result"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "state": {
+            "enum": [
+              "on_time",
+              "late",
+              "no_schedule",
+              "never_backed_up",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "last_success_at",
+          "last_result"
+        ],
+        "title": "OrganizationBackups",
+        "type": "object"
+      },
       "OrganizationChannel": {
         "additionalProperties": false,
         "properties": {
@@ -13382,6 +13432,47 @@
           "org_id"
         ],
         "title": "OrganizationSelectionRequest",
+        "type": "object"
+      },
+      "OrganizationStatus": {
+        "description": "Freshness and counts for an admin of the bound organization; never sizes or run lists.",
+        "properties": {
+          "backups": {
+            "$ref": "#/components/schemas/OrganizationBackups"
+          },
+          "failed_jobs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Jobs"
+          },
+          "failed_sign_ins": {
+            "title": "Failed Sign Ins",
+            "type": "integer"
+          },
+          "lockouts": {
+            "title": "Lockouts",
+            "type": "integer"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "backups",
+          "failed_jobs",
+          "failed_sign_ins",
+          "lockouts"
+        ],
+        "title": "OrganizationStatus",
         "type": "object"
       },
       "PaginationMetadata": {
@@ -20495,6 +20586,83 @@
         "title": "Shortcuts",
         "type": "object"
       },
+      "SignInEventListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SignInEventResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "SignInEventListResponse",
+        "type": "object"
+      },
+      "SignInEventResponse": {
+        "additionalProperties": false,
+        "description": "One event of the caller's own sign-in history; ``kind:id`` is unique.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
+          "kind": {
+            "enum": [
+              "signed_in",
+              "session_ended",
+              "sign_in_failed",
+              "locked_out"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "occurred_at",
+          "user_agent",
+          "ip_address"
+        ],
+        "title": "SignInEventResponse",
+        "type": "object"
+      },
       "SortOrder": {
         "enum": [
           "asc",
@@ -21442,6 +21610,16 @@
             "title": "Checked At",
             "type": "string"
           },
+          "organization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "parts": {
             "items": {
               "$ref": "#/components/schemas/SystemPart"
@@ -21457,7 +21635,8 @@
         "required": [
           "parts",
           "version",
-          "checked_at"
+          "checked_at",
+          "organization"
         ],
         "title": "SystemStatusResponse",
         "type": "object"
@@ -26241,6 +26420,25 @@
             }
           },
           {
+            "description": "The 8-character error reference or the full request ID; any case.",
+            "in": "query",
+            "name": "reference",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The 8-character error reference or the full request ID; any case.",
+              "title": "Reference"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -28158,6 +28356,116 @@
           }
         ],
         "summary": "Revoke One Session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-in-events": {
+      "get": {
+        "description": "The caller's own history; no organization binding, so blocked entry still shows it.",
+        "operationId": "list_own_sign_in_events",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "const": "occurred_at",
+              "default": "occurred_at",
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "const": "desc",
+              "default": "desc",
+              "title": "Sort Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInEventListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Own Sign In Events",
         "tags": [
           "auth"
         ]
@@ -59850,6 +60158,25 @@
                 }
               ],
               "title": "Occurred Before"
+            }
+          },
+          {
+            "description": "The 8-character error reference or the full request ID; any case.",
+            "in": "query",
+            "name": "reference",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The 8-character error reference or the full request ID; any case.",
+              "title": "Reference"
             }
           },
           {

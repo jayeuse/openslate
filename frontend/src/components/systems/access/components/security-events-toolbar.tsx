@@ -20,6 +20,7 @@ import {
   filterRowClassName,
   type FilterChip,
 } from "./access-toolbar";
+import { ReferenceFilter } from "./reference-filter";
 import { outcomes } from "./security-event-facts";
 
 export const securityEventSorts = [
@@ -38,6 +39,8 @@ export type SecurityEventFilters = {
   person: string;
   from: string;
   through: string;
+  /** The checked, valid reference (D7-C1, D13 item 3), or "". */
+  reference: string;
   sort: SecurityEventSort;
 };
 
@@ -49,6 +52,7 @@ export const initialSecurityEventFilters: SecurityEventFilters = {
   person: "",
   from: "",
   through: "",
+  reference: "",
   sort: "newest",
 };
 
@@ -77,7 +81,8 @@ type People = ReturnType<typeof usePeopleSearch>;
 /**
  * The Security events toolbar, in the Activity grammar (MD6): search, the
  * outcome quick filter, the Filters popover (Event type as a searchable
- * list, Person, From, Through) and the active filters as chips, then Sort
+ * list, Person, From, Through, Reference) and the active filters as chips,
+ * then Sort
  * and a quiet Refresh. Errors stay beside their field.
  */
 export function SecurityEventsToolbar({
@@ -145,6 +150,13 @@ export function SecurityEventsToolbar({
       label: "Through",
       value: dayText(filters.through),
       onRemove: () => onChange({ through: "" }),
+    });
+  if (filters.reference)
+    chips.push({
+      key: "reference",
+      label: "Reference",
+      value: filters.reference,
+      onRemove: () => onChange({ reference: "" }),
     });
 
   return (
@@ -326,6 +338,12 @@ export function SecurityEventsToolbar({
           {errors.day}
         </p>
       ) : null}
+      <ReferenceFilter
+        id={id}
+        applied={filters.reference}
+        onApply={(reference) => onChange({ reference })}
+        disabled={pending}
+      />
     </AccessToolbar>
   );
 }

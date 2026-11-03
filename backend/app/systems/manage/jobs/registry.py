@@ -7,6 +7,7 @@ from typing import Any, get_args
 from uuid import UUID
 
 from sqlalchemy import DateTime, Row, Select, String, case, cast, literal, null, select, union_all
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Bundle, Session
 
 from app.common.dependencies import require_platform_operator
@@ -88,6 +89,7 @@ def _work_columns(label: str, name: Any, link: Any) -> tuple[Any, ...]:
         ).label("can_retry"),
         ScheduledWork.scheduled_for.label("effective_at"),
         literal(label).label("kind_label"),
+        ScheduledWork.org_id.label("org_id"),
     )
 
 
@@ -182,6 +184,8 @@ def _backups(instance: str) -> Select[Any]:
         ),
         effective.label("effective_at"),
         literal("Backup").label("kind_label"),
+        # Backups belong to the installation, not to an organization.
+        cast(null(), PostgreSQLUUID(as_uuid=True)).label("org_id"),
     )
 
 

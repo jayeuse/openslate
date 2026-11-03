@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { apiFetch } from "@/lib/api";
 
-import type { PartStatus } from "../domain/health-rules";
+import type { OrganizationStatus, PartStatus } from "../domain/health-rules";
 
 const KNOWN_STATUSES: readonly string[] = [
   "working",
@@ -14,6 +14,33 @@ const KNOWN_STATUSES: readonly string[] = [
 function knownStatus(value: string): PartStatus {
   return KNOWN_STATUSES.includes(value) ? (value as PartStatus) : "unknown";
 }
+
+const instant = z.iso.datetime({ offset: true });
+const count = z.number().int().nonnegative();
+
+// The admin-only organization part (API contract S3): backup freshness with
+// no sizes, paths, run lists or failure codes, and three 7-day counts.
+const organizationStatusSchema = z
+  .object({
+    since: instant,
+    backups: z
+      .object({
+        state: z.enum([
+          "on_time",
+          "late",
+          "no_schedule",
+          "never_backed_up",
+          "unknown",
+        ]),
+        last_success_at: instant.nullable(),
+        last_result: z.enum(["verified", "failed", "interrupted"]).nullable(),
+      })
+      .strict(),
+    failed_jobs: count.nullable(),
+    failed_sign_ins: count,
+    lockouts: count,
+  })
+  .strict() satisfies z.ZodType<OrganizationStatus>;
 
 // GET /api/system/status (docs/specs/system-health.md, API contract S2): the
 // four parts in R1 order with their status words, the version and the time of
@@ -30,7 +57,10 @@ const systemStatusSchema = z
         .strict(),
     ),
     version: z.string().min(1),
-    checked_at: z.iso.datetime({ offset: true }),
+    checked_at: instant,
+    // Always present: null for everyone but an admin of the bound
+    // organization (S3-C1).
+    organization: organizationStatusSchema.nullable(),
   })
   .strict();
 

@@ -49,7 +49,7 @@ def _workspace_profile(dataset):
 def _manage_run(tmp_path, pack_key, problem=None):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
-    assert len(actions) == 6, "Every new noninteractive Phase B route needs its own action"
+    assert len(actions) == 7, "Every new noninteractive Phase B route needs its own action"
     people = {
         p.key: p
         for p in dataset.organization.actors.people
@@ -164,6 +164,29 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     "parts": [{"key": key, "status": statuses[key]} for key in keys],
                     "version": "0.1.0",
                     "checked_at": "2026-11-02T10:42:05.123456Z",
+                    # The status control runs as a plain member, who gets no organization part.
+                    "organization": None,
+                },
+            )
+        if path == "/api/auth/sign-in-events":
+            kinds = ["sign_in_failed"] if problem == "sign_in_history_shape" else ["signed_in"]
+            return httpx.Response(
+                200,
+                headers=headers,
+                json={
+                    "items": [
+                        {
+                            "id": _id(f"sign-in-{kind}"),
+                            "kind": kind,
+                            "occurred_at": "2026-11-03T08:15:00Z",
+                            "user_agent": "Sample agent",
+                            "ip_address": "192.0.2.10",
+                        }
+                        for kind in kinds
+                    ],
+                    "pagination": {
+                        "limit": 25, "offset": 0, "count": 1, "total": 1, "has_more": False,
+                    },
                 },
             )
         assert actor in staff

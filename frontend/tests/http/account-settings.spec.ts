@@ -745,6 +745,124 @@ test("ending a session names the device and reads Ending… while it runs", asyn
   await expect(confirm).toBeHidden();
 });
 
+/** Sign-in events for Your sign-in history, newest first (S4-C2). */
+function signInEvent(index: number, kind = "signed_in") {
+  return {
+    id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+    kind,
+    occurred_at: `2026-10-24T${String(23 - index).padStart(2, "0")}:00:00Z`,
+    user_agent: chromeWindows,
+    ip_address: `10.0.5.${index}`,
+  };
+}
+
+function signInEventPage(
+  items: ReturnType<typeof signInEvent>[],
+  offset: number,
+  total: number,
+) {
+  return {
+    items,
+    pagination: {
+      limit: 10,
+      offset,
+      count: items.length,
+      total,
+      has_more: offset + items.length < total,
+    },
+  };
+}
+
+test("S4-C2: Your sign-in history shows ten events, Show older adds the rest and moves focus to them", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await installSessions(page);
+  const events = Array.from({ length: 15 }, (_, index) =>
+    signInEvent(index + 1, index === 1 ? "sign_in_failed" : "signed_in"),
+  );
+  const offsets: string[] = [];
+  await page.route("**/api/auth/sign-in-events?**", (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get("offset"));
+    offsets.push(`${url.searchParams.get("limit")}:${offset}`);
+    return route.fulfill({
+      json: signInEventPage(events.slice(offset, offset + 10), offset, 15),
+    });
+  });
+  await page.goto("/settings#security");
+  const history = settingsPanel(page).getByRole("list", {
+    name: "Your sign-in history",
+    exact: true,
+  });
+  await expect(history.getByRole("listitem")).toHaveCount(10);
+  await expect(history.getByRole("listitem").nth(1)).toContainText(
+    "Sign-in failed",
+  );
+  await expect(history.getByRole("listitem").first()).toContainText(
+    "Chrome on Windows",
+  );
+  await settingsPanel(page)
+    .getByRole("button", { name: "Show older", exact: true })
+    .click();
+  await expect(history.getByRole("listitem")).toHaveCount(15);
+  // Focus moves to the first new row; no older event is left, so the
+  // button is gone.
+  await expect(history.getByRole("listitem").nth(10)).toBeFocused();
+  await expect(history.getByRole("listitem").nth(10)).toContainText(
+    "10.0.5.11",
+  );
+  await expect(
+    settingsPanel(page).getByRole("button", { name: "Show older" }),
+  ).toHaveCount(0);
+  expect(offsets).toEqual(["10:0", "10:10"]);
+});
+
+test("S4-C2: an empty sign-in history says so, and ending a session reads it again", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  const { ended } = await installSessions(page);
+  let reads = 0;
+  await page.route("**/api/auth/sign-in-events?**", (route) => {
+    reads += 1;
+    return route.fulfill({
+      json:
+        ended.length === 0
+          ? signInEventPage([], 0, 0)
+          : signInEventPage([signInEvent(1, "session_ended")], 0, 1),
+    });
+  });
+  await page.goto("/settings#security");
+  await expect(
+    settingsPanel(page).getByText("No sign-in events are recorded yet.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await settingsPanel(page)
+    .getByRole("button", {
+      name: "Session actions, Chrome on Windows",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("menuitem", {
+      name: "End session, Chrome on Windows",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("alertdialog", { name: "End the session on Chrome, Windows?" })
+    .getByRole("button", { name: "End session", exact: true })
+    .click();
+  await expect(
+    settingsPanel(page)
+      .getByRole("list", { name: "Your sign-in history", exact: true })
+      .getByRole("listitem"),
+  ).toHaveText([/^Session ended/]);
+  expect(reads).toBe(2);
+});
+
 test("the photo saves at once, with its own status words beside it", async ({
   page,
 }) => {

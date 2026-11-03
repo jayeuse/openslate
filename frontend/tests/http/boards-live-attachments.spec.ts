@@ -315,8 +315,9 @@ test("a failed attach keeps the uploaded file ready for a retry", async ({
   const name = "Yard layout.png";
   await panel.getByLabel("Add an attachment").setInputFiles(dummyFile(name));
   // The words, then the answered request's reference (S1-C4).
+  // D6-C1: the installation owner reads no second reference line.
   await expect(panel.getByRole("alert")).toHaveText(
-    `Could not attach the file. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
+    `Could not attach the file. Try again.Reference${answeredReference}Copy`,
   );
   await expect(
     panel.getByText(`${name} is uploaded but not attached yet.`),

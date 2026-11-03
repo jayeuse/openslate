@@ -17,6 +17,7 @@ import {
   filterRowClassName,
   type FilterChip,
 } from "../../access/components/access-toolbar";
+import { ReferenceFilter } from "../../access/components/reference-filter";
 import { Input } from "@/components/ui/input";
 import { auditKindLabel } from "../domain/audit-rules";
 import type {
@@ -46,7 +47,8 @@ type ChangeFilter = <Key extends keyof ActivityFilters>(
 
 /**
  * The Activity toolbar (MD6): search, the kind quick filter, the Filters
- * popover (Person, Area, From, To) and the active filters as chips, then
+ * popover (Person, Area, From, To, Reference) and the active filters as
+ * chips, then
  * Sort. A department manager who manages more than one department picks the
  * department here (MD12). The quick filter shows no counts: the audit API
  * returns one total per request, so counts would cost three more reads on
@@ -128,6 +130,13 @@ export function AuditToolbar({
       label: "To",
       value: dayText(filters.to),
       onRemove: () => onChange("to", ""),
+    });
+  if (filters.reference)
+    chips.push({
+      key: "reference",
+      label: "Reference",
+      value: filters.reference,
+      onRemove: () => onChange("reference", ""),
     });
 
   const quickFilters = (
@@ -308,6 +317,12 @@ export function AuditToolbar({
           {dateRangeError}
         </p>
       ) : null}
+      <ReferenceFilter
+        id={id}
+        applied={filters.reference}
+        onApply={(reference) => onChange("reference", reference)}
+        disabled={disabled}
+      />
     </AccessToolbar>
   );
 }

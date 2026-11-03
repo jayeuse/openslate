@@ -16,6 +16,7 @@ from app.main import create_app
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.manage.backups.models import BackupPolicy
 from app.systems.manage.health import service
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import create_member, create_organization
@@ -109,3 +110,32 @@ def test_s2_c1_c10_every_role_reads_the_status_and_no_audit_or_security_row_is_w
         "request_id": refused.headers["X-Request-ID"],
     }
     assert _written(db, org_id) == before
+
+
+def _backup_facts(db: Session) -> tuple[int, object]:
+    policy = db.scalar(select(BackupPolicy))
+    count = db.scalar(select(func.count()).select_from(BackupPolicy)) or 0
+    return count, policy.runner_last_seen_at if policy is not None else None
+
+
+def test_s3_c1_c6_only_an_admin_gets_the_organization_part_and_it_writes_nothing(people):
+    db, org_id, actors = people
+    before = (_written(db, org_id), _backup_facts(db))
+
+    answers = {
+        role: _get_status(db, actors[role])
+        for role in ("admin", "member", "guest", "member_without_group_access")
+    }
+
+    for role in ("member", "guest", "member_without_group_access"):
+        assert answers[role].status_code == 200, (role, answers[role].text)
+        assert answers[role].json()["organization"] is None, role
+    admin = answers["admin"]
+    assert admin.status_code == 200, admin.text
+    organization = admin.json()["organization"]
+    assert set(organization) == {"since", "backups", "failed_jobs", "failed_sign_ins", "lockouts"}
+    assert set(organization["backups"]) == {"state", "last_success_at", "last_result"}
+    assert organization["failed_sign_ins"] == 0
+    assert organization["lockouts"] == 0
+    assert organization["since"].endswith("Z")
+    assert (_written(db, org_id), _backup_facts(db)) == before

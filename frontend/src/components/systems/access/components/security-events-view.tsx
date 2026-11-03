@@ -149,6 +149,7 @@ export function SecurityEventsView({
     occurred_after:
       filters.from && !dayError ? dayStart(filters.from, region) : "",
     occurred_before: nextDay,
+    reference: filters.reference,
     sort_by:
       filters.sort === "event"
         ? ("event_type" as const)
@@ -193,7 +194,8 @@ export function SecurityEventsView({
     filters.outcome ||
     filters.person ||
     filters.from ||
-    filters.through,
+    filters.through ||
+    filters.reference,
   );
   const personOptions = [
     { value: "", label: "All people" },
@@ -355,6 +357,7 @@ export function SecurityEventsView({
               person: "",
               from: "",
               through: "",
+              reference: "",
             })
           }
           region={displayRegion}

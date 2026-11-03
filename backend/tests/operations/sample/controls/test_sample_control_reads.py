@@ -315,6 +315,7 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "event_retention_ignored",
         "retention_restore_lost",
         "system_status_shape",
+        "sign_in_history_shape",
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
@@ -333,7 +334,9 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
             original.user_id, credentials[other].email, original.password
         )
     operation = (
-        "review_system_status"
+        "review_sign_in_history"
+        if problem == "sign_in_history_shape"
+        else "review_system_status"
         if problem == "system_status_shape"
         else "review_mfa_status"
         if problem == "mfa_identity"
@@ -366,6 +369,7 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "event_retention_ignored": "Workspace security update was not persisted",
         "retention_restore_lost": "Workspace security policy was not restored",
         "system_status_shape": "System status differs from the four parts in order",
+        "sign_in_history_shape": "Sign-in history lacks the actor's sign-in, newest first",
     }
     expected_error = (
         SampleWriteOutcomeUnknown if problem == "bulk_unknown" else SamplePhaseActionError

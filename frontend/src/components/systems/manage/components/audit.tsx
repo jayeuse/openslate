@@ -129,6 +129,8 @@ function auditRequestFromFilters(
     request.createdAfter = workspaceDayBound(filters.from, timezone, false);
   if (timezone && filters.to)
     request.createdBefore = workspaceDayBound(filters.to, timezone, true);
+  // Only a checked, valid reference is applied (D13 item 3).
+  if (filters.reference) request.reference = filters.reference;
   return request;
 }
 

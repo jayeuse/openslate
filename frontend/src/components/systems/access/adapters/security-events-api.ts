@@ -46,6 +46,8 @@ export type AccessSecurityEventsRequest = {
   occurred_after: string;
   occurred_before: string;
   operation_id: string;
+  /** A request ID or its last 8 characters (D7-C1). */
+  reference: string;
 };
 export const defaultSecurityEventsRequest: AccessSecurityEventsRequest = {
   limit: 10,
@@ -59,6 +61,7 @@ export const defaultSecurityEventsRequest: AccessSecurityEventsRequest = {
   occurred_after: "",
   occurred_before: "",
   operation_id: "",
+  reference: "",
 };
 
 /** Existing exact-admin list: all filters are applied by the server before paging. */

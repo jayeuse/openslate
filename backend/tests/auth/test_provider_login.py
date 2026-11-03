@@ -56,6 +56,8 @@ def test_password_grant_admits_only_the_bound_application_session(
     client.password_grant.return_value = tokens
     person_id = uuid4()
     db.get.return_value = SimpleNamespace(user_id=person_id)
+    # The attempt's account lookup finds the person by email.
+    db.scalar.return_value = person_id
     admit = Mock(return_value=issued)
     monkeypatch.setattr(provider_login, "admit_provider_session", admit)
     events = Mock()
@@ -109,6 +111,9 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
     from app.systems.access.identity import provider_login, rate_limits
 
     db = Mock(spec=Session)
+    # DQ1: the failed attempt names the local account with that email.
+    account_id = uuid4()
+    db.scalar.return_value = account_id
     client = Mock()
     if refused_by == "provider":
         client.password_grant.side_effect = InvalidProviderCredentials("wrong")
@@ -131,7 +136,8 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
     monkeypatch.setattr(provider_login, "append_representative_failure", failures)
     with pytest.raises(InvalidCredentials):
         provider_login.login_with_provider(
-            db, "person@example.test", "wrong", client, source="127.0.0.1", now=now
+            db, "person@example.test", "wrong", client, source="127.0.0.1",
+            user_agent="Agent/1.0", now=now,
         )
 
     record.assert_called_once_with(
@@ -144,8 +150,12 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
         source="127.0.0.1",
         identifier="person@example.test",
         source_budget=True,
+        subject_id=account_id,
     )
-    failures.assert_called_once_with(db, "identity.sign_in_failure", "127.0.0.1", now=now)
+    failures.assert_called_once_with(
+        db, "identity.sign_in_failure", "127.0.0.1", now=now,
+        subject_id=account_id, user_agent="Agent/1.0",
+    )
     assert all(not isinstance(call.args[0], IdentitySession) for call in db.add.call_args_list)
     db.delete.assert_not_called()
 

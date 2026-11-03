@@ -103,7 +103,10 @@ export function RecordCardSheetBody({
     ? openViewLevel(identity.data, departmentId, record.moduleId)
     : null;
   const canWriteRecord = level === "write" || level === "manage";
-  const canReadHistory =
+  // Everyone who can open the record reads its history once the sheet
+  // knows its department (S4-C5, D10.1); managers keep the department read.
+  const canReadHistory = departmentId !== "";
+  const managesHistory =
     departmentId !== "" &&
     openViewLevel(identity.data, departmentId) === "manage";
   const moduleFields = fields.data?.items ?? [];
@@ -241,6 +244,7 @@ export function RecordCardSheetBody({
                 dataSources: catalog.data?.items ?? [],
                 canWrite: canWriteRecord,
                 canReadHistory,
+                managesHistory,
                 onChanged: () => {
                   void read.refetch();
                   // The card's summary (name, fields, status) follows.

@@ -945,8 +945,9 @@ test("a failed delete shows its error inside the delete dialog", async ({
     .getByRole("button", { name: "Delete module", exact: true })
     .click();
   // The words, then the answered request's reference (S1-C4).
+  // D6-C1: the installation owner reads no second reference line.
   await expect(deletion.getByRole("alert")).toHaveText(
-    `This Sandbox change could not be saved. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
+    `This Sandbox change could not be saved. Try again.Reference${answeredReference}Copy`,
   );
 });
 
@@ -3083,8 +3084,9 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   });
   // The page's own words and the answered request's reference (S1-C4,
   // S1-C6); the server's detail never shows.
+  // D6-C1: the installation owner reads no second reference line.
   await expect(workspace.getByRole("alert")).toHaveText(
-    `Test results could not be cleared. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
+    `Test results could not be cleared. Try again.Reference${answeredReference}Copy`,
   );
   await expect(workspace).not.toContainText(
     "Test results are temporarily unavailable.",
