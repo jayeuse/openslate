@@ -64,14 +64,15 @@ def test_school_hidden_read_expectation_matches_the_real_record_endpoint(key, mo
 
     from fastapi import HTTPException
 
-    from app.systems.sandbox.records import router
+    from app.systems.sandbox.records import access, router
     from operations.sample.packs import get_pack
 
     # The required offline boundary supplies an existing row and no readable grant.
     # Exercise the actual route error path, rather than inventing a response body.
     record = SimpleNamespace(module_id=uuid4())
     database = SimpleNamespace(get=lambda *_args: record)
-    monkeypatch.setattr(router, "module_level", lambda *_args: None)
+    # The record route's read check lives in the shared record access module.
+    monkeypatch.setattr(access, "module_level", lambda *_args: None)
     case = next(case for case in get_pack("school").rejections.activity_cases if case.key == key)
     with pytest.raises(HTTPException) as refusal:
         router.get_record(uuid4(), SimpleNamespace(id=uuid4()), database)

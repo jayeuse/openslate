@@ -74,6 +74,8 @@ export type ManageAuditListRequest = {
   performedBy?: string;
   createdAfter?: string;
   createdBefore?: string;
+  /** A request ID or its last 8 characters (D7-C1); the list only. */
+  reference?: string;
   sortOrder: "asc" | "desc";
   limit: number;
   offset: number;
@@ -90,6 +92,7 @@ function auditFilterParams(
   if (request.createdAfter) params.set("created_after", request.createdAfter);
   if (request.createdBefore)
     params.set("created_before", request.createdBefore);
+  if (request.reference) params.set("reference", request.reference);
   const search = request.search?.trim();
   if (search) params.set("search", search);
   params.set("sort_by", "created_at");

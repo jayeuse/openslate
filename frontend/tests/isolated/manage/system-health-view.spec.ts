@@ -4,8 +4,10 @@ import { createElement } from "react";
 import {
   statusFailure,
   SystemHealthView,
+  type OrganizationBlock,
   type SystemHealthState,
 } from "../../../src/components/systems/manage/components/system-health";
+import type { ReferenceViewer } from "../../../src/lib/reference-viewer";
 import type { SystemStatus } from "../../../src/components/systems/manage/adapters/system-status-api";
 import { staticMarkup } from "../sandbox/static-markup";
 
@@ -25,18 +27,28 @@ function status(email: SystemStatus["parts"][number]["status"]): SystemStatus {
     ],
     version: "0.1.0",
     checked_at: "2026-11-02T10:42:05Z",
+    organization: null,
   };
 }
 
 function view(
   state: SystemHealthState,
-  options: { busy?: boolean; releaseLink?: boolean } = {},
+  options: {
+    busy?: boolean;
+    releaseLink?: boolean;
+    viewer?: ReferenceViewer;
+    organization?: OrganizationBlock | null;
+  } = {},
 ): string {
   return staticMarkup(SystemHealthView, {
     state,
     busy: options.busy ?? false,
     onCheckAgain: () => {},
     announcement: "",
+    viewer: options.viewer ?? "member",
+    organization: options.organization ?? null,
+    linkTo: (href: string, label: string) =>
+      createElement("a", { href }, label),
     releaseLink: options.releaseLink
       ? createElement(
           "a",
@@ -194,4 +206,166 @@ test("a failed connection after a good result says the result is from the last c
     message: "Could not connect. Check your connection and try again.",
     reference: undefined,
   });
+});
+
+// Block 3, Your organization (S3-C5, D8), and block 6 by viewer (D6-C1).
+
+const lateBlock: OrganizationBlock = {
+  backups: {
+    state: "late",
+    word: "Late",
+    detail: ["Last good backup on Oct 30 at 2:00 AM", "Latest run: Failed"],
+    followUp: "owner-manages",
+  },
+  failedJobs: "2 jobs failed in the last 7 days",
+  signIns: "1 failed sign-in and 2 lockouts in the last 7 days",
+};
+
+test("S3-C5: an admin reads Your organization between the parts and About", () => {
+  const markup = words(
+    view(result, { viewer: "admin", organization: lateBlock }),
+  );
+  inOrder(markup, [
+    ">Parts of Slate Operations</h2>",
+    ">Your organization</h2>",
+    ">Backups</dt>",
+    "</svg>Late</span>",
+    // Finding 4: each part is its own unbreakable span; the line wraps
+    // only between parts.
+    ">Last good backup on Oct 30 at 2:00 AM</span> · <span>Latest run: Failed</span>",
+    ">The person who runs your server manages backups.<",
+    ">Failed jobs</dt>",
+    ">2 jobs failed in the last 7 days<",
+    '<a href="/manage?view=jobs">Open Jobs</a>',
+    ">Sign-in activity</dt>",
+    ">1 failed sign-in and 2 lockouts in the last 7 days<",
+    '<a href="/access?view=security">Open Security in Access</a>',
+    ">About this system</h2>",
+  ]);
+  expect(markup.match(/<section /g)).toHaveLength(5);
+  // Late has its own shape; a count is not a status, so it has no icon.
+  const block = view(result, { viewer: "admin", organization: lateBlock });
+  expect(block).toContain("lucide-circle-alert");
+  expect(markup).not.toContain("Open Backup");
+});
+
+test("S3-C5: the installation owner's late backup links Backup, and on time has no third line", () => {
+  const owner = words(
+    view(result, {
+      viewer: "owner",
+      organization: {
+        ...lateBlock,
+        backups: { ...lateBlock.backups, followUp: "open-backup" },
+      },
+    }),
+  );
+  inOrder(owner, [
+    "</svg>Late</span>",
+    '<a href="/manage?view=backup">Open Backup</a>',
+    '<a href="/manage?view=jobs">Open Jobs</a>',
+  ]);
+  expect(owner).not.toContain("manages backups");
+  const onTime = words(
+    view(result, {
+      viewer: "owner",
+      organization: {
+        ...lateBlock,
+        backups: {
+          state: "on_time",
+          word: "On time",
+          detail: ["Last good backup today at 2:00 AM", "Latest run: Verified"],
+          followUp: null,
+        },
+      },
+    }),
+  );
+  expect(onTime).toContain("</svg>On time</span>");
+  expect(onTime).not.toMatch(/Open Backup|manages backups/);
+});
+
+test("S3-C5: members see no organization block, and a result without the part hides it", () => {
+  // The page passes null whenever the response has no organization part.
+  for (const viewer of ["member", "admin"] as const) {
+    const markup = words(view(result, { viewer, organization: null }));
+    expect(markup).not.toContain("Your organization");
+    expect(markup.match(/<section /g)).toHaveLength(4);
+  }
+});
+
+test("S3-C5: before any result the block keeps its labels, shows dashes and keeps the links", () => {
+  const markup = words(
+    view(
+      {
+        kind: "unavailable",
+        failure: {
+          message:
+            "The status could not be loaded. Try Check again in a minute.",
+          reference,
+        },
+      },
+      { viewer: "admin", organization: "pending" },
+    ),
+  );
+  const block = markup.slice(
+    markup.indexOf(">Your organization</h2>"),
+    markup.indexOf(">About this system</h2>"),
+  );
+  inOrder(block, [
+    ">Backups</dt><dd><span>—</span></dd>",
+    '>Failed jobs</dt><dd><span>—</span><a href="/manage?view=jobs">Open Jobs</a></dd>',
+    '>Sign-in activity</dt><dd><span>—</span><a href="/access?view=security">Open Security in Access</a></dd>',
+  ]);
+  // Only block 1 shows the failure: one alert on the page.
+  expect(markup.match(/role="alert"/g)).toHaveLength(1);
+  // Four parts, the version and the three organization values show a dash.
+  expect(markup.match(/>—</g)).toHaveLength(8);
+});
+
+test("D6-C1: block 6 names whom to tell, by viewer", () => {
+  const member = words(view(result));
+  expect(member).toContain(
+    "with a Copy button. Give this reference to your administrator.</p>",
+  );
+  expect(member).toContain(
+    "<p>When Slate Operations does not load: wait a minute and reload. If it still does not load, tell your administrator.</p>",
+  );
+  const admin = words(view(result, { viewer: "admin" }));
+  expect(admin).toContain(
+    "with a Copy button. Give this reference to the person who runs your server.</p>",
+  );
+  expect(admin).toContain(
+    "<p>When Slate Operations does not load: wait a minute and reload. If it still does not load, tell the person who runs your server.</p>",
+  );
+  const owner = words(view(result, { viewer: "owner" }));
+  expect(owner).toContain("with a Copy button.</p>");
+  expect(owner).toContain(
+    "<p>When Slate Operations does not load: wait a minute and reload. If it still does not load, check that your server is running.</p>",
+  );
+  expect(owner).not.toMatch(/Give this reference|your administrator/);
+});
+
+test("S3-C5, D13 item 1: a backup state that cannot be read shows its own word and Late's third line", () => {
+  const raw = view(result, {
+    viewer: "admin",
+    organization: {
+      backups: {
+        state: "unknown",
+        word: "Cannot be checked",
+        detail: ["Slate Operations cannot read the backup state now."],
+        followUp: "owner-manages",
+      },
+      failedJobs: "The failed job count cannot be read now.",
+      signIns: "No failed sign-ins or lockouts in the last 7 days",
+    },
+  });
+  const block = raw.slice(raw.indexOf("Your organization"));
+  // CircleDashed already means "cannot confirm" in block 2.
+  expect(block).toContain("lucide-circle-dashed");
+  inOrder(words(block), [
+    "</svg>Cannot be checked</span>",
+    ">Slate Operations cannot read the backup state now.</span>",
+    ">The person who runs your server manages backups.<",
+    ">The failed job count cannot be read now.<",
+    '<a href="/manage?view=jobs">Open Jobs</a>',
+  ]);
 });

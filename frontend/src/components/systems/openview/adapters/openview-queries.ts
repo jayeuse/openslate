@@ -58,6 +58,8 @@ export const openViewKeys = {
     ["openview", "assignable-users", moduleId, { search }] as const,
   fieldsFirstPage: (moduleId: string) =>
     ["openview", "fields", moduleId, "first-page"] as const,
+  fieldsAll: (moduleId: string) =>
+    ["openview", "fields", moduleId, "all"] as const,
   moduleWorkspaces: ["openview", "module-workspace"] as const,
   moduleWorkspace: (moduleId: string) =>
     ["openview", "module-workspace", moduleId] as const,
@@ -114,6 +116,7 @@ export function extendsRead(
 export function moduleFieldKeys(moduleId: string): QueryKey[] {
   return [
     openViewKeys.fieldsFirstPage(moduleId),
+    openViewKeys.fieldsAll(moduleId),
     openViewKeys.moduleWorkspace(moduleId),
   ];
 }
@@ -229,6 +232,31 @@ export const fieldsFirstPageOptions = (moduleId: string) =>
         limit: CATALOG_PAGE_SIZE,
         offset: 0,
       }),
+    enabled: Boolean(moduleId),
+  });
+
+// A guard against a runaway catalog: 50 pages of 100 fields.
+const ALL_FIELDS_PAGE_LIMIT = 50;
+
+/**
+ * Every active field of a module, all pages, for the names record history
+ * shows (D10.3) when the sheet holds only the first page.
+ */
+export const allFieldsOptions = (moduleId: string) =>
+  queryOptions({
+    queryKey: openViewKeys.fieldsAll(moduleId),
+    queryFn: async () => {
+      const fields: OpenViewDataSourceField[] = [];
+      for (let page = 0; page < ALL_FIELDS_PAGE_LIMIT; page += 1) {
+        const result = await listOpenViewDataSourceFields(moduleId, {
+          limit: CATALOG_PAGE_SIZE,
+          offset: page * CATALOG_PAGE_SIZE,
+        });
+        fields.push(...result.items);
+        if (!result.pagination.hasMore) return fields;
+      }
+      throw new Error("The field catalog has more pages than expected");
+    },
     enabled: Boolean(moduleId),
   });
 

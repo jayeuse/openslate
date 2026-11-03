@@ -1,4 +1,5 @@
 "use client";
+import { referenceViewerFor } from "@/lib/reference-viewer";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
@@ -1524,9 +1525,7 @@ function ManageContent() {
 
           {sectionShown && tab === "System health" ? (
             <div className="manage-scroll min-w-0">
-              <SystemHealth
-                installationOwner={installationOwnerFor(knownIdentity)}
-              />
+              <SystemHealth viewer={referenceViewerFor(knownIdentity)} />
             </div>
           ) : null}
 

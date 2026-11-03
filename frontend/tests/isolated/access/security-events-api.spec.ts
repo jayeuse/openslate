@@ -91,6 +91,21 @@ for (const row of [
     }
   });
 
+test("D7-C1: the security events list finds an event by its reference", async () => {
+  const mock = installFetch(() => Response.json(pageOf([])));
+  try {
+    await listAccessSecurityEvents({
+      ...defaultSecurityEventsRequest,
+      reference: "4f9c2e1a",
+    });
+    expect(String(mock.requests[0]?.input)).toBe(
+      "/api/security-events?limit=10&offset=0&search=&sort_by=occurred_at&sort_order=desc&reference=4f9c2e1a",
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
 test("a security event detail is read by its own ID", async () => {
   const mock = installFetch(() => Response.json(event(1)));
   try {

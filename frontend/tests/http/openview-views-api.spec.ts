@@ -3691,6 +3691,85 @@ test.describe("OpenView workspace regional dates", () => {
     ).toBeVisible();
   });
 
+  test("S4-C5: a reader opens a record's history by the record alone and sees readable changes only", async ({
+    page,
+  }) => {
+    await installViewsApi(page, { disableInitialSearch: true });
+    await page.route("**/api/auth/me", (route) =>
+      route.fulfill({
+        json: authMeBody({
+          id: userId,
+          role: "member",
+          access: [
+            { department_id: departmentId, module_id: null, level: "read" },
+          ],
+        }),
+      }),
+    );
+    const historyReads: URLSearchParams[] = [];
+    await page.route("**/api/audit-logs?**", (route) => {
+      historyReads.push(new URL(route.request().url()).searchParams);
+      return route.fulfill({
+        json: pageOf(
+          [
+            // S4-C4: a redacted value counts as hidden for a reader, so
+            // the panel leaves this entry out; other fields the server
+            // already left out.
+            {
+              id: "00000000-0000-4000-8000-000000000198",
+              created_at: "2026-09-24T00:00:00Z",
+              performed_by: userId,
+              action: "update",
+              before: { data: { [nameFieldId]: "[REDACTED]" } },
+              after: { data: { [nameFieldId]: "[REDACTED]" } },
+              actor_label: null,
+              actor_name: "Ana Cruz",
+            },
+            {
+              id: "00000000-0000-4000-8000-000000000199",
+              created_at: "2026-09-23T00:00:00Z",
+              performed_by: userId,
+              action: "update",
+              before: { data: { [nameFieldId]: "Earlier title" } },
+              after: { data: { [nameFieldId]: "Centrifugal pump 04" } },
+              actor_label: null,
+              actor_name: "Ana Cruz",
+            },
+          ],
+          { limit: 50 },
+        ),
+      });
+    });
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+    );
+    const inspector = page.getByRole("dialog", {
+      name: "Record details",
+      exact: true,
+    });
+    await inspector.getByRole("tab", { name: "History", exact: true }).click();
+    const history = inspector.getByRole("list", {
+      name: "Record history",
+      exact: true,
+    });
+    await expect(history.getByRole("listitem").first()).toContainText(
+      "Changed Equipment name",
+    );
+    await expect(history.getByRole("listitem").first()).toContainText(
+      "Earlier title to Centrifugal pump 04",
+    );
+    await expect(history.getByRole("listitem").first()).toContainText(
+      "Ana Cruz",
+    );
+    await expect(history).not.toContainText("no longer shown");
+    // One entry: the redacted-only change is left out.
+    await expect(history.locator(":scope > li")).toHaveCount(1);
+    // The reader path: no department, the record's own read check.
+    expect(historyReads.map((params) => params.toString())).toEqual([
+      `entity_type=records&entity_id=${recordOneId}&limit=50`,
+    ]);
+  });
+
   test("failed regional reads keep record content usable and recover dates separately", async ({
     page,
   }) => {

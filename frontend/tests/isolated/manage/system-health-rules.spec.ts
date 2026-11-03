@@ -1,12 +1,16 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  backupsRow,
   createAnnouncer,
   checkAnnouncement,
   checkTimeText,
+  failedJobsText,
   nextCheckSuffix,
   partRows,
+  signInActivityText,
   systemHeadline,
+  type OrganizationStatus,
   type SystemPart,
 } from "../../../src/components/systems/manage/domain/health-rules";
 
@@ -361,4 +365,180 @@ test("each announcement empties the status first, so the same words are spoken t
   announcer.stop();
   flush();
   expect(written).toEqual(["", ""]);
+});
+
+// Block 3, Your organization (S3-C5, D8.3 to D8.6).
+
+const organization: OrganizationStatus = {
+  since: "2026-10-26T15:00:00Z",
+  backups: {
+    state: "on_time",
+    last_success_at: "2026-11-02T07:00:00Z",
+    last_result: "verified",
+  },
+  failed_jobs: 0,
+  failed_sign_ins: 0,
+  lockouts: 0,
+};
+const backupNow = new Date("2026-11-02T15:00:00Z");
+
+test("S3-C5: the Backups row gives the state word, the last good backup and the latest run", () => {
+  const row = (
+    backups: OrganizationStatus["backups"],
+    installationOwner = false,
+  ) => backupsRow(backups, { now: backupNow, region, installationOwner });
+  expect(row(organization.backups)).toEqual({
+    state: "on_time",
+    word: "On time",
+    detail: ["Last good backup today at 2:00 AM", "Latest run: Verified"],
+    followUp: null,
+  });
+  // Late: the last good backup is from another day, and the latest run failed.
+  expect(
+    row({
+      state: "late",
+      last_success_at: "2026-10-30T06:00:00Z",
+      last_result: "failed",
+    }),
+  ).toEqual({
+    state: "late",
+    word: "Late",
+    detail: ["Last good backup on Oct 30 at 2:00 AM", "Latest run: Failed"],
+    followUp: "owner-manages",
+  });
+  // Each part is left out when it has no value; with neither, one sentence.
+  expect(
+    row({ state: "no_schedule", last_success_at: null, last_result: null }),
+  ).toMatchObject({
+    word: "No backup schedule",
+    detail: ["No backup has run yet."],
+    followUp: "owner-manages",
+  });
+  expect(
+    row(
+      {
+        state: "never_backed_up",
+        last_success_at: null,
+        last_result: "interrupted",
+      },
+      true,
+    ),
+  ).toMatchObject({
+    word: "No backup yet",
+    detail: ["Latest run: Interrupted"],
+    followUp: "open-backup",
+  });
+  // On time has no third line, for the owner too.
+  expect(row(organization.backups, true).followUp).toBeNull();
+});
+
+test("S3-C5, D13 item 1: a backup state the server cannot read says so, with Late's third line", () => {
+  const unknown = {
+    state: "unknown",
+    last_success_at: null,
+    last_result: null,
+  } as const;
+  expect(
+    backupsRow(unknown, { now: backupNow, region, installationOwner: false }),
+  ).toEqual({
+    state: "unknown",
+    word: "Cannot be checked",
+    detail: ["Slate Operations cannot read the backup state now."],
+    followUp: "owner-manages",
+  });
+  expect(
+    backupsRow(unknown, { now: backupNow, region, installationOwner: true })
+      .followUp,
+  ).toBe("open-backup");
+});
+
+test("S3-C5: failed jobs read as a count sentence in the workspace locale", () => {
+  expect(failedJobsText(0, region)).toBe("No failed jobs in the last 7 days");
+  expect(failedJobsText(1, region)).toBe("1 job failed in the last 7 days");
+  expect(failedJobsText(12, region)).toBe("12 jobs failed in the last 7 days");
+  expect(failedJobsText(1234, region)).toBe(
+    "1,234 jobs failed in the last 7 days",
+  );
+  expect(failedJobsText(1234, { ...region, locale: "de-DE" })).toBe(
+    "1.234 jobs failed in the last 7 days",
+  );
+  // D13 item 1: a count the server cannot read says so.
+  expect(failedJobsText(null, region)).toBe(
+    "The failed job count cannot be read now.",
+  );
+});
+
+test("S3-C5: sign-in activity names each nonzero count, singular or plural", () => {
+  for (const [failed, lockouts, sentence] of [
+    [0, 0, "No failed sign-ins or lockouts in the last 7 days"],
+    [3, 0, "3 failed sign-ins in the last 7 days"],
+    [1, 0, "1 failed sign-in in the last 7 days"],
+    [0, 1, "1 lockout in the last 7 days"],
+    [0, 4, "4 lockouts in the last 7 days"],
+    [1, 2, "1 failed sign-in and 2 lockouts in the last 7 days"],
+  ] as const)
+    expect(signInActivityText(failed, lockouts, region), sentence).toBe(
+      sentence,
+    );
+});
+
+test("S3-C5: a changed organization value is a changed result, never No change", () => {
+  // D8.6: the same parts with a new failed-jobs count get no suffix, and a
+  // press announces the headline and the time; block 3 never changes the
+  // headline.
+  const before = { ...laterSame, organization };
+  const after = {
+    ...laterSame,
+    checked_at: "2026-11-02T14:44:10Z",
+    organization: { ...organization, failed_jobs: 2 },
+  };
+  expect(
+    nextCheckSuffix({
+      previous: before,
+      next: after,
+      trigger: "person",
+      suffix: null,
+    }),
+  ).toBeNull();
+  expect(
+    checkAnnouncement({
+      previous: before,
+      next: after,
+      trigger: "person",
+      time: "9:44 AM",
+    }),
+  ).toBe("Slate Operations is working normally. Checked at 9:44 AM.");
+  // A background refresh that changes only block 3 says nothing.
+  expect(
+    checkAnnouncement({
+      previous: before,
+      next: after,
+      trigger: "background",
+      time: "9:44 AM",
+    }),
+  ).toBe("");
+  // The same organization values keep No change, though `since` moves with
+  // every request: it is not a block 3 value.
+  const sameValues = {
+    ...after,
+    organization: { ...organization, since: "2026-10-26T15:01:05Z" },
+  };
+  expect(
+    nextCheckSuffix({
+      previous: before,
+      next: sameValues,
+      trigger: "person",
+      suffix: null,
+    }),
+  ).toBe("no-change");
+  expect(
+    checkAnnouncement({
+      previous: before,
+      next: sameValues,
+      trigger: "person",
+      time: "9:44 AM",
+    }),
+  ).toBe(
+    "No change. Slate Operations is working normally. Checked at 9:44 AM.",
+  );
 });

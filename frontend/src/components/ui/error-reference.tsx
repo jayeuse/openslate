@@ -1,10 +1,25 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  referenceAdvice,
+  referenceViewer,
+  subscribeReferenceViewer,
+  type ReferenceViewer,
+} from "@/lib/reference-viewer";
 import { cn } from "@/lib/utils";
+
+/** The signed-in viewer (D6); member words until the identity is known. */
+export function useReferenceViewer(): ReferenceViewer {
+  return useSyncExternalStore(
+    subscribeReferenceViewer,
+    referenceViewer,
+    () => "member",
+  );
+}
 
 export type ErrorReferenceCopy = "idle" | "copied" | "failed";
 
@@ -15,8 +30,8 @@ const COPIED_MILLISECONDS = 4000;
  * The error reference of one failed request (R5 and D1, docs/specs/
  * system-health.md): "Reference" and the last eight characters of the request
  * ID, a Copy control that copies the full ID, and the sentence that says what
- * to do with it. Always the last part of its error container. With no ID it
- * renders nothing, not even an empty line.
+ * to do with it, worded for the viewer (D6). Always the last part of its
+ * error container. With no ID it renders nothing, not even an empty line.
  */
 export function ErrorReference({
   id,
@@ -31,6 +46,7 @@ export function ErrorReference({
     copy: ErrorReferenceCopy;
   } | null>(null);
   const copy = result && result.id === id ? result.copy : "idle";
+  const viewer = useReferenceViewer();
   useEffect(() => {
     if (copy !== "copied") return;
     const timer = window.setTimeout(() => setResult(null), COPIED_MILLISECONDS);
@@ -41,6 +57,7 @@ export function ErrorReference({
     <ErrorReferenceView
       id={id}
       copy={copy}
+      viewer={viewer}
       className={className}
       onCopy={() => {
         const copied = navigator.clipboard?.writeText(id);
@@ -56,19 +73,22 @@ export function ErrorReference({
   );
 }
 
-/** The reference as it shows for one copy state. */
+/** The reference as it shows for one copy state and viewer. */
 export function ErrorReferenceView({
   id,
   copy,
   onCopy,
+  viewer = "member",
   className,
 }: {
   id: string | null | undefined;
   copy: ErrorReferenceCopy;
   onCopy: () => void;
+  viewer?: ReferenceViewer;
   className?: string;
 }) {
   if (!id) return null;
+  const advice = referenceAdvice(viewer);
   return (
     // Phrasing markup (spans shown as blocks), so the reference is valid
     // inside any error container, a <p> included.
@@ -105,7 +125,7 @@ export function ErrorReferenceView({
               : ""}
         </span>
       </span>
-      <span className="block">Give this reference to your administrator.</span>
+      {advice ? <span className="block">{advice}</span> : null}
       {copy === "failed" ? (
         <span className="block">
           <code className="font-mono text-sm break-all select-all">{id}</code>

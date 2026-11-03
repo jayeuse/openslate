@@ -17,7 +17,7 @@ import type {
   AccessPage,
 } from "../../access/state/api-contracts";
 
-import { listAccountSessions } from "./account-api";
+import { listAccountSessions, listOwnSignInEvents } from "./account-api";
 import {
   getNotificationUnreadCount,
   listNotifications,
@@ -40,6 +40,8 @@ export const platformKeys = {
   all: ["platform"] as const,
   accountSessions: (accountId: string) =>
     ["platform", "account-sessions", accountId] as const,
+  signInHistory: (accountId: string) =>
+    ["platform", "sign-in-history", accountId] as const,
   libraryDepartments: () => ["access", "catalog"] as const,
   libraryFiles: ["platform", "library-files"] as const,
   departmentFiles: (departmentId: string) =>
@@ -158,6 +160,18 @@ export const accountSessionsOptions = (accountId: string) =>
   queryOptions({
     queryKey: platformKeys.accountSessions(accountId),
     queryFn: ({ signal }) => listAccountSessions(signal),
+    enabled: Boolean(accountId),
+  });
+
+/**
+ * The first page of Your sign-in history (S4-C2, D9.4). It reads when
+ * Settings opens and after a session ends; there is no poll and no focus
+ * refresh. Older pages stay in the component.
+ */
+export const signInHistoryOptions = (accountId: string) =>
+  queryOptions({
+    queryKey: platformKeys.signInHistory(accountId),
+    queryFn: ({ signal }) => listOwnSignInEvents(0, signal),
     enabled: Boolean(accountId),
   });
 

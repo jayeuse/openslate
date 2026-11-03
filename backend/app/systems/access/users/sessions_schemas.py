@@ -58,3 +58,33 @@ class AdminSessionCollectionItem(AdminSessionResponse):
 
 class AdminSessionCollectionResponse(StandardListResponse[AdminSessionCollectionItem]):
     pass
+
+
+class SignInEventSortField(StrEnum):
+    OCCURRED_AT = "occurred_at"
+
+
+class SignInEventListRequest(StandardListRequest[SignInEventSortField]):
+    """Offset pagination, newest first; there is no search and no deleted filter."""
+
+    sort_by: Literal[SignInEventSortField.OCCURRED_AT] = SignInEventSortField.OCCURRED_AT
+    sort_order: Literal[SortOrder.DESC] = SortOrder.DESC
+
+
+SignInEventKind = Literal["signed_in", "session_ended", "sign_in_failed", "locked_out"]
+
+
+class SignInEventResponse(BaseModel):
+    """One event of the caller's own sign-in history; ``kind:id`` is unique."""
+
+    id: UUID
+    kind: SignInEventKind
+    occurred_at: datetime
+    user_agent: str | None
+    ip_address: str | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SignInEventListResponse(StandardListResponse[SignInEventResponse]):
+    pass

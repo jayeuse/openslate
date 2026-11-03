@@ -2328,6 +2328,12 @@
     "path": "/api/auth/sessions"
   },
   {
+    "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
+    "function": "listOwnSignInEvents",
+    "method": "GET",
+    "path": "/api/auth/sign-in-events"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
     "function": "archiveLibraryFile",
     "method": "POST",

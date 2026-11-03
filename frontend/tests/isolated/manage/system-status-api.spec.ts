@@ -20,6 +20,23 @@ const example = {
   ],
   version: "0.1.0",
   checked_at: "2026-11-02T10:42:05.123456Z",
+  organization: null,
+};
+
+// An admin's response: the organization part of S3 (API contract S3).
+const adminExample = {
+  ...example,
+  organization: {
+    since: "2026-10-26T10:42:05.123456Z",
+    backups: {
+      state: "late",
+      last_success_at: "2026-10-30T06:00:00Z",
+      last_result: "failed",
+    },
+    failed_jobs: 2,
+    failed_sign_ins: 3,
+    lockouts: 1,
+  },
 };
 
 const json = (body: unknown, status = 200) =>
@@ -35,6 +52,69 @@ test("the status read accepts the contract's response", async () => {
     expect(String(fetchStub.requests[0].input)).toBe("/api/system/status");
   } finally {
     fetchStub.restore();
+  }
+});
+
+test("S3-C5: an admin's response carries the organization part, everyone else's carries null", async () => {
+  for (const body of [
+    adminExample,
+    {
+      ...adminExample,
+      organization: {
+        ...adminExample.organization,
+        backups: { state: "unknown", last_success_at: null, last_result: null },
+        failed_jobs: null,
+      },
+    },
+    example,
+  ]) {
+    const fetchStub = installFetch(() => json(body));
+    try {
+      expect(await getSystemStatus("background")).toEqual(body);
+    } finally {
+      fetchStub.restore();
+    }
+  }
+});
+
+test("S3-C5: an organization part outside the contract is refused", async () => {
+  for (const body of [
+    // The key is always present, null for non-admins.
+    {
+      parts: example.parts,
+      version: example.version,
+      checked_at: example.checked_at,
+    },
+    {
+      ...adminExample,
+      organization: { ...adminExample.organization, size_bytes: 10 },
+    },
+    {
+      ...adminExample,
+      organization: {
+        ...adminExample.organization,
+        backups: { ...adminExample.organization.backups, state: "stale" },
+      },
+    },
+    {
+      ...adminExample,
+      organization: {
+        ...adminExample.organization,
+        backups: {
+          ...adminExample.organization.backups,
+          failure_code: "disk_full",
+        },
+      },
+    },
+  ]) {
+    const fetchStub = installFetch(() => json(body));
+    try {
+      await expect(getSystemStatus("background")).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      fetchStub.restore();
+    }
   }
 });
 

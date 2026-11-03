@@ -391,6 +391,52 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+test("D7-C1: Audit finds an entry by the reference an error message shows", async ({
+  page,
+}) => {
+  const api = createAuditRoute(makeAuditLogs());
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  await expect(
+    page.getByRole("table", { name: "Activity history table", exact: true }),
+  ).toBeVisible();
+  const filters = await openFilters(page);
+  const field = filters.getByLabel("Reference", { exact: true });
+  await expect(field).toHaveAttribute("placeholder", "4f9c2e1a");
+  // D13 item 3: typing shows no error and changes nothing; Enter checks it.
+  await field.fill("4F9C2E");
+  await expect(field).not.toHaveAttribute("aria-invalid");
+  await field.press("Enter");
+  await expect(field).toHaveAttribute("aria-invalid", "true");
+  await expect(filters).toContainText(
+    "Enter the 8 characters of a reference, or its full ID.",
+  );
+  const before = api.requests.length;
+  await field.fill("4F9C2E1A");
+  // A valid value clears the error at once, but applies only when checked.
+  await expect(field).not.toHaveAttribute("aria-invalid");
+  expect(api.requests.length).toBe(before);
+  await field.press("Enter");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("reference"))
+    .toBe("4f9c2e1a");
+  expect(
+    api.requests.map((url) => url.searchParams.get("reference")),
+  ).not.toContain("4f9c2e");
+  await page.keyboard.press("Escape");
+  const chips = page.getByRole("group", { name: "Active filters" });
+  await expect(chips).toContainText("Reference: 4f9c2e1a");
+  await chips
+    .getByRole("button", { name: "Remove Reference filter", exact: true })
+    .click();
+  // The unfiltered first page is still cached, so removing the chip reads
+  // nothing new; the filter is gone from the field as well.
+  await expect(chips).toHaveCount(0);
+  await expect(
+    (await openFilters(page)).getByLabel("Reference", { exact: true }),
+  ).toHaveValue("");
+});
+
 test("Audit uses server filters, sort and page requests, with server-named actor options", async ({
   page,
 }) => {

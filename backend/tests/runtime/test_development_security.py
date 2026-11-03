@@ -19,6 +19,7 @@ from app.systems.access.identity import rate_limits
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import invitation_completion_permitted
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.workspace.models import PlatformSettings
 from tests.config_support import settings_values
@@ -138,6 +139,8 @@ def test_loopback_development_skips_anonymous_identity_rate_limit_storage(
     scalar_rows = {
         PlatformSettings: PlatformSettings(session_timeout_minutes=60),
         SecurityEvent.id: None,
+        # The failed attempt looks up the account it names; this email has none.
+        User.id: None,
     }
     db.scalar.side_effect = lambda query: scalar_rows[query.column_descriptions[0]["expr"]]
     cleanup = Mock()

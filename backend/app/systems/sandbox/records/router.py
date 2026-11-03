@@ -17,7 +17,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.policy.checks import module_filter, module_level, require_module_access
+from app.systems.access.policy.checks import module_filter, require_module_access
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.models import User
@@ -25,6 +25,7 @@ from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
+from app.systems.sandbox.records.access import record_access
 from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
 from app.systems.sandbox.records.display import (
     FieldDisplayResolver,
@@ -121,10 +122,10 @@ def _record(
 ) -> Record:
     """A record in a module the user cannot read is reported as missing."""
 
-    record = db.get(Record, record_id)
-    granted = None if record is None else module_level(db, user, record.module_id)
-    if record is None or granted is None:
+    found = record_access(db, user, record_id)
+    if found is None:
         raise _not_found()
+    record, granted = found
     if not includes(granted, level):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return record

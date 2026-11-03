@@ -107,7 +107,8 @@ def test_new_lockout_is_atomic_and_already_blocked_retry_adds_no_transition(
             if r.event_metadata.get("ip_address") == address
         ]
         assert len(rows) == 1 and rows[0].outcome == "denied"
-        assert rows[0].actor_id is None and rows[0].subject_id is None
+        # DQ1: an account lockout names the account; nobody acted, so the actor stays empty.
+        assert rows[0].actor_id is None and rows[0].subject_id == world.actor_id
         blocked = client.post("/api/auth/token", json={"email": world.email, "password": "wrong"})
         assert blocked.status_code == 429 and int(blocked.headers["retry-after"]) > 0
     assert len(calls) == 1
@@ -303,3 +304,97 @@ def test_authenticated_password_budget_and_step_up_emit_lockout_but_never_sign_i
     assert rows[0].actor_id == (world.actor_id if kind == "password_change" else None)
     assert {r.id for r in world.records("identity.sign_in")} == before_signin
     assert {r.id for r in world.records("identity.sign_in_failure")} == before_failures
+
+
+def test_dq1_a_failed_sign_in_names_a_real_account_and_answers_like_an_unknown_email(
+    event_world, monkeypatch
+):
+    world = event_world
+    known_address, unknown_address = source(), source()
+    provider = get_supabase_auth_client()
+
+    def wrong(*args):
+        raise InvalidProviderCredentials("not recorded")
+
+    monkeypatch.setattr(provider, "password_grant", wrong)
+    answers = []
+    for address, email in [
+        (known_address, world.email),
+        (unknown_address, f"nobody-{uuid4().hex}@example.test"),
+    ]:
+        with world.anonymous(address) as client:
+            client.headers["User-Agent"] = "Agent-DQ1/1.0 (Macintosh)"
+            answers.append(client.post("/api/auth/login", json={"email": email, "password": "x"}))
+
+    known, unknown = answers
+    assert known.status_code == unknown.status_code == 401
+    assert known.json()["detail"] == unknown.json()["detail"]
+    assert known.json()["detail"] == "Invalid authentication credentials"
+    assert set(known.json()) == set(unknown.json()) == {"detail", "request_id"}
+    failures = world.records("identity.sign_in_failure")
+    [named] = [r for r in failures if r.event_metadata.get("ip_address") == known_address]
+    [anonymous] = [r for r in failures if r.event_metadata.get("ip_address") == unknown_address]
+    assert named.subject_id == world.actor_id and named.actor_id is None
+    assert named.event_metadata["user_agent"] == "Agent-DQ1/1.0 (Macintosh)"
+    assert anonymous.subject_id is None and anonymous.actor_id is None
+
+
+def test_dq1_every_attempt_on_a_real_account_is_its_own_event_and_unknown_emails_group(
+    event_world, monkeypatch
+):
+    from app.systems.manage.health import service
+
+    world = event_world
+    shared, locked = source(), source()
+    provider = get_supabase_auth_client()
+
+    def wrong(*args):
+        raise InvalidProviderCredentials("not recorded")
+
+    monkeypatch.setattr(provider, "password_grant", wrong)
+    with world.anonymous(shared) as client:
+        known = [
+            client.post("/api/auth/login", json={"email": world.email, "password": "x"})
+            for _ in range(2)
+        ]
+        strangers = [
+            client.post("/api/auth/login",
+                        json={"email": f"nobody-{uuid4().hex}@example.test", "password": "x"})
+            for _ in range(2)
+        ]
+    assert [r.status_code for r in known + strangers] == [401] * 4
+    assert {r.json()["detail"] for r in known + strangers} == {"Invalid authentication credentials"}
+    # Both attempts reach the admin's block 3 and the person's own history.
+    monkeypatch.setattr(service, "_cached", None)
+    monkeypatch.setattr(service, "get_readiness_snapshot", lambda: {
+        "status": "ready",
+        "components": {name: {"status": "ready", "required": True}
+                       for name in ("database", "auth", "storage", "smtp")},
+    })
+    status = world.client.get("/api/system/status")
+    assert status.status_code == 200, status.text
+    assert status.json()["organization"]["failed_sign_ins"] == 2
+    history = world.client.get("/api/auth/sign-in-events").json()["items"]
+    assert [row["kind"] for row in history].count("sign_in_failed") == 2
+    monkeypatch.setattr(rate_limits, "LOGIN_SOURCE_FAILURE_LIMIT", 1)
+    with world.anonymous(locked) as client:
+        response = client.post("/api/auth/token", json={"email": world.email, "password": "x"})
+        assert response.status_code == 401
+
+    at_shared = [
+        r for r in world.records("identity.sign_in_failure")
+        if r.event_metadata.get("ip_address") == shared
+    ]
+    named = [r for r in at_shared if r.subject_id == world.actor_id]
+    # Each attempt keeps the reference that its own sign-in page showed.
+    assert sorted(str(r.request_id) for r in named) == sorted(
+        r.headers["X-Request-ID"] for r in known
+    )
+    assert [r.subject_id for r in at_shared if r.subject_id != world.actor_id] == [None]
+    lockouts = [
+        r for r in world.records("identity.lockout")
+        if r.event_metadata.get("ip_address") == locked
+    ]
+    assert len(lockouts) == 1
+    assert lockouts[0].subject_id is None and lockouts[0].actor_id is None
+

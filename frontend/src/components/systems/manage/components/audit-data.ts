@@ -12,6 +12,8 @@ export type ActivityFilters = {
   /** Calendar days in the organization's zone, or "". */
   from: string;
   to: string;
+  /** The checked, valid reference (D7-C1, D13 item 3), or "". */
+  reference: string;
   order: ActivityOrder;
 };
 
@@ -22,5 +24,6 @@ export const initialActivityFilters: ActivityFilters = {
   entity: "",
   from: "",
   to: "",
+  reference: "",
   order: "newest",
 };

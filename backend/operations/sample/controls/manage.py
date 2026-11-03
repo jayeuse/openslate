@@ -5,7 +5,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.systems.access.users.sessions_schemas import AdminSessionCollectionResponse
+from app.systems.access.users.sessions_schemas import (
+    AdminSessionCollectionResponse,
+    SignInEventListResponse,
+)
 from app.systems.manage.health.schemas import SystemStatusResponse
 from app.systems.manage.workspace.security_schemas import WorkspaceSecurityResponse
 from operations.sample.blueprint import SampleDataset
@@ -32,6 +35,7 @@ CONTROL_ROUTES = frozenset(
         ("PATCH", "/api/workspace/security"),
         ("GET", "/api/auth/mfa"),
         ("GET", "/api/system/status"),
+        ("GET", "/api/auth/sign-in-events"),
     }
 )
 _SESSION_QUERY = {
@@ -106,6 +110,8 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         ("review_mfa_status", member, 200, {"read_checks": 1, "mfa_optional": True}),
         # Every signed-in person reads the system status, so a plain member checks it.
         ("review_system_status", member, 200, {"read_checks": 1, "system_status_shape": True}),
+        # Everyone reads their own sign-in history; the member signed in for this run.
+        ("review_sign_in_history", member, 200, {"read_checks": 1, "own_sign_in_listed": True}),
         ("review_admin_sessions", "admin", 200, {"read_checks": 2}),
         (
             "revoke_admin_sessions",
@@ -367,6 +373,25 @@ def execute_manage_control(
                 "System status differs from the four parts in order", step=action.key
             )
         extra["system_status_shape"] = True
+    elif operation == "review_sign_in_history":
+        import json
+
+        try:
+            history = SignInEventListResponse.model_validate_json(
+                json.dumps(read("/api/auth/sign-in-events")), strict=True
+            )
+        except ValidationError:
+            raise SamplePhaseActionError(
+                "Sign-in history response is invalid", step=action.key
+            ) from None
+        times = [item.occurred_at for item in history.items]
+        if "signed_in" not in {item.kind for item in history.items} or times != sorted(
+            times, reverse=True
+        ):
+            raise SamplePhaseActionError(
+                "Sign-in history lacks the actor's sign-in, newest first", step=action.key
+            )
+        extra["own_sign_in_listed"] = True
     elif operation == "review_admin_sessions":
         if not sessions(_SESSION_QUERY):
             raise SamplePhaseActionError(

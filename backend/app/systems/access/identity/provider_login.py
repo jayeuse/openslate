@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -22,6 +25,7 @@ from app.systems.access.identity.contracts import (
 )
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import admit_provider_session
+from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import (
     append_representative_failure,
@@ -29,6 +33,34 @@ from app.systems.manage.audit.security_failures import (
 )
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.security_policy import load_platform_policy
+
+
+def _account_id(db: Session, email: str) -> UUID | None:
+    """The local account that an attempt names, or ``None``; never part of the answer."""
+
+    try:
+        normalized = normalize_email(email)
+    except ValueError:
+        return None
+    return db.scalar(select(User.id).where(User.email == normalized))
+
+
+def _append_failure(
+    db: Session,
+    source: str | None,
+    timestamp: datetime,
+    subject_id: UUID | None,
+    user_agent: str | None,
+) -> None:
+    # The attempt is unauthenticated: the account is the subject, never the actor.
+    append_representative_failure(
+        db,
+        "identity.sign_in_failure",
+        source,
+        now=timestamp,
+        subject_id=subject_id,
+        user_agent=user_agent,
+    )
 
 
 def login_with_provider(
@@ -46,6 +78,8 @@ def login_with_provider(
 
     timestamp = now or utc_now()
     policy = load_platform_policy(db)
+    # Every attempt runs this one lookup, so known and unknown emails cost the same.
+    subject_id = _account_id(db, email)
     fingerprint: str | None = None
     bucket = None
     if enforce_rate_limit:
@@ -53,7 +87,8 @@ def login_with_provider(
         fingerprint = rate_limits.login_fingerprint(email, source)
         bucket = rate_limits.lock_bucket(db, fingerprint)
         retry_after = rate_limits.login_retry_after(
-            db, bucket, timestamp, policy, source=source, identifier=email, source_budget=True
+            db, bucket, timestamp, policy, source=source, identifier=email, source_budget=True,
+            subject_id=subject_id,
         )
         if retry_after is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
@@ -71,8 +106,9 @@ def login_with_provider(
                 source=source,
                 identifier=email,
                 source_budget=True,
+                subject_id=subject_id,
             )
-        append_representative_failure(db, "identity.sign_in_failure", source, now=timestamp)
+        _append_failure(db, source, timestamp, subject_id, user_agent)
         raise InvalidCredentials("Invalid credentials") from error
     try:
         issued = admit_provider_session(
@@ -90,12 +126,13 @@ def login_with_provider(
                 source=source,
                 identifier=email,
                 source_budget=True,
+                subject_id=subject_id,
             )
         try:
             client.sign_out(tokens.access_token)
         except (InvalidProviderCredentials, SupabaseAuthUnavailable):
             pass
-        append_representative_failure(db, "identity.sign_in_failure", source, now=timestamp)
+        _append_failure(db, source, timestamp, subject_id, user_agent)
         raise
     except InvalidProviderToken as error:
         raise SupabaseAuthUnavailable("Supabase Auth returned an invalid session") from error

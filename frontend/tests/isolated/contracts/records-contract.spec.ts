@@ -167,6 +167,7 @@ describeContracts("Records and relationships", [
   },
   {
     name: "listOpenViewRecordHistory",
-    run: () => listOpenViewRecordHistory({ recordId, departmentId }),
+    run: () =>
+      listOpenViewRecordHistory({ recordId, departmentId, manages: true }),
   },
 ]);

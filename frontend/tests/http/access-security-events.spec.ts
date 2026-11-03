@@ -157,6 +157,40 @@ test("Events mixed nullable feed and details explain representative and partial 
   expect(consoleErrors).toEqual([]);
 });
 
+test("D7-C1: Events find an entry by the reference an error message shows", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  await openFeed(page);
+  const controls = await filters(page);
+  const field = controls.getByLabel("Reference", { exact: true });
+  await expect(field).toHaveAttribute("placeholder", "4f9c2e1a");
+  // D13 item 3: typing shows no error and keeps the list; blur checks it,
+  // and an invalid value is left out of the request (no 422).
+  const reads = state.reads.length;
+  await field.fill("not-a-ref");
+  await expect(field).not.toHaveAttribute("aria-invalid");
+  await field.blur();
+  await expect(field).toHaveAttribute("aria-invalid", "true");
+  await expect(controls).toContainText(
+    "Enter the 8 characters of a reference, or its full ID.",
+  );
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
+  const fullId = "019A4C2E-7B1D-7C3E-9F00-4F9C2E1A0B2C";
+  await field.fill(fullId);
+  await field.press("Enter");
+  await expect
+    .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
+    .toMatchObject({ reference: fullId.toLowerCase(), offset: "0" });
+  expect(
+    state.reads.slice(reads).map((query) => query.get("reference")),
+  ).not.toContain("not-a-ref");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("group", { name: "Active filters" }),
+  ).toContainText(`Reference: ${fullId.toLowerCase()}`);
+});
+
 test("security event personal display preserves UTC diagnostics and workspace filter bounds", async ({
   page,
 }) => {

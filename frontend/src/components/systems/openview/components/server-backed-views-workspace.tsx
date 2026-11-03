@@ -599,8 +599,11 @@ export default function ServerBackedViewsWorkspace({
       : null;
   // The server checks every change; these only decide which controls show.
   const canWriteRecords = recordLevel === "write" || recordLevel === "manage";
-  // Record history is for administrators and managers of the department.
-  const canReadRecordHistory = Boolean(
+  // Everyone who can open a record reads its history (S4-C5); the server
+  // decides which entries and fields arrive. Administrators and managers of
+  // the department read it through the department (D10.1).
+  const canReadRecordHistory = Boolean(source);
+  const managesRecordHistory = Boolean(
     source && openViewLevel(identity.data, source.departmentId) === "manage",
   );
   const routedView = isUuid(requestedView) ? requestedView : undefined;
@@ -3508,6 +3511,7 @@ export default function ServerBackedViewsWorkspace({
                                 dataSources: catalog ?? [],
                                 canWrite: canWriteRecords,
                                 canReadHistory: canReadRecordHistory,
+                                managesHistory: managesRecordHistory,
                                 onChanged: (message) => {
                                   if (message) setNotice(message);
                                   setRecordChanges((value) => value + 1);

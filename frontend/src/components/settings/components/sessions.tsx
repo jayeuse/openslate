@@ -28,13 +28,14 @@ import {
 import { endSessionTitle, sessionRowWords } from "../domain/sessions";
 import type { SettingsRegion } from "../hooks/use-settings-region";
 import { ErrorReference } from "@/components/ui/error-reference";
+import { SignInHistory } from "./sign-in-history";
 import { apiErrorReference } from "@/lib/api-errors";
 
 /**
  * Device sessions (PD11): 40px one-line rows with the device, the address,
  * "This device", the last activity, and a ⋯ menu whose End session is named
  * for the device; below them a quiet "Sign out other sessions". Both keep the
- * existing confirmation.
+ * existing confirmation. Your sign-in history follows (S4-C2, D9.1).
  */
 export function Sessions({
   security,
@@ -164,6 +165,11 @@ export function Sessions({
         </DisabledReason>
       </div>
       <SessionConfirmation security={security} />
+      <SignInHistory
+        accountId={security.accountId}
+        identityFailed={security.identityFailed}
+        region={region}
+      />
     </div>
   );
 }

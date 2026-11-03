@@ -83,6 +83,10 @@ const auditEntrySchema = z
     before: z.record(z.string(), z.unknown()).nullable(),
     after: z.record(z.string(), z.unknown()).nullable(),
     actor_label: z.string().nullable(),
+    // The list names the person who made the change (`active_actor_names`),
+    // which every reader needs: `assignable-users` lists only the module's
+    // readers (D10.3, D11 item 4).
+    actor_name: z.string().nullish(),
   })
   .transform((entry) => ({
     id: entry.id,
@@ -92,6 +96,7 @@ const auditEntrySchema = z
     before: entry.before,
     after: entry.after,
     actorLabel: entry.actor_label,
+    actorName: entry.actor_name ?? null,
   }));
 export type OpenViewRecordHistoryEntry = z.output<typeof auditEntrySchema>;
 
@@ -323,18 +328,28 @@ export function searchOpenViewLinkTargets(input: {
 }
 
 /**
- * The record's change history, newest first. Only administrators and
- * managers of the record's department may read it.
+ * The record's change history, newest first, up to 50 entries (API contract
+ * S4). An administrator or a manager of the record's department reads it
+ * through the department and sees full snapshots. Anyone else who can open
+ * the record reads it by the record alone, with no `department_id`: the
+ * server applies the record page's read check, answers an empty page for a
+ * record they cannot open, and leaves out fields they cannot read.
  */
 export async function listOpenViewRecordHistory(input: {
   recordId: string;
   departmentId: string;
+  manages: boolean;
 }): Promise<OpenViewRecordHistoryEntry[]> {
-  const query = new URLSearchParams({
-    entity_id: uuidSchema.parse(input.recordId),
-    department_id: uuidSchema.parse(input.departmentId),
-    limit: "50",
-  });
+  const recordId = uuidSchema.parse(input.recordId);
+  const query = new URLSearchParams(
+    input.manages
+      ? {
+          entity_id: recordId,
+          department_id: uuidSchema.parse(input.departmentId),
+          limit: "50",
+        }
+      : { entity_type: "records", entity_id: recordId, limit: "50" },
+  );
   const page = await apiFetch(
     `/audit-logs?${query.toString()}`,
     listSchema(auditEntrySchema),

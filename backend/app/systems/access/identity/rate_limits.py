@@ -99,6 +99,7 @@ def login_retry_after(
     actor_id: UUID | None = None,
     identifier: str | None = None,
     source_budget: bool = False,
+    subject_id: UUID | None = None,
 ) -> int | None:
     if identifier is not None:
         retry = _login_budget(identifier, timestamp, source=source, source_budget=source_budget)
@@ -113,7 +114,7 @@ def login_retry_after(
         and bucket.attempt_count >= profile.login_failed_attempt_threshold
     ):
         bucket.blocked_until = timestamp + timedelta(minutes=profile.login_cooldown_minutes)
-        _record_login_lockout(db, timestamp, source, actor_id)
+        _record_login_lockout(db, timestamp, source, actor_id, subject_id)
         db.commit()
         return profile.login_cooldown_minutes * 60
     return None
@@ -134,7 +135,9 @@ def record_attempt(
     cooldown: timedelta = LOGIN_COOLDOWN,
     identifier: str | None = None,
     source_budget: bool = False,
+    subject_id: UUID | None = None,
 ) -> IdentityRateLimitBucket:
+    """``subject_id`` names the account of an account lockout; a source lockout names none."""
     if identifier is not None:
         _login_budget(
             identifier,
@@ -143,6 +146,7 @@ def record_attempt(
             actor_id=actor_id,
             failed=True,
             source_budget=source_budget,
+            subject_id=subject_id,
         )
     if policy is not None:
         window = timedelta(minutes=policy.login_window_minutes)
@@ -168,7 +172,7 @@ def record_attempt(
     if bucket.attempt_count >= threshold:
         bucket.blocked_until = timestamp + cooldown
         if login and not was_blocked:
-            _record_login_lockout(db, timestamp, source, actor_id)
+            _record_login_lockout(db, timestamp, source, actor_id, subject_id)
     return bucket
 
 
@@ -180,12 +184,10 @@ def _login_budget(
     actor_id: UUID | None = None,
     failed: bool = False,
     source_budget: bool = False,
+    subject_id: UUID | None = None,
 ) -> int | None:
-    limits = {
-        rate_limit_fingerprint(
-            "login-account", normalize_identifier(identifier), None
-        ): LOGIN_ACCOUNT_FAILURE_LIMIT,
-    }
+    account = rate_limit_fingerprint("login-account", normalize_identifier(identifier), None)
+    limits = {account: LOGIN_ACCOUNT_FAILURE_LIMIT}
     if source_budget:
         limits[rate_limit_fingerprint("login-source", source or "", None)] = (
             LOGIN_SOURCE_FAILURE_LIMIT
@@ -221,6 +223,7 @@ def _login_budget(
                     login=True,
                     source=source,
                     actor_id=actor_id,
+                    subject_id=subject_id if value == account else None,
                 )
                 if limits[value] == LOGIN_SOURCE_FAILURE_LIMIT and item.blocked_until is not None:
                     item.blocked_until = item.window_started_at + LOGIN_WINDOW
@@ -308,7 +311,11 @@ def _mfa_budget(user_id: UUID, *, source: str | None, failed: bool = False) -> i
 
 
 def _record_login_lockout(
-    db: Session, timestamp: datetime, source: str | None, actor_id: UUID | None
+    db: Session,
+    timestamp: datetime,
+    source: str | None,
+    actor_id: UUID | None,
+    subject_id: UUID | None = None,
 ) -> None:
     append_security_event(
         db,
@@ -319,7 +326,7 @@ def _record_login_lockout(
             operation_id=uuid7(),
             occurred_at=timestamp,
             actor_id=actor_id,
-            subject_id=actor_id,
+            subject_id=subject_id or actor_id,
             reason="failed_attempt_limit",
             metadata={"ip_address": canonical_source(source)},
         ),

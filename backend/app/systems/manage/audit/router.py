@@ -11,7 +11,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
-from app.common.listing import DeletedFilter, SortOrder, StandardListRequest
+from app.common.listing import (
+    DeletedFilter,
+    PaginationMetadata,
+    SortOrder,
+    StandardListRequest,
+    execute_standard_list,
+)
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.observability import log_event
@@ -28,6 +34,14 @@ from app.systems.manage.audit.models import (
     SecurityEvent,
     SecurityEventOutcome,
 )
+from app.systems.manage.audit.reader import (
+    READER_LIST_SPEC,
+    readable_entry,
+    readable_field_ids,
+    record_history_conditions,
+    require_reader_sort,
+)
+from app.systems.manage.audit.reference import Reference
 from app.systems.manage.audit.schemas import (
     AuditLogActorOption,
     AuditLogListResponse,
@@ -49,6 +63,7 @@ from app.systems.manage.audit.service import (
     list_audit_logs,
     list_security_events,
 )
+from app.systems.sandbox.records.access import record_access
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
 security_events_router = APIRouter(prefix="/security-events", tags=["security-events"])
@@ -59,15 +74,21 @@ AdminUser = Annotated[User, Depends(require_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def _lists_full_history(user: User, db: Session, department_id: UUID | None) -> bool:
+    """An admin, or a manager of the explicitly selected department."""
+
+    return require_current_membership(db, user).role == UserRole.ADMIN.value or (
+        department_id is not None
+        and effective_levels(db, user).department_level(department_id) == AccessLevel.MANAGE
+    )
+
+
 def _require_audit_list_visibility(
     user: User,
     db: Session,
     department_id: UUID | None,
 ) -> None:
-    if require_current_membership(db, user).role != UserRole.ADMIN.value and (
-        department_id is None
-        or effective_levels(db, user).department_level(department_id) != AccessLevel.MANAGE
-    ):
+    if not _lists_full_history(user, db, department_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
@@ -116,24 +137,51 @@ def get_audit_logs(
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    reference: Reference = None,
 ) -> AuditLogListResponse:
-    _require_audit_list_visibility(user, db, department_id)
+    filters: dict[str, Any] = {
+        "action": action, "entity_type": entity_type, "performed_by": performed_by,
+        "request_id": request_id, "created_after": created_after,
+        "created_before": created_before, "reference": reference,
+    }
+    if not _lists_full_history(user, db, department_id):
+        # Any member may list one record's history through the record's own read check.
+        if entity_id is None or department_id is not None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return _record_history(db, user, params, entity_id, filters)
     result = list_audit_logs(
-        db,
-        params,
-        reader=user,
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        department_id=department_id,
-        performed_by=performed_by,
-        request_id=request_id,
-        created_after=created_after,
-        created_before=created_before,
+        db, params, reader=user, entity_id=entity_id, department_id=department_id, **filters
     )
     return AuditLogListResponse.model_validate(
         {"items": _audit_log_responses(db, user, result.items), "pagination": result.pagination},
         from_attributes=True,
+    )
+
+
+def _record_history(
+    db: Session,
+    user: User,
+    params: AuditLogListRequest,
+    record_id: UUID,
+    filters: dict[str, Any],
+) -> AuditLogListResponse:
+    found = record_access(db, user, record_id)
+    if found is None:
+        # The same empty page that a missing ID gives an admin.
+        return AuditLogListResponse(items=[], pagination=PaginationMetadata(
+            limit=params.limit, offset=params.offset, count=0, total=0, has_more=False,
+        ))
+    record, _level = found
+    require_reader_sort(params.sort_by)
+    field_ids = readable_field_ids(db, record)
+    statement = audit_log_statement(**filters).where(
+        *record_history_conditions(record, field_ids)
+    )
+    result = execute_standard_list(db, statement, params, READER_LIST_SPEC)
+    entries = _audit_log_responses(db, user, result.items)
+    return AuditLogListResponse(
+        items=[readable_entry(entry, field_ids) for entry in entries],
+        pagination=result.pagination,
     )
 
 
@@ -245,6 +293,7 @@ def get_security_events(
     person_id: UUID | None = None,
     occurred_after: AwareDatetime | None = None,
     occurred_before: AwareDatetime | None = None,
+    reference: Reference = None,
 ) -> SecurityEventListResponse:
     if (
         occurred_after is not None
@@ -263,6 +312,7 @@ def get_security_events(
         person_id=person_id,
         occurred_after=occurred_after,
         occurred_before=occurred_before,
+        reference=reference,
     )
     return SecurityEventListResponse.model_validate(
         {"items": result.items, "pagination": result.pagination},

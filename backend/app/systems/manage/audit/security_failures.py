@@ -7,6 +7,7 @@ from ipaddress import ip_address
 from typing import Literal
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -39,12 +40,20 @@ def append_representative_failure(
     now: datetime | None = None,
     actor_id: UUID | None = None,
     subject_id: UUID | None = None,
+    user_agent: str | None = None,
 ) -> None:
-    """Take this lock last; acquire no user, session or budget lock afterward."""
+    """Take this lock last; acquire no user, session or budget lock afterward.
+
+    A failed sign-in for a local account is its own event on every attempt, with that
+    request's ID, so its error reference finds it; the account budget bounds these rows.
+    Other failures keep one row per source address and hour. Both paths take the same
+    lock and lookup, so the database work does not tell a known email from an unknown one.
+    """
     timestamp = (now or utc_now()).astimezone(UTC)
+    address = canonical_source(source)
+    browser = {"user_agent": user_agent[:500]} if user_agent else {}
     start = timestamp.replace(minute=0, second=0, microsecond=0)
     end = start + timedelta(hours=1)
-    address = canonical_source(source)
     secret = get_settings().security_event_server_key.get_secret_value().encode()
     bucket = f"{event_type}\x00{address or '<unknown>'}\x00{start.isoformat()}".encode()
     fingerprint = digest(secret, b"slateops:security-representative:v1:" + bucket, "sha256").hex()
@@ -60,30 +69,46 @@ def append_representative_failure(
         )
         .limit(1)
     )
+    if event_type == "identity.sign_in_failure" and subject_id is not None:
+        append_security_event(db, _failure(
+            event_type, timestamp, actor_id, subject_id, None,
+            {"ip_address": address, **browser},
+        ))
+        return
     if existing is not None:
         return
-    append_security_event(
-        db,
-        SecurityEventIngestRequest(
-            event_type=event_type,
-            outcome="failure" if event_type == "identity.sign_in_failure" else "denied",
-            source="identity.source_policy"
-            if event_type == "identity.ip_blocked"
-            else "identity.login",
-            operation_id=uuid7(),
-            occurred_at=timestamp,
-            actor_id=actor_id,
-            subject_id=subject_id,
-            fingerprint=fingerprint,
-            reason="source_not_allowed"
-            if event_type == "identity.ip_blocked"
-            else "credentials_rejected",
-            metadata={
-                "ip_address": address,
-                "bucket_start": start.isoformat(),
-                "bucket_end": end.isoformat(),
-            },
-        ),
+    append_security_event(db, _failure(
+        event_type, timestamp, actor_id, subject_id, fingerprint,
+        {
+            "ip_address": address,
+            "bucket_start": start.isoformat(),
+            "bucket_end": end.isoformat(),
+            **browser,
+        },
+    ))
+
+
+def _failure(
+    event_type: FailureType,
+    timestamp: datetime,
+    actor_id: UUID | None,
+    subject_id: UUID | None,
+    fingerprint: str | None,
+    metadata: dict[str, JsonValue],
+) -> SecurityEventIngestRequest:
+    # The request ID comes from the current request context, as for every security event.
+    blocked = event_type == "identity.ip_blocked"
+    return SecurityEventIngestRequest(
+        event_type=event_type,
+        outcome="failure" if event_type == "identity.sign_in_failure" else "denied",
+        source="identity.source_policy" if blocked else "identity.login",
+        operation_id=uuid7(),
+        occurred_at=timestamp,
+        actor_id=actor_id,
+        subject_id=subject_id,
+        fingerprint=fingerprint,
+        reason="source_not_allowed" if blocked else "credentials_rejected",
+        metadata=metadata,
     )
 
 

@@ -353,7 +353,7 @@ def test_record_query_deleted_options(world: _World) -> None:
 # G5: record history.
 
 
-def test_record_history_is_for_admins_and_department_managers(world: _World) -> None:
+def test_record_history_is_full_for_admins_and_department_managers(world: _World) -> None:
     writer = world.client(world.writer)
     opened = writer.get(f"/api/records/{world.record.id}").json()
     patched = writer.patch(
@@ -370,7 +370,14 @@ def test_record_history_is_for_admins_and_department_managers(world: _World) -> 
     # Newest first; the fixture's insert is the create row.
     assert [item["action"] for item in as_admin.json()["items"]] == ["update", "create"]
 
-    assert world.client(world.manager).get("/api/audit-logs", params=params).status_code == 403
+    # S4: without the department, a manager takes the reader path like any reader of the
+    # record: readable fields only, and no request method, path or note.
+    as_reader = world.client(world.manager).get("/api/audit-logs", params=params)
+    assert as_reader.status_code == 200, as_reader.text
+    assert [
+        (item["action"], item["request_method"], item["request_path"], item["note"])
+        for item in as_reader.json()["items"]
+    ] == [("update", None, None, None), ("create", None, None, None)]
     as_manager = world.client(world.manager).get("/api/audit-logs", params=scoped)
     assert as_manager.status_code == 200, as_manager.text
     assert len(as_manager.json()["items"]) == 2
