@@ -77,7 +77,7 @@ def test_a_second_upgrade_waits_for_the_first_and_then_finds_nothing_to_run() ->
         engine.dispose()
 
     assert [run.returncode for run in runs] == [0, 0], outputs
-    upgraded = [f"Running upgrade  -> {head}" in output for output in outputs]
+    upgraded = [f"-> {head}," in output for output in outputs]
     assert sorted(upgraded) == [False, True], outputs
     waited = outputs[upgraded.index(False)]
     assert "Running upgrade" not in waited, outputs
