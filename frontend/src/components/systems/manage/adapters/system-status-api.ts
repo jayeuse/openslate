@@ -2,13 +2,23 @@ import { z } from "zod";
 
 import { apiFetch } from "@/lib/api";
 
-import type { OrganizationStatus, PartStatus } from "../domain/health-rules";
+// Types only: the shell reaches this module through `manage-queries`, so a
+// value import of the page's rules would put them in every cold route.
+import type {
+  InstallationStatus,
+  OrganizationStatus,
+  PartStatus,
+} from "../domain/health-rules";
 
+// S5: `slow` for any part (Email is never slow by the contract, but a per-key
+// word list would refuse the whole response) and Email `working` from real
+// sends (API contract S5).
 const KNOWN_STATUSES: readonly string[] = [
   "working",
   "not_working",
   "not_set_up",
   "set_up",
+  "slow",
 ] satisfies PartStatus[];
 
 function knownStatus(value: string): PartStatus {
@@ -39,8 +49,35 @@ const organizationStatusSchema = z
     failed_jobs: count.nullable(),
     failed_sign_ins: count,
     lockouts: count,
+    // S5-C7: bytes of the organization's files; null when the server cannot
+    // read them.
+    storage_used_bytes: count.nullable(),
   })
   .strict() satisfies z.ZodType<OrganizationStatus>;
+
+// The installation owner's block 4 (S5-C6): the database size from the newest
+// sample, and each worker's state as the server judges it.
+const installationStatusSchema = z
+  .object({
+    database_bytes: count.nullable(),
+    database_measured_at: instant.nullable(),
+    workers: z.array(
+      z
+        .object({
+          key: z.enum([
+            "record_triggers",
+            "report_scheduling",
+            "comms_jobs",
+            "provider_signout",
+            "backup_runner",
+          ]),
+          state: z.enum(["running", "not_seen", "never_seen"]),
+          last_seen_at: instant.nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict() satisfies z.ZodType<InstallationStatus>;
 
 // GET /api/system/status (docs/specs/system-health.md, API contract S2): the
 // four parts in R1 order with their status words, the version and the time of
@@ -61,6 +98,8 @@ const systemStatusSchema = z
     // Always present: null for everyone but an admin of the bound
     // organization (S3-C1).
     organization: organizationStatusSchema.nullable(),
+    // Always present: null for everyone but the installation owner (S5-C6).
+    installation: installationStatusSchema.nullable(),
   })
   .strict();
 

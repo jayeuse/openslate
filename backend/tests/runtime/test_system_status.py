@@ -15,7 +15,7 @@ from app.common.dependencies.auth import get_current_user
 from app.core import readiness
 from app.core.database.session import get_db
 from app.main import create_app
-from app.systems.manage.health import organization, service
+from app.systems.manage.health import history, installation, organization, service
 from tests.runtime.readiness_support import (
     install_provider_transport,
     install_readiness_settings,
@@ -26,6 +26,10 @@ from tests.runtime.readiness_support import (
 # Hang guard for thread hand-offs only; no latency claim rests on it.
 HANDOFF_SECONDS = 30
 CHECK_TIME = datetime(2026, 11, 2, 10, 42, 5, 123456, tzinfo=UTC)
+NO_HISTORY = history.HealthHistory(
+    periods=(), slow=frozenset(), oldest_sample_at=None,
+    email_accepted_at=None, email_failed_at=None,
+)
 
 
 def _snapshot(database="ready", auth="ready", storage="ready", smtp="ready"):
@@ -204,10 +208,19 @@ def _status_client(monkeypatch, events: list[str]) -> TestClient:
     def organization_status(db, person):
         events.append("organization")
 
+    def cached_history(db):
+        events.append("history")
+        return NO_HISTORY
+
+    def installation_status(db, person):
+        events.append("installation")
+
     database = Mock(spec=Session)
     database.rollback.side_effect = lambda: events.append("rollback")
     monkeypatch.setattr(service, "get_readiness_snapshot", snapshot)
     monkeypatch.setattr(organization, "organization_status", organization_status)
+    monkeypatch.setattr(history, "cached_history", cached_history)
+    monkeypatch.setattr(installation, "installation_status", installation_status)
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=None)
     app.dependency_overrides[get_db] = lambda: database
@@ -230,13 +243,17 @@ def test_s2_c1_c4_the_body_holds_only_parts_version_and_check_time(monkeypatch, 
         "version": "0.1.0",
         "checked_at": "2026-11-02T10:42:05.123456Z",
         "organization": None,
+        "installation": None,
     }
     for internal in ("database", "auth", "storage", "smtp", "supabase", "required", "5432"):
         assert internal not in response.text
     assert response.headers["Cache-Control"] == "no-store"
     # The request transaction ends before the readiness wait, and again after the
-    # organization part, so no pooled connection idles in a transaction.
-    assert events == ["rollback", "probe", "organization", "rollback"]
+    # organization, history and installation reads, so no pooled connection idles in a
+    # transaction.
+    assert events == [
+        "rollback", "probe", "organization", "history", "installation", "rollback",
+    ]
 
 
 def test_s2_c1_a_request_with_no_session_gets_401_with_a_request_id():
@@ -255,6 +272,8 @@ def test_s2_c8_api_ready_still_probes_on_every_call_after_a_cached_status(monkey
     install_provider_transport(monkeypatch, lambda request: httpx.Response(200, request=request))
     monkeypatch.setattr(readiness, "_probe_database", lambda: probed.append(1) or True)
     monkeypatch.setattr(organization, "organization_status", lambda db, person: None)
+    monkeypatch.setattr(history, "cached_history", lambda db: NO_HISTORY)
+    monkeypatch.setattr(installation, "installation_status", lambda db, person: None)
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=None)
     app.dependency_overrides[get_db] = lambda: Mock(spec=Session)

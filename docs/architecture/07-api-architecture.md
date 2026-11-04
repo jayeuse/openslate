@@ -27,7 +27,7 @@ Audit-log list reads have a separate boundary: administrators can list all rows,
 
 `GET /api/events` is authenticated SSE. It emits `resync` and opaque `invalidate` events only, sends heartbeats, bounds subscriber queues, and rechecks access as the stream runs. Clients must refetch authorized data; event messages are never a data API.
 
-`GET /api/system/status` is readable by every signed-in person of the bound organization and returns plain part statuses, the version, and the check time ([Observability](18-observability.md)). `/api/health` and `/api/ready` stay unauthenticated.
+`GET /api/system/status` is readable by every signed-in person of the bound organization and returns plain part statuses, the version, and the check time, plus an `organization` part for its admins and an `installation` part for the installation owner (`null` for everyone else, never a 403). `GET /api/system/health-periods` gives everyone the same 30-day periods in offset pages. `GET /api/system/diagnostics/installation` (fresh exact admin who owns the installation) and `GET /api/system/diagnostics/organization` (admin of the bound organization) download the support files; members and guests get 403 ([Observability](18-observability.md)). `/api/health` and `/api/ready` stay unauthenticated.
 
 The normal error shape remains route-local `HTTPException` detail. Every error JSON body also carries a top-level `request_id` equal to the `X-Request-ID` header ([Error Handling and Recovery](15-error-handling-and-recovery.md)); there is no other envelope. Authentication failures are generic; API responses and logs must not disclose passwords, tokens, raw storage paths, or internal database details.
 

@@ -29,7 +29,7 @@ ORGANIZATION_TABLES = (
         "record_trigger_runs record_triggers records relationship_edges report_run_eligible_users "
         "report_run_rows report_runs report_schedules reports sandbox_bindings sandbox_documents "
         "sandbox_publications sandbox_test_runs sandbox_versions saved_views scheduled_work "
-        "security_events".split()
+        "security_events server_errors".split()
     )
     | COMMS_TABLES
     | {
@@ -55,7 +55,11 @@ ORGANIZATION_TABLES = (
         "board_calendar_sources",
     }
 )
-MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})
+MIXED_TABLES = frozenset(
+    {"audit_logs", "files", "security_events", "in_app_notifications", "server_errors"}
+)
+# Keyed by something other than ``id``, and no other table refers to them by organization.
+WITHOUT_ID_KEY = frozenset({"report_run_eligible_users", "server_errors"})
 
 
 def test_root_schema_has_scoped_keys_without_organization_seeds(integration_owner_db):
@@ -80,7 +84,7 @@ def test_root_schema_has_scoped_keys_without_organization_seeds(integration_owne
             and key["referred_columns"] == ["id"]
             for key in foreign_keys
         ), table
-        if table != "report_run_eligible_users":
+        if table not in WITHOUT_ID_KEY:
             assert any(
                 constraint["column_names"] == ["org_id", "id"]
                 for constraint in inspector.get_unique_constraints(table, "public")

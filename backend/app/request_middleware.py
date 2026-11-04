@@ -13,6 +13,7 @@ from contextlib import ExitStack
 from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import Settings
@@ -33,6 +34,7 @@ from app.core.middleware.request_context import (
 )
 from app.core.observability import failure_cause, log_event
 from app.systems.manage.backups.downloads import release_export_response, wrap_export_response
+from app.systems.manage.health.errors import record_server_error
 
 
 def _request_route(request: Request) -> str:
@@ -179,6 +181,8 @@ def install_request_middleware(
             else:
                 response = _unexpected_error_response(request, context)
         except (OperationalError, SQLAlchemyTimeoutError) as error:
+            # The samples record the outage; a write now would fail too (S6-C1).
+            context.database_unavailable = True
             response = _database_unavailable_response(request, context, error)
         except Exception:
             response = _unexpected_error_response(request, context)
@@ -197,10 +201,25 @@ def install_request_middleware(
             if not relaxed_development:
                 _add_security_headers(response)
             response.headers.update(_request_headers(context))
+            route = _request_route(request)
+            # Readiness answers 503 by design while a dependency is down; it is no error.
+            if (
+                response.status_code >= 500
+                and not context.database_unavailable
+                and route != "/api/ready"
+            ):
+                await run_in_threadpool(
+                    record_server_error,
+                    context.request_id,
+                    response.status_code,
+                    request.method,
+                    route,
+                    context.org_id,
+                )
             log_event(
                 "http_request",
                 method=request.method,
-                route=_request_route(request),
+                route=route,
                 status=response.status_code,
                 duration_ms=int((time.perf_counter() - started) * 1000),
             )

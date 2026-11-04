@@ -330,6 +330,29 @@ export const test = base.extend({
         });
       },
     );
+    // System health reads its 30-day timeline beside the status (S5-C3); by
+    // default nothing is recorded yet. Journeys that show periods route it at
+    // page level.
+    await context.route(
+      (url) => url.pathname === "/api/system/health-periods",
+      (route) => {
+        const url = new URL(route.request().url());
+        return route.fulfill({
+          headers: { "Cache-Control": "no-store" },
+          json: {
+            items: [],
+            pagination: {
+              limit: Number(url.searchParams.get("limit") ?? 5),
+              offset: Number(url.searchParams.get("offset") ?? 0),
+              count: 0,
+              total: 0,
+              has_more: false,
+            },
+            oldest_sample_at: null,
+          },
+        });
+      },
+    );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );

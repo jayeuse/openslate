@@ -67,6 +67,7 @@ from app.systems.manage.audit.router import internal_security_events_router, sec
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.health.router import router as system_status_router
+from app.systems.manage.health.worker import SystemHealthWorker
 from app.systems.manage.jobs.router import router as jobs_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.manage.workspace.security_router import router as workspace_security_router
@@ -126,13 +127,18 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.comms_publisher.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
     signout_worker = getattr(app.state, "provider_signout_worker", None)
+    health_worker = getattr(app.state, "health_worker", None)
     try:
         if signout_worker is not None:
             signout_worker.start()
         if report_worker is not None:
             report_worker.start()
+        if health_worker is not None:
+            health_worker.start()
         yield
     finally:
+        # The sampler stops first; it uses the readiness probe disposed below.
+        health_stopped = health_worker.stop() if health_worker is not None else True
         signout_stopped = signout_worker.stop() if signout_worker is not None else True
         report_stopped = report_worker.stop() if report_worker is not None else True
         comms_stopped = app.state.comms_publisher.stop() if report_stopped else False
@@ -140,7 +146,13 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if invalidation_publisher is not None:
             invalidation_publisher.stop()
         app.state.events_listener.stop()
-        if trigger_stopped and report_stopped and signout_stopped and comms_stopped:
+        if (
+            trigger_stopped
+            and report_stopped
+            and signout_stopped
+            and comms_stopped
+            and health_stopped
+        ):
             dispose_readiness_resources()
             dispose_database_resources()
         else:
@@ -186,6 +198,7 @@ def create_app() -> FastAPI:
     app.state.invalidation_publisher = InvalidationPublisher()
     app.state.trigger_worker = TriggerWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
+    app.state.health_worker = SystemHealthWorker(settings)
     relaxed_development = is_relaxed_development(settings)
     if not relaxed_development:
         app.add_middleware(

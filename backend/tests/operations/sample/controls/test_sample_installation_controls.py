@@ -14,7 +14,10 @@ from operations.sample.scenario import build_dataset
 from operations.sample.verification import route_coverage
 
 ANCHOR = date(2026, 10, 2)
-INSTALLATION_KEYS = {"control:update-workspace-security"}
+INSTALLATION_KEYS = {
+    "control:update-workspace-security",
+    "control:download-installation-support-file",
+}
 
 
 def _plan(pack: str, *, installation: bool) -> set[str]:

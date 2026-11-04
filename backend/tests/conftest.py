@@ -218,6 +218,25 @@ def _bound_test_organizations(request):
 
 
 @pytest.fixture(autouse=True)
+def _no_health_writes_without_a_database(request):
+    """A stack-free test has no database: health signals and server errors go nowhere.
+
+    Production writes them in their own sessions (S5, S6); a test of those writers patches
+    the writer itself, and integration tests keep the real one. A private patch context
+    leaves the order of the shared ``monkeypatch`` fixture unchanged.
+    """
+    if request.node.get_closest_marker("integration") is not None:
+        yield
+        return
+    from app.systems.manage.health import errors, signals
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(signals, "_write_signal", lambda key, now: None)
+        patch.setattr(errors, "_write", lambda *values: None)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _isolated_provider_user_cache():
     clear_provider_users()
     yield

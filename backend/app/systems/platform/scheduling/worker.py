@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.database.organization_scope import worker_organization
 from app.core.database.session import get_engine
 from app.core.observability import failure_cause, log_event
+from app.systems.manage.health import signals
 from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.platform.scheduling.execution import execute_due_report_runs
 from app.systems.platform.scheduling.post_execution import (
@@ -222,6 +223,11 @@ class ReportSchedulingWorker:
                     reminders=reminders_due,
                     comms=comms_due,
                 )
+                # Outside any organization binding: the heartbeats are installation-wide.
+                if reports_due:
+                    signals.beat("report_scheduling")
+                if comms_due:
+                    signals.beat("comms_jobs")
                 completed_at = time.monotonic()
                 if reports_due:
                     next_report_poll = completed_at + self._retry_seconds

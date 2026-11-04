@@ -18,6 +18,10 @@ class RequestContext:
         self.method = method
         self.path = path
         self.performed_by: UUID | None = None
+        # The organization the request bound after its address and MFA checks passed.
+        self.org_id: UUID | None = None
+        # Set when the request failed on a database outage: its server error is not stored.
+        self.database_unavailable = False
 
 
 _current_request_context: ContextVar[RequestContext | None] = ContextVar(

@@ -67,6 +67,11 @@ from app.systems.manage.backups.models import (  # noqa: F401
     BackupRun,
     UpdateStatus,
 )
+from app.systems.manage.health.models import (  # noqa: F401
+    ServerError,
+    SystemHealthSample,
+    SystemHealthSignal,
+)
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile  # noqa: F401
 from app.systems.openview.charts.models import Chart  # noqa: F401
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401

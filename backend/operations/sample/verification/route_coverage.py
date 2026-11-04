@@ -101,6 +101,9 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/auth/admin-sessions"),
         ("GET", "/api/auth/mfa"),
         ("GET", "/api/system/status"),
+        ("GET", "/api/system/health-periods"),
+        ("GET", "/api/system/diagnostics/organization"),
+        ("GET", "/api/system/diagnostics/installation"),
         ("GET", "/api/auth/sign-in-events"),
         ("GET", "/api/auth/session"),
         ("GET", "/api/auth/sessions"),
@@ -476,6 +479,7 @@ INSTALLATION_ROUTES: frozenset[Route] = frozenset(
         ("PATCH", "/api/backups/status"),
         ("GET", "/api/version"),
         ("PATCH", "/api/workspace/security"),
+        ("GET", "/api/system/diagnostics/installation"),
     }
 )
 

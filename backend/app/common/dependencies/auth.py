@@ -7,7 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import Integer, func, literal, select
 from sqlalchemy import cast as sql_cast
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -20,6 +21,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.core.middleware.request_context import RequestContext, get_current_request_context
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import resolve_provider_session
@@ -51,6 +53,14 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Administrator actions hold it shared; changes that can remove an administrator
 # hold it exclusively, so the last-administrator count cannot race.
 ADMINISTRATOR_CHANGE_LOCK = 0x4F53_4144  # "OSAD"
+
+
+def _note_database_outage(error: Exception) -> None:
+    """The samples record a database outage, and a write now would fail too (S6-C1)."""
+
+    context = get_current_request_context()
+    if context is not None and isinstance(error, OperationalError | SQLAlchemyTimeoutError):
+        context.database_unavailable = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +179,7 @@ def _resolve_identity(
     except InvalidProviderToken as error:
         raise _unauthorized() from error
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        _note_database_outage(error)
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     if resolved is None:
         raise _unauthorized()
@@ -199,6 +210,7 @@ def require_allowed_source(
             request.client.host if request.client else None,
         )
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        _note_database_outage(error)
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     if not permitted:
         source = request.client.host if request.client else None
@@ -273,6 +285,10 @@ def resolve_membership(
         )
     require_allowed_source(request, db, org, person_id=identity.user.id)
     scope_session(db, org_id)
+    # A server error of this request belongs to this organization (S6-C1).
+    context = getattr(request.state, "request_context", None)
+    if isinstance(context, RequestContext):
+        context.org_id = org_id
     remember_membership(db, membership)
     return membership
 
@@ -290,6 +306,7 @@ def get_optional_membership(
     try:
         return resolve_membership(request, db, identity, org_id)
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
+        _note_database_outage(error)
         raise HTTPException(503, detail="Organization context unavailable") from error
 
 
@@ -370,6 +387,7 @@ def require_fresh_exact_admin(
             .with_for_update(of=User, read=True)
         )
     except SQLAlchemyError as error:
+        _note_database_outage(error)
         db.rollback()
         raise HTTPException(status_code=503, detail="Unable to reload administrator") from error
     # Re-read the membership under the lock too: a demotion may have committed meanwhile.

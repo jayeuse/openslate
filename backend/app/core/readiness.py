@@ -3,7 +3,7 @@
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 from functools import lru_cache
 from threading import Lock
-from time import monotonic
+from time import monotonic, perf_counter
 from typing import Literal, TypedDict
 
 import httpx
@@ -17,6 +17,8 @@ _probe_lock = Lock()
 _probe_executor: ThreadPoolExecutor | None = None
 _snapshot_future: Future["ReadinessSnapshot"] | None = None
 _snapshot_partial: tuple[Future["ReadinessSnapshot"], dict[str, "ComponentReadiness"]] | None = None
+# The parts the probe checks in order; email (smtp) is configuration only and has no time.
+TIMED_PARTS = ("database", "auth", "storage")
 
 
 class ComponentReadiness(TypedDict):
@@ -27,6 +29,15 @@ class ComponentReadiness(TypedDict):
 class ReadinessSnapshot(TypedDict):
     status: Literal["ready", "not_ready"]
     components: dict[str, ComponentReadiness]
+
+
+class _Partial(dict[str, ComponentReadiness]):
+    """The parts one in-flight probe finished so far, and when each one finished."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = perf_counter()
+        self.finished: dict[str, float] = {}
 
 
 @lru_cache
@@ -51,10 +62,24 @@ def get_readiness_engine() -> Engine:
 def get_readiness_snapshot() -> ReadinessSnapshot:
     """Return a fixed, public-safe snapshot before the single caller deadline."""
 
+    return get_timed_readiness_snapshot()[0]
+
+
+def get_timed_readiness_snapshot() -> tuple[ReadinessSnapshot, dict[str, int]]:
+    """The snapshot and the milliseconds each timed part took inside the shared probe.
+
+    The times belong to the in-flight probe, whichever caller started it. When the caller
+    deadline passes, each unfinished part is unavailable and reports the time used so far.
+    A part with no recorded time is left out.
+    """
+
     settings = get_settings()
     future, partial = _get_or_start_snapshot()
     try:
-        return future.result(timeout=settings.readiness_caller_timeout_seconds)
+        return (
+            future.result(timeout=settings.readiness_caller_timeout_seconds),
+            _part_times(partial, timed_out=False),
+        )
     except TimeoutError:
         log_event(
             "upstream_failure",
@@ -63,7 +88,25 @@ def get_readiness_snapshot() -> ReadinessSnapshot:
         )
         with _probe_lock:
             completed = dict(partial)
-        return _unavailable_snapshot(settings, completed)
+        return _unavailable_snapshot(settings, completed), _part_times(partial, timed_out=True)
+
+
+def _part_times(partial: dict[str, ComponentReadiness], *, timed_out: bool) -> dict[str, int]:
+    if not isinstance(partial, _Partial):
+        return {}
+    now = perf_counter()
+    with _probe_lock:
+        finished = dict(partial.finished)
+    times: dict[str, int] = {}
+    previous = partial.started
+    for name in TIMED_PARTS:
+        ended = finished.get(name)
+        if ended is not None:
+            times[name] = max(0, round((ended - previous) * 1000))
+            previous = ended
+        elif timed_out:
+            times[name] = max(0, round((now - previous) * 1000))
+    return times
 
 
 def _get_or_start_snapshot() -> tuple[Future[ReadinessSnapshot], dict[str, ComponentReadiness]]:
@@ -75,7 +118,7 @@ def _get_or_start_snapshot() -> tuple[Future[ReadinessSnapshot], dict[str, Compo
                 thread_name_prefix="readiness-probe",
             )
         if _snapshot_future is None or _snapshot_future.done():
-            partial: dict[str, ComponentReadiness] = {}
+            partial = _Partial()
             _snapshot_future = _probe_executor.submit(_probe_components, partial)
             _snapshot_partial = (_snapshot_future, partial)
         assert _snapshot_partial is not None
@@ -127,6 +170,8 @@ def _record_component(
     if partial is not None:
         with _probe_lock:
             partial[name] = value
+            if isinstance(partial, _Partial):
+                partial.finished[name] = perf_counter()
 
 
 def _probe_components(

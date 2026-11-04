@@ -23,6 +23,7 @@ OPERATOR_ACTIONS = frozenset(
         "control:backups:review_version",
         "control:backups:physical_backup_export",
         "control:update-workspace-security",
+        "control:download-installation-support-file",
         "controls:access:restore_guest",
     }
 )

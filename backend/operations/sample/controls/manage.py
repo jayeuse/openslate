@@ -13,6 +13,13 @@ from app.systems.manage.health.schemas import SystemStatusResponse
 from app.systems.manage.workspace.security_schemas import WorkspaceSecurityResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.account import plan_account_controls
+from operations.sample.controls.health import (
+    HEALTH_OPERATIONS,
+    HEALTH_ROUTES,
+    INSTALLATION_OPERATIONS,
+    execute_health_control,
+    health_specs,
+)
 from operations.sample.controls.planned_actors import OPERATOR, partner_action
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
 from operations.sample.phases.actions import (
@@ -36,6 +43,7 @@ CONTROL_ROUTES = frozenset(
         ("GET", "/api/auth/mfa"),
         ("GET", "/api/system/status"),
         ("GET", "/api/auth/sign-in-events"),
+        *HEALTH_ROUTES,
     }
 )
 _SESSION_QUERY = {
@@ -112,6 +120,7 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         ("review_system_status", member, 200, {"read_checks": 1, "system_status_shape": True}),
         # Everyone reads their own sign-in history; the member signed in for this run.
         ("review_sign_in_history", member, 200, {"read_checks": 1, "own_sign_in_listed": True}),
+        *health_specs(member),
         ("review_admin_sessions", "admin", 200, {"read_checks": 2}),
         (
             "revoke_admin_sessions",
@@ -135,6 +144,8 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             if actor not in {"admin", OPERATOR}
             else "control:admin-sessions"
             if operation in {"review_admin_sessions", "revoke_admin_sessions"}
+            else "control:system-health"
+            if operation in HEALTH_OPERATIONS
             else "control:workspace-security",
             values={"operation": operation},
             expected_status=status,
@@ -142,8 +153,9 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state=end_state,
         )
         for operation, actor, status, end_state in specs
-        # The installation security fields are shared; one pack per installation changes them.
-        if dataset.installation_controls or operation != "update_workspace_security"
+        # Installation-wide settings and files are shared; one pack per installation uses them.
+        if dataset.installation_controls
+        or operation not in {"update_workspace_security", *INSTALLATION_OPERATIONS}
     )
 
 
@@ -392,6 +404,8 @@ def execute_manage_control(
                 "Sign-in history lacks the actor's sign-in, newest first", step=action.key
             )
         extra["own_sign_in_listed"] = True
+    elif operation in HEALTH_OPERATIONS:
+        extra.update(execute_health_control(operation, read, action.key))
     elif operation == "review_admin_sessions":
         if not sessions(_SESSION_QUERY):
             raise SamplePhaseActionError(

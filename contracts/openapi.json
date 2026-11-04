@@ -6843,6 +6843,39 @@
         "title": "DataSourceSort",
         "type": "string"
       },
+      "DatabaseSize": {
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "measured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured At"
+          }
+        },
+        "required": [
+          "bytes",
+          "measured_at"
+        ],
+        "title": "DatabaseSize",
+        "type": "object"
+      },
       "DateFieldConfig": {
         "additionalProperties": false,
         "properties": {
@@ -10426,6 +10459,86 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthPeriod": {
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "kind": {
+            "enum": [
+              "not_working",
+              "slow"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "part": {
+            "enum": [
+              "data",
+              "signing_in",
+              "files",
+              "email"
+            ],
+            "title": "Part",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "part",
+          "kind",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "HealthPeriod",
+        "type": "object"
+      },
+      "HealthPeriodListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPeriod"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "oldest_sample_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Sample At"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "oldest_sample_at"
+        ],
+        "title": "HealthPeriodListResponse",
+        "type": "object"
+      },
       "HeartbeatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -10627,6 +10740,324 @@
           "bundle"
         ],
         "title": "ImportRequest",
+        "type": "object"
+      },
+      "InstallationDiagnostics": {
+        "properties": {
+          "database": {
+            "$ref": "#/components/schemas/DatabaseSize"
+          },
+          "organizations": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationStorageTotal"
+            },
+            "title": "Organizations",
+            "type": "array"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPeriod"
+            },
+            "title": "Periods",
+            "type": "array"
+          },
+          "samples": {
+            "$ref": "#/components/schemas/SampleTable"
+          },
+          "server_errors": {
+            "$ref": "#/components/schemas/InstallationServerErrors"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/InstallationSummary"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/InstallationVersions"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/InstallationWorker"
+            },
+            "title": "Workers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "summary",
+          "versions",
+          "database",
+          "workers",
+          "organizations",
+          "samples",
+          "periods",
+          "server_errors"
+        ],
+        "title": "InstallationDiagnostics",
+        "type": "object"
+      },
+      "InstallationServerError": {
+        "properties": {
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "org_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Id"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "occurred_at",
+          "status",
+          "method",
+          "route",
+          "org_id"
+        ],
+        "title": "InstallationServerError",
+        "type": "object"
+      },
+      "InstallationServerErrors": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InstallationServerError"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total_30d": {
+            "title": "Total 30D",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total_30d",
+          "truncated",
+          "items"
+        ],
+        "title": "InstallationServerErrors",
+        "type": "object"
+      },
+      "InstallationStatus": {
+        "description": "Installation-wide values for the installation owner only (R4).",
+        "properties": {
+          "database_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Bytes"
+          },
+          "database_measured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Measured At"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/InstallationWorker"
+            },
+            "title": "Workers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "database_bytes",
+          "database_measured_at",
+          "workers"
+        ],
+        "title": "InstallationStatus",
+        "type": "object"
+      },
+      "InstallationSummary": {
+        "properties": {
+          "application_version": {
+            "title": "Application Version",
+            "type": "string"
+          },
+          "database_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Bytes"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "kind": {
+            "const": "installation",
+            "title": "Kind",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/SystemPart"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "problem_periods_30d": {
+            "title": "Problem Periods 30D",
+            "type": "integer"
+          },
+          "server_errors_30d": {
+            "title": "Server Errors 30D",
+            "type": "integer"
+          },
+          "workers_not_running": {
+            "items": {
+              "enum": [
+                "record_triggers",
+                "report_scheduling",
+                "comms_jobs",
+                "provider_signout",
+                "backup_runner"
+              ],
+              "type": "string"
+            },
+            "title": "Workers Not Running",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "generated_at",
+          "application_version",
+          "parts",
+          "problem_periods_30d",
+          "server_errors_30d",
+          "workers_not_running",
+          "database_bytes"
+        ],
+        "title": "InstallationSummary",
+        "type": "object"
+      },
+      "InstallationVersions": {
+        "properties": {
+          "application": {
+            "title": "Application",
+            "type": "string"
+          },
+          "postgresql": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postgresql"
+          },
+          "schema_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Revision"
+          }
+        },
+        "required": [
+          "application",
+          "schema_revision",
+          "postgresql"
+        ],
+        "title": "InstallationVersions",
+        "type": "object"
+      },
+      "InstallationWorker": {
+        "properties": {
+          "key": {
+            "enum": [
+              "record_triggers",
+              "report_scheduling",
+              "comms_jobs",
+              "provider_signout",
+              "backup_runner"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "not_seen",
+              "never_seen"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "state",
+          "last_seen_at"
+        ],
+        "title": "InstallationWorker",
         "type": "object"
       },
       "InvitationAcceptedNotificationResponse": {
@@ -13391,6 +13822,38 @@
         "title": "OrganizationChannelRequest",
         "type": "object"
       },
+      "OrganizationDiagnostics": {
+        "properties": {
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPeriod"
+            },
+            "title": "Periods",
+            "type": "array"
+          },
+          "server_errors": {
+            "$ref": "#/components/schemas/OrganizationServerErrors"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageInUse"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/OrganizationSummary"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/OrganizationVersions"
+          }
+        },
+        "required": [
+          "summary",
+          "versions",
+          "periods",
+          "storage",
+          "server_errors"
+        ],
+        "title": "OrganizationDiagnostics",
+        "type": "object"
+      },
       "OrganizationMembershipResponse": {
         "properties": {
           "name": {
@@ -13434,6 +13897,67 @@
         "title": "OrganizationSelectionRequest",
         "type": "object"
       },
+      "OrganizationServerError": {
+        "properties": {
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "occurred_at",
+          "status",
+          "method",
+          "route"
+        ],
+        "title": "OrganizationServerError",
+        "type": "object"
+      },
+      "OrganizationServerErrors": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationServerError"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total_30d": {
+            "title": "Total 30D",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total_30d",
+          "truncated",
+          "items"
+        ],
+        "title": "OrganizationServerErrors",
+        "type": "object"
+      },
       "OrganizationStatus": {
         "description": "Freshness and counts for an admin of the bound organization; never sizes or run lists.",
         "properties": {
@@ -13463,6 +13987,17 @@
             "format": "date-time",
             "title": "Since",
             "type": "string"
+          },
+          "storage_used_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Used Bytes"
           }
         },
         "required": [
@@ -13470,9 +14005,104 @@
           "backups",
           "failed_jobs",
           "failed_sign_ins",
-          "lockouts"
+          "lockouts",
+          "storage_used_bytes"
         ],
         "title": "OrganizationStatus",
+        "type": "object"
+      },
+      "OrganizationStorageTotal": {
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "storage_used_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Used Bytes"
+          }
+        },
+        "required": [
+          "org_id",
+          "storage_used_bytes"
+        ],
+        "title": "OrganizationStorageTotal",
+        "type": "object"
+      },
+      "OrganizationSummary": {
+        "properties": {
+          "application_version": {
+            "title": "Application Version",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "kind": {
+            "const": "organization",
+            "title": "Kind",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/SystemPart"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "problem_periods_30d": {
+            "title": "Problem Periods 30D",
+            "type": "integer"
+          },
+          "server_errors_30d": {
+            "title": "Server Errors 30D",
+            "type": "integer"
+          },
+          "storage_used_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Used Bytes"
+          }
+        },
+        "required": [
+          "kind",
+          "generated_at",
+          "application_version",
+          "parts",
+          "problem_periods_30d",
+          "server_errors_30d",
+          "storage_used_bytes"
+        ],
+        "title": "OrganizationSummary",
+        "type": "object"
+      },
+      "OrganizationVersions": {
+        "properties": {
+          "application": {
+            "title": "Application",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application"
+        ],
+        "title": "OrganizationVersions",
         "type": "object"
       },
       "PaginationMetadata": {
@@ -18264,6 +18894,47 @@
         "title": "RunnerResponse",
         "type": "object"
       },
+      "SampleTable": {
+        "properties": {
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
+        ],
+        "title": "SampleTable",
+        "type": "object"
+      },
       "SandboxBindingResponse": {
         "additionalProperties": false,
         "properties": {
@@ -21573,6 +22244,26 @@
         "title": "StandardListResponse[ViewResponse]",
         "type": "object"
       },
+      "StorageInUse": {
+        "properties": {
+          "used_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Bytes"
+          }
+        },
+        "required": [
+          "used_bytes"
+        ],
+        "title": "StorageInUse",
+        "type": "object"
+      },
       "SystemPart": {
         "properties": {
           "key": {
@@ -21588,6 +22279,7 @@
           "status": {
             "enum": [
               "working",
+              "slow",
               "not_working",
               "not_set_up",
               "set_up"
@@ -21609,6 +22301,16 @@
             "format": "date-time",
             "title": "Checked At",
             "type": "string"
+          },
+          "installation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstallationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "organization": {
             "anyOf": [
@@ -21636,7 +22338,8 @@
           "parts",
           "version",
           "checked_at",
-          "organization"
+          "organization",
+          "installation"
         ],
         "title": "SystemStatusResponse",
         "type": "object"
@@ -60457,6 +61160,200 @@
         "summary": "Get Security Event",
         "tags": [
           "security-events"
+        ]
+      }
+    },
+    "/api/system/diagnostics/installation": {
+      "get": {
+        "description": "The installation owner's support file. No audit row or security event (J2 A).",
+        "operationId": "download_installation_diagnostics",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationDiagnostics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Installation Diagnostics",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/diagnostics/organization": {
+      "get": {
+        "description": "An organization admin's support file for the bound organization only (R4).",
+        "operationId": "download_organization_diagnostics",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationDiagnostics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Organization Diagnostics",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/health-periods": {
+      "get": {
+        "description": "The last 30 days of periods when a part did not work or was slow; the same for all.",
+        "operationId": "list_system_health_periods",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthPeriodListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List System Health Periods",
+        "tags": [
+          "system"
         ]
       }
     },

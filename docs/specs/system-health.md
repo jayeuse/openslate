@@ -1,6 +1,6 @@
 # System health for the people who use Slate Operations
 
-> **Status: S1 and S2 built (2026-11-03); S3 to S6 clarified by the owner (2026-11-03), waiting to start.** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
+> **Status: S1 to S4 built (2026-11-03); S5 and S6 in progress (2026-11-05).** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
 
 ## Outcome
 
@@ -80,7 +80,7 @@ When the server does not answer, the page cannot tell anyone anything, because F
 | Not set up | The part is not configured on this installation. | readiness `not_configured` |
 | Set up | Configured, but Slate Operations cannot test it yet (email only). | smtp `ready` |
 
-Email is a special case. Readiness checks only that email is configured (`readiness.py:167-171`), not that mail is delivered. Until S5 records send failures, the Email row says "Set up" with the line "Slate Operations cannot yet confirm delivery", never "Working".
+Email is a special case. Readiness checks only that email is configured (`readiness.py:167-171`), not that mail is delivered. Until S5 records send failures, the Email row says "Set up" with the line "Slate Operations cannot yet confirm delivery", never "Working". From S5, the Email row follows real send results (S5-C5, D16); this paragraph describes S2.
 
 "Slow" needs a measured latency, so it arrives with stored samples (S5), not before.
 
@@ -102,9 +102,9 @@ Reading order, one column, readable width, the slim Manage grammar. On a phone t
    - Backups: "Last backup today at 02:00 · verified" or "No backup in the last 2 days". Status word, time and result only.
    - Failed jobs: "2 jobs failed in the last 7 days", linked to Manage → Jobs.
    - Sign-in activity: a link to Access → Security.
-4. **Installation** (installation owner only, S4): disk free, database size, background workers.
+4. **Installation** (installation owner only, S5): database size and background workers. Host disk was dropped by the owner on 2026-11-03.
 5. **About this system.** Version, plus the release-notes link for the installation owner as today.
-6. **When something goes wrong.** Two sentences on error references (R5), and what to do when Slate Operations does not load: "Wait a minute and reload. If it still does not load, tell your administrator."
+6. **When something goes wrong.** Two sentences on error references (R5), and what to do when Slate Operations does not load: "Wait a minute and reload. If it still does not load, tell your administrator." From S6, admins and the owner also get "Download support file" here (D19).
 
 **Shell banner (S2).** When requests fail with no response, a banner shows at the top of the app: "Slate Operations cannot reach its server. Changes you make now may not save. It tries again on its own." It clears on the next success. It is a banner, not a curtain, and it does not block the page.
 
@@ -138,7 +138,7 @@ Tests and reviews cite these IDs.
 
 - **S2-C1.** `GET /api/system/status` answers every signed-in person of the bound organization (admin, member, guest, member with no group access) with the four R1 parts and their R2 status words, the version, and the check time. A request with no session gets 401.
 - **S2-C2.** The endpoint probes readiness at most once in 30 seconds per process and returns the time of the probe it used.
-- **S2-C3.** The Email part is "Set up" or "Not set up" or "Not working", never "Working" (R2).
+- **S2-C3.** The Email part is "Set up" or "Not set up" or "Not working", never "Working" (R2). S5-C5 replaces this from S5: Email reads Working after a real successful send.
 - **S2-C4.** The response and the page contain no service names, hosts, ports, error strings, or data of another organization (R1, R4).
 - **S2-C5.** Manage → System health (`/manage?view=health`) shows for every role. Manage → Organization stays the default Manage tab.
 - **S2-C6.** The page shows, in this order: the R3 headline with the check time and "Check again"; one row per part with icon and word, and a plain cause line when a part does not work; About this system (version, plus the release-notes link for the installation owner only); When something goes wrong. It loads in the page frame with no curtain, and refreshes every 60 seconds while visible and when the window regains focus.
@@ -173,6 +173,28 @@ Approved by the Human Owner on 2026-11-03 ("Start S3 and S4"), with the choices 
 
 - **D6-C1.** In error references and in block 6, an admin reads "Give this reference to the person who runs your server.", the installation owner reads no second sentence, and members and guests keep "Give this reference to your administrator."
 - **D7-C1.** Audit and Security events find an entry by the 8-character reference (the end of `request_id`) as well as by the full ID, with today's admin-only access.
+
+## Acceptance criteria (S5, S6)
+
+Approved by the Human Owner on 2026-11-05 ("Start S5 and S6"), with the choices in "Owner decisions for S3 to S6" and these defaults: the error log stores server errors (5xx) only; email outcomes come from the requests FastAPI makes to Auth (invitations and recovery requests); while the database is down no error is stored, and the samples record the outage. Tests and reviews cite these IDs.
+
+**S5 History and installation**
+
+- **S5-C1.** The installation records one sample a minute, not one per API process: each part's status and the time its check took. With several API processes, only one writes. Samples have no organization column.
+- **S5-C2.** Samples older than 30 days are deleted at least once a day.
+- **S5-C3.** Every signed-in person sees a 30-day timeline under the parts: each period when a part did not work or was slow, as a plain sentence with its day and length, for example "Email did not work for 12 minutes on Tuesday", newest first. With no such period: "No problems in the last 30 days." It shows nothing about any organization (R4).
+- **S5-C4.** A part shows "Slow" when its check took longer than 1 second on the last 3 samples in a row, in the current status and in the timeline. "Not working" always wins over "Slow".
+- **S5-C5.** FastAPI records the outcome of each email it asks Auth to send (invitations and recovery requests) and changes none of those responses (a recovery request stays 204). The Email part reads Working after a recent successful send, Not working after recent failures, and Set up when no recent outcome exists. It never reads Working without a real success.
+- **S5-C6.** Each in-app worker (record triggers, report scheduling, Comms jobs, provider sign-out) records when it last ran; the backup runner keeps its existing heartbeat. The installation owner's block 4 shows each worker as running or "not seen since" a time, and the database size. Nobody else gets this block or its data.
+- **S5-C7.** Organization admins see their organization's file storage in use, summed from its file records, with "Storage limit: not set yet". Members and guests do not.
+- **S5-C8.** The sampler, the heartbeats and the email outcomes write no audit row and no security event. `/api/health` and `/api/ready` do not change, and the status request stays read-only.
+
+**S6 Diagnostics export**
+
+- **S6-C1.** Each server error (5xx) is stored with its request ID, status, route template (no IDs or values), the bound organization when there is one, and its time, and kept 30 days. No request body, header, personal data or record data is stored. Two kinds are not stored by design: the `/api/ready` 503 (readiness has its own samples) and requests whose method fails the method pattern.
+- **S6-C2.** The installation owner can download one JSON file: a summary at the top, versions, database size, worker heartbeats, 30 days of samples and recent server errors.
+- **S6-C3.** An organization admin can download one JSON file for their organization only: versions, the parts timeline, their organization's storage and its own server errors. It holds no database size, no workers and no data of another organization (R4).
+- **S6-C4.** Members and guests cannot download a diagnostics file and see no download action.
 
 ## API contract (S1, S2)
 
@@ -346,6 +368,74 @@ On a failed password sign-in, look up the local account with that email and set 
 | T11 | S4-C6 | PG, parametrized | Reader gets 403 on audit detail, export, options and security events |
 | T12 | D7-C1 | PG | `reference` by suffix and full ID on both lists, uppercase accepted; other organization's match not returned; bad format 422 |
 | T13 | DQ1 | PG | Wrong password for a real account writes a failure with `subject_id` and user agent; unknown email writes none with a subject; both responses identical; a source-address lockout has no subject |
+
+## API contract (S5, S6)
+
+Fixed by the Software Architect (TASK-0015) against `main` 856d859d, database head e46611902f25. Owner choices (2026-11-05, recommended options under the owner's standing instruction): J1 A — recovery requests record failures only, and only Auth 5xx answers count (revised 2026-11-05 after the security review: an unauthenticated caller could otherwise trigger 400 or 429 answers and make Email read Not working); successes come from invitations. J2 A — no security event on a diagnostics download (as the audit CSV export). D20-7 (parent): the owner's installation file lists each organization's storage total. Paths relative to `backend/app/`.
+
+### Sampler (S5-C1, S5-C2)
+
+- `manage/health/worker.py` `SystemHealthWorker`, created in `create_app` as `app.state.health_worker`, started after the other workers in `application_lifespan`, stopped first, before `dispose_readiness_resources()`; same test gate as the other workers (`environment != "test" or e2e_background_workers`).
+- One thread per process; wakes at each UTC minute + a random 0–10 s offset; one retention attempt per hour.
+- Probe: new `get_timed_readiness_snapshot() -> (ReadinessSnapshot, dict[str, int])` in `core/readiness.py`, timing each part with `perf_counter` inside the shared in-flight probe and its 2 s budget; on timeout unfinished parts are `unavailable` with the time used. `get_readiness_snapshot()`, `/api/ready` and the 30 s cache keep their behavior.
+- Per tick: skip if the minute's row exists → probe outside any transaction → short transaction on `AuditSession(bind=get_engine())` (not the read-only readiness engine) → `pg_try_advisory_xact_lock(hashtextextended('slateops:system-health-sampler',0))`, else skip → re-check, insert buffered minutes and this minute, commit. Primary key on `sampled_at` is the second guard. `database_bytes = pg_database_size(current_database())` by the writer.
+- Database down: the sample (data `not_working`, `database_bytes` null) goes into a per-process `deque(maxlen=1440)` and flushes at the next lock win, skipping existing minutes.
+- Retention: `SELECT public.retain_system_health()` hourly from every process (the function takes its own try-lock).
+- Test hooks: `sample_once(now=, probe=)`, `retain_once()`, injectable clock, stubbable timed probe.
+
+### Tables (one migration, `down_revision = "e46611902f25"`; models `__audit_enabled__ = False`)
+
+| Table | Columns | Keys | RLS and grants to `slateops_app` |
+|---|---|---|---|
+| `system_health_samples` | `sampled_at timestamptz` PK with CHECK seconds = 0; `{data,signing_in,files}_status` NOT NULL CHECK IN (working, not_working, not_set_up); `{data,signing_in,files}_ms integer NULL` ≥ 0; `email_status` NOT NULL CHECK IN (working, not_working, set_up, not_set_up); `database_bytes bigint NULL` ≥ 0 | PK | no RLS (no organization column, installation-wide); SELECT, INSERT |
+| `system_health_signals` | `key text` PK CHECK IN (record_triggers, report_scheduling, comms_jobs, provider_signout, email_accepted, email_failed); `last_seen_at timestamptz NULL` | PK; the migration inserts all six rows | no RLS; SELECT, UPDATE |
+| `server_errors` | `request_id uuid` PK; `occurred_at timestamptz NOT NULL DEFAULT now()`; `status smallint` CHECK 500–599; `method text` CHECK `^[A-Z]{3,7}$`; `route text` length ≤ 200; `org_id uuid NULL` FK organizations ON DELETE RESTRICT | `(occurred_at)`, `(org_id, occurred_at)` | RLS as security_events: SELECT and INSERT `org_id IS NULL OR org_id = bound`; SELECT, INSERT |
+
+- `public.retain_system_health() RETURNS integer`, `SECURITY DEFINER`, owner `slateops_owner`, `search_path pg_catalog, pg_temp`, try-xact-lock, deletes samples and errors older than 30 days and errors beyond the newest 50,000 in batches ≤ 5,000, no proof event; `REVOKE ALL FROM PUBLIC; GRANT EXECUTE TO slateops_app`; added to the root-function lists.
+- `server_errors` joins `ORGANIZATION_TABLES` and `MIXED_TABLES` in `tests/migrations/test_organization_root.py`.
+
+### Email outcomes (S5-C5)
+
+- Invitations: `send_invitation_email(provider, email)` in `access/users/invitation_provider.py`, used at `users/service.py:286, :407, :482`; 200 → `email_accepted`; `SupabaseAuthUnavailable` `http_5xx`/`http_429` → `email_failed`; transport errors and other 4xx record nothing; the original exception is re-raised unchanged.
+- Recovery (J1 A, revised): in `provider_actions.request_recovery`, only an Auth 5xx records `email_failed` (4xx and 429 record nothing) (add `kind=f"http_{status}"` at `supabase_auth.py:220-221`); a 200 records nothing (Auth answers 200 for unknown emails). Responses unchanged (204 on success, the existing 503).
+- `record_signal(key)` in `manage/health/signals.py`: own `AuditSession`, `SELECT … FOR UPDATE`, `last_seen_at = max(old, now)`, commit, never raises (logs `operational_attention reason_code=health_signal_write_failed`).
+- Email word (read from the 60 s history cache, so it can lag a send by up to 60 s): smtp `not_configured` → `not_set_up`; else `email_failed` within 24 h and newer than `email_accepted` → `not_working`; else `email_accepted` within 24 h → `working`; else `set_up`. Working means Auth accepted the send.
+
+### Heartbeats (S5-C6)
+
+`record_triggers` after `TriggerWorker._run` `run_once` (lane 0); `report_scheduling` and `comms_jobs` in `ReportSchedulingWorker._run` after `_poll` when each is due; `provider_signout` after `run_once`. At most one write per key per 60 s per process (`monotonic`), outside `worker_organization`. The backup runner keeps `BackupPolicy.runner_last_seen_at`.
+
+### Status response, periods read, storage, installation (S5-C3, C4, C6, C7)
+
+- `PartStatus` gains `slow`; Email may be `working` (replaces S2-C3); Email is never slow. A part is `slow` when its current word is `working` and the newest 3 samples are within the last 4 minutes, each `working` with `ms > 1000`. Not working wins.
+- History cache: per process, 60 s TTL, no bypass, holds periods and slow parts, no organization data.
+- Periods per part: not_working runs (gaps ≤ 2 minutes) and slow runs (working, `ms > 1000`, ≥ 3 samples); `ended_at` = last bad sample + 1 minute, or `null` while ongoing (the run reaches the newest sample, at most 3 minutes old).
+- `GET /api/system/health-periods` (`list_system_health_periods`, `get_current_user`, same answer for everyone): `limit` 1–100 default 5, `offset` ≥ 0 → `{items: [{part, kind: "not_working"|"slow", started_at, ended_at|null}], pagination, oldest_sample_at|null}`; ongoing first (`started_at` desc), then ended by `ended_at` desc, ties in part order. The frontend de-duplicates by `part:kind:started_at`.
+- `organization.storage_used_bytes: int | None`: `SUM(actual_size)` for `org_id = bound`, `state IN ('ready','deleting')`, `actual_size IS NOT NULL`, under files RLS; trashed files count until purged; pending, rejected and avatars do not; on error `null`.
+- `installation: InstallationStatus | None` for `is_platform_operator(db, person.id)`, else `null` (never 403): `database_bytes`, `database_measured_at` from the newest sample with a size ≤ 10 minutes old, else null; `workers [{key, state: "running"|"not_seen"|"never_seen", last_seen_at|null}]` in order record_triggers, report_scheduling, comms_jobs, provider_signout, backup_runner; running within 3 minutes (5 for backup_runner, `backups/service.py:200`); `backup_runner` reads the `BackupPolicy` singleton directly.
+- "No change" (D20-6): the frontend ignores `installation.database_bytes`, `database_measured_at` and a running worker's `last_seen_at`.
+
+### Server error log (S6-C1)
+
+- `RequestContext.org_id` set only at `common/dependencies/auth.py:275` (after IP and MFA checks).
+- In `request_middleware.py` after the headers (`:199`), when `status >= 500`: `await run_in_threadpool(record_server_error, …)`, never raising; stores `request_id`, `status`, `method`, the `_request_route()` template or `"unknown"`, `org_id`, time; no body, header, query, user or record data; fresh `AuditSession` bound through `worker_organization(org_id)`.
+- The database-unavailable path writes nothing; after a failed write, writes pause 30 s per process; cap 120 per minute per process (overflow counted in one `operational_attention reason_code=server_error_log_dropped` line).
+
+### Diagnostics downloads (S6-C2 to S6-C4)
+
+- `GET /api/system/diagnostics/installation` (`download_installation_diagnostics`; `require_fresh_exact_admin` + `require_platform_operator`) and `GET /api/system/diagnostics/organization` (`download_organization_diagnostics`; `require_admin`). Members and guests 403; no session 401. Sync handlers returning JSON with `Cache-Control: no-store` and `Content-Disposition: attachment; filename="slateops-diagnostics-<installation|organization>-YYYYMMDD-HHMMZ.json"`; `summary` first; no audit row or security event (J2 A).
+- Installation file: `summary`, `versions {application, schema_revision, postgresql}`, `database`, `workers`, `organizations [{org_id, storage_used_bytes}]`, `samples {columns, rows}` (30 days), `periods` (≤ 1000), `server_errors {total_30d, truncated, items ≤ 1000}`; other organizations are read one at a time in a new session inside `worker_organization(org)`, plus one unbound pass for null-organization rows.
+- Organization file: `summary`, `versions {application}`, `periods` (≤ 1000), `storage {used_bytes}`, `server_errors` of the bound organization only (no `org_id`, no null-organization rows); no database, workers or samples.
+
+### Cloud mode
+
+Nothing depends on `cluster_name` or `installation_id()`; only transaction-scoped advisory locks; retention follows `retain_security_events`; storage cost about 15 MB. Risk: probes over the internet may read Slow; measure in the cloud spike (the 1 s limit stays). On Cloud `backup_runner` reads never_seen; C8 hides it with the backup controls.
+
+### Backend tests
+
+I-1 two samplers one row, lock held skips, rollback then later write (S5-C1); I-2 buffered flush, one row per minute (S5-C1); I-3 timed probe and `/api/ready` unchanged (S5-C1, C8); I-4 retention and denied direct DELETE (S5-C2); I-5 period table unit (S5-C3); I-6 identical periods for every role, 401 (S5-C3); I-7 Slow rule (S5-C4); I-8 invitation and recovery outcomes with unchanged responses (S5-C5); I-9 email word table (S5-C5); I-10 owner installation part, runtime-role `pg_database_size` (S5-C6); I-11 heartbeat throttle (S5-C6); I-12 storage sum scope (S5-C7); I-13 no audit or security rows (S5-C8); I-14 error row exactness, no row for database 503, 4xx, success, non-member `X-Org` (S6-C1); I-15 cap and pause (S6-C1); I-16 `server_errors` RLS (S6-C1); I-17 owner file (S6-C2); I-18 admin file scope (S6-C3); I-19 member, guest 403, no session 401 (S6-C4).
+
+After the build: update `docs/architecture/18-observability.md` and `07-api-architecture.md`, and the D19.2 owner paragraph (each organization's storage total).
 
 ## Design (S1, S2)
 
@@ -780,6 +870,195 @@ These extend D8, D9 and the Reference filter. Each answer gives its one-line rea
    - The error clears as soon as the field holds a valid reference or is empty.
    - Reason: today every keystroke before the 8th shows the error, and Security events swaps the list for "Check the filter values to review security events." The list flickers away while the person types a valid reference.
 4. **Sign-in history when the identity read fails.** The active sessions above already show "Sessions could not be loaded. Try again." with "Retry sessions" and the reference, and that retry reads the identity again. So the history shows no second error block and no skeleton. Under its heading and intro, it shows one muted line: "Your sign-in history shows when your sessions load." It has no "Show older". After a successful retry, the history loads with its own D9.4 states. Reason: one cause, one error, one retry. A skeleton that never ends says "Loading" for ever.
+
+## Design (S5, S6)
+
+Written by the Product Designer (TASK-0014) against `main` 856d859d. `ui-ux-pro-max` set the structure, states and keyboard order; `impeccable` set the presentation inside it. No new token. "Design (S1, S2)" and "Design (S3, S4)" apply unless this section says otherwise: the card frame (D2.1), icons and words (D2.3), refresh and announcements (D2.4), loading and errors (D2.7), widths and keyboard (D2.8), `ErrorReference` with the D6 wording, the block 3 grid (D8.2), and "Show older" (D9.3). The Software Architect fixes the field names; D20 lists the values this design needs. Items marked Proposed are design proposals, not decisions.
+
+### D14. Slow (S5-C4)
+
+**D14.1 The word.** Slow is a fifth status word for a part, in block 2, in the headline and in the timeline (D15).
+
+| Word | Icon (lucide, 16px; 20px in the headline) | Icon color |
+|---|---|---|
+| Slow | `CircleGauge` | `text-warn-text` |
+
+No other word on the page uses the gauge shape (`CircleCheck`, `CircleDashed`, `CircleMinus`, `CircleX`, `CircleAlert`), so the shape repeats the word. Not working always wins: a part whose check fails shows Not working, never Slow. The page shows the word the response gives and never computes Slow from check times (D20, item 1). Proposed: Email is never Slow, because its word comes from real sends (D16), not from a timed check.
+
+| Part | Cause line for Slow (muted, under the word) |
+|---|---|
+| Saving and loading your data | "Pages may load and save more slowly than usual." |
+| Signing in | "Signing in may take longer than usual." |
+| Files and pictures | "Files and pictures may upload and open more slowly than usual." |
+| Email (only if the Proposed rule above is declined) | "Email may take longer than usual." |
+
+**D14.2 Headline.** This extends D2.2 and D4 answer 8.
+
+- Up to three sentences, in this order: Not working, Slow, Not set up.
+- The Slow sentence has no "not". One part: "Saving and loading your data is slow." · "Signing in is slow." · "Files and pictures are slow." Two or more: "Some parts are slow: Signing in, Files and pictures."
+- "Everything else works." follows only when exactly one sentence shows and at least one part is Working or Set up. A Slow part does not count as working.
+- All four parts Not working keep their own sentence (D2.2).
+- Icon: `CircleX` when a part is Not working, else `CircleGauge` (warn) when a part is Slow, else `CircleMinus` when a part is Not set up, else `CircleCheck`.
+- Examples: "Signing in is slow. Everything else works." · "Email is not working. Files and pictures are slow." · "Files and pictures are not working. Signing in is slow. Email is not set up."
+
+### D15. The last 30 days (S5-C3)
+
+**D15.1 Place.** Inside block 2, under the parts list, so each part's history sits with its status and the block numbers stay. A top rule (`border-border`) separates it. The sub-heading is the `h3` "Last 30 days" (14px, weight 600, ink), and the list is an `ol` labelled by it. No graph for anyone, the installation owner included: one sentence per period gives the part, the state, the day and the length, which is all that a graph would show (R6).
+
+**D15.2 Rows.** The D9.2 row grammar with no control: a 16px icon (`aria-hidden`), the sentence (ink, weight 500), and a muted meta line (13px, tabular figures). "Did not work" rows use `CircleX` (`text-danger-text`); slow rows use `CircleGauge` (`text-warn-text`).
+
+| Part | Ended, not working | Ended, slow | Still going, not working | Still going, slow |
+|---|---|---|---|---|
+| Saving and loading your data | "Saving and loading your data did not work for {length} {day}." | "Saving and loading your data was slow for {length} {day}." | "Saving and loading your data has not worked since {time} {day}." | "Saving and loading your data has been slow since {time} {day}." |
+| Signing in | "Signing in did not work for …" | "Signing in was slow for …" | "Signing in has not worked since …" | "Signing in has been slow since …" |
+| Files and pictures | "Files and pictures did not work for …" | "Files and pictures were slow for …" | "Files and pictures have not worked since …" | "Files and pictures have been slow since …" |
+| Email | "Email did not work for …" | "Email was slow for …" (only if D14.1's Proposed rule is declined) | "Email has not worked since …" | "Email has been slow since …" (the same) |
+
+- Meta line of an ended period: "10:42 to 10:54"; across midnight, "Nov 1 at 23:50 to Nov 2 at 01:10". Of a period still going: "Still going". Times are local, with no seconds, through the D2.2 formatter.
+- Not set up and Set up are not problems and make no row.
+
+**D15.3 Lengths.** From the start to the end, in whole minutes, at least 1 minute. A part that is zero is left out. Numbers use the workspace locale; "1" takes the singular.
+
+| Length | Reads | Examples |
+|---|---|---|
+| Under 60 minutes | minutes | "1 minute" · "12 minutes" |
+| 60 minutes to under 24 hours | hours, then minutes | "1 hour" · "1 hour 30 minutes" · "5 hours 1 minute" |
+| 24 hours or more | days, then hours; minutes are dropped | "1 day" · "2 days 3 hours" |
+
+A Slow period lasts at least 3 samples, so it does not read "1 minute" in practice. The page does not enforce this.
+
+**D15.4 Days.** The day of the start, in the organization time zone, with the `signInWhen` steps but the long weekday, because the day sits in a sentence:
+
+| Start | {day} | Example |
+|---|---|---|
+| Today | "today" | "Email has not worked since 10:42 today." |
+| Yesterday | "yesterday" | "Signing in was slow for 4 minutes yesterday." |
+| 2 to 6 days ago | "on Tuesday" | "Email did not work for 12 minutes on Tuesday." |
+| 7 days ago or more | "on Nov 1" | "Files and pictures did not work for 1 hour 30 minutes on Nov 1." |
+
+**D15.5 Order and paging.** Periods still going come first, then ended periods by end time, newest first. The list shows the 5 newest rows. "Show older" under the list adds 10 rows at a time, with every D9.3 rule: outline button, busy as `aria-disabled` and `aria-busy`, focus to the first new row, removed when nothing older exists. When older rows fail to load, the rows stay, with "Older periods could not be loaded.", "Retry" and `ErrorReference`. A refresh keeps the number of rows the person opened.
+
+**D15.6 Empty and short history.**
+
+- No period in 30 days: "No problems in the last 30 days." (muted, 44px line, no icon).
+- Proposed: when the oldest sample is younger than 30 days, "No problems since Nov 3." takes its place, because the 30-day sentence would claim days that were not checked. With no sample yet: "No history is recorded yet." (D20, item 2.)
+
+**D15.7 Loading, refresh, errors.** When the periods come in the status response, they follow block 2: one `LoadingRegion` (three 40px skeleton rows under the heading), D2.7 on failure, an update in place at each result. When they have their own read, they get the D9.4 states: "Loading the last 30 days…", then "The last 30 days could not be loaded.", "Retry" and `ErrorReference`. A timeline change is never announced on its own and never changes the headline.
+
+**D15.8 Phone.** At 390px a row has two lines and is at least 56px tall. The meta line wraps only around "to", and each time stays whole. No horizontal scroll.
+
+### D16. Email after S5 (S5-C5)
+
+The four words stay. Their source and two cause lines change.
+
+| Word | When (S5-C5) | Icon | Cause line |
+|---|---|---|---|
+| Working | A recent send succeeded | `CircleCheck` | None |
+| Not working | Recent sends failed | `CircleX` | "Invitations and password emails may not arrive until email works." |
+| Set up | Email is configured, and no recent send has an outcome | `CircleDashed` | "No email was sent recently, so Slate Operations cannot confirm that it works." |
+| Not set up | Email is not configured | `CircleMinus` | Unchanged (D2.3) |
+
+- "Slate Operations cannot yet confirm delivery." goes. Set up now means "no recent send to judge by".
+- The old Not working line said that messages wait. This design does not know that a failed send is retried, so the new line promises no wait and no retry.
+- The page shows Working only when the response says Working. The headline rules do not change: Set up counts as working, and Not working is named.
+
+### D17. File storage in block 3 (S5-C7)
+
+A fourth row in block 3, after Sign-in activity, in the D8.2 grid. The label is "File storage". No icon, because a size is not a status. No link, because no page lists storage by organization.
+
+- Line 1 (ink, weight 500): "Files use 1.2 GB". With no files: "No files are stored yet". Under 1 KB: "Files use less than 1 KB". When the server cannot read it: "File storage cannot be read now."
+- Line 2 (muted), always: "Storage limit: not set yet".
+- Sizes, here and in D18: decimal units (1 KB = 1,000 bytes), so the unit names are exact: B, KB, MB, GB, TB. Use the largest unit with a value of 1 or more; one decimal under 10 ("1.2 GB"), whole numbers from 10 ("12 GB", "340 MB"); a trailing ".0" is dropped. `Intl.NumberFormat` with `style: "unit"` and `unitDisplay: "short"` in the workspace locale.
+- Loading adds a fourth 160px skeleton bar (D8.6). Members, guests and department managers get no block 3, so no storage.
+
+### D18. Installation, block 4 (S5-C6)
+
+**D18.1 When it shows.** Between blocks 3 and 5, for the installation owner only. D8.1 applies: after a result, the card renders only when the response carries the installation part; before one, only when the identity says owner (`viewer === "owner"`). Nobody else gets a card, a heading, a gap or a request. No host disk figure (owner decision for S5).
+
+**D18.2 Rows.** A card with a 56px header and the `h2` "Installation", then a `dl` in the D8.2 grid, always in this order:
+
+| Row label | Worker or value (S5-C6) |
+|---|---|
+| Database size | the database size |
+| Record triggers | record-trigger worker |
+| Scheduled reports | report scheduling worker |
+| OpenComms jobs | Comms job worker |
+| Sign-out cleanup | provider sign-out worker |
+| Backup runner | backup runner (its existing heartbeat) |
+
+The labels name what each worker does, checked in the code: report scheduling sends OpenView's scheduled reports, and provider sign-out finishes ending a session at the sign-in provider after Slate Operations ends it (`provider_signout.py`).
+
+**D18.3 Values.** Database size, line 1, with no icon and the D17 size rules: "1.4 GB"; unreadable: "Cannot be read now." Each worker:
+
+| State | Icon | Line 1 (ink, weight 500) | Line 2 (muted) |
+|---|---|---|---|
+| Running | `CircleCheck`, `text-flow-text` | "Running" | None |
+| Seen before, not recently | `CircleX`, `text-danger-text` | "Not seen since 10:42" · "Not seen since Nov 1 at 23:58" | "Its work waits until it runs again." |
+| Never seen | `CircleDashed`, `text-muted-foreground` | "Not seen yet" | "Check that it runs on your server." |
+
+The time uses the D2.2 formatter and its same-day rule. The server decides the state and how long "recently" is (D20, item 5). Block 4 never changes the headline (as D8.6). Loading: one `LoadingRegion` ("Loading system status"), the six labels at once, a 120px bar for each value with a 16px circle before each worker bar. A failed read follows D8.6. Below 640px the label sits above the value.
+
+### D19. Support file (S6-C2 to S6-C4)
+
+**D19.1 Place.** Block 6, "When something goes wrong", gains a third paragraph and one button, for organization admins and the installation owner. Members and guests see neither, and while the identity loads nothing renders there (S6-C4). Reason: a person downloads this file to report a problem, and block 6 is where the page says how to report one. Alternative not taken: a header action on block 3 (admin) and block 4 (owner), which puts one action in two places beside status values it does not change.
+
+**D19.2 Words and file.**
+
+| Viewer | Paragraph 3 | File name |
+|---|---|---|
+| Organization admin who does not own the installation | "A support file helps the person who runs your server find a problem. It lists the versions, the last 30 days of the parts, your organization's file storage, and its recent server errors with their references. It holds no records, no personal data and nothing from other organizations." | `slateops-diagnostics-organization-20261105-1042Z.json` |
+| Installation owner | "A support file helps whoever supports your installation find a problem. It lists the versions, the database size, the background workers, each organization's file storage, 30 days of checks, and recent server errors with their references. It holds no records and no personal data." | `slateops-diagnostics-installation-20261105-1042Z.json` |
+
+- The owner gets the installation file only, also as an admin of the organization. It lists each organization's file storage total (parent decision, 2026-11-05; D20, item 7).
+- The name follows the server-set `slateops-` names (`slateops-audit.csv`, `slateops-sandbox.json`), with the UTC time of the download, because the times inside the file are UTC. The server sets it in `Content-Disposition`.
+- "No personal data" rests on S6-C1. If the contract adds a personal value, this sentence changes.
+
+**D19.3 Button.** `Button`, variant outline: the lucide `Download` icon (16px, `aria-hidden`), then "Download support file". 44px tall below 1280px, 32px from 1280px. It sits under paragraph 3 at the start, never full width. Keyboard order of the page (extends D8.6): "Check again", "Copy reference" (error), "Show older", the block 3 links, the version link, "Download support file", then the "Copy reference" of its Alert.
+
+**D19.4 States.** The download is a fetch with the session, then a save through `URL.createObjectURL`, as in `export-dialog.tsx`, so a failure can show its message and reference. A plain link would turn a failure into a browser error page.
+
+- Busy: the label stays; `aria-disabled` and `aria-busy`; presses are ignored (D2.4). A `role="status"` span beside the button, empty from the first render, shows "Preparing the support file…" after 300ms, so a fast download shows nothing.
+- Success: the browser saves the file. The span shows "Support file downloaded." for 4 seconds, then empties. Focus stays on the button.
+- Failure with a response: a destructive `Alert` under the button: "The support file could not be prepared. Try again in a minute." and `ErrorReference` with the D6 wording (the owner reads no line 2). It closes at the next press.
+- Failure with no response: the same Alert with "Could not connect. Check your connection and try again." and no reference (S1-C5).
+- 403, because the role changed after the page loaded: "Only an administrator can download a support file." with no reference, as a refusal notice (D1.4). The paragraph and the button go at the next identity read. A 401 follows the signed-out behavior (D2.4).
+
+### D20. Values this design needs
+
+For the Software Architect, unless an item says otherwise.
+
+1. **Slow.** A Slow status value for data, signing in and files, with Not working already winning. Proposed: the server decides Slow, so the rule lives in one place; Email is never Slow.
+2. **Timeline.** For each period: the part, the kind (not working or slow), the start, and the end or a sign that it is still going. Whether periods come in the status response or in their own read, and how older periods load (5 first, then 10 at a time). Proposed: the time of the oldest kept sample (D15.6).
+3. **Email.** The status word only. The length of "recent" is the server's.
+4. **Storage.** The bytes in use by the organization's files, or a sign that the server cannot read them. Whether files in the trash count.
+5. **Installation.** The database size in bytes, or a sign that it cannot be read. For each of the five workers: running, not seen recently, or never seen, and the last-seen time. The staleness limit for each worker.
+6. **Support file.** One download read for each role, the file name in `Content-Disposition`, and `request_id` in its error body (S1-C1).
+7. **Owner file.** Decided by the parent (2026-11-05): one file for the owner, and it lists each organization's file storage total.
+8. **Frontend, no contract value: "No change" (D2.4).** The same-result comparison adds the storage bytes and each worker's state and not-seen time. It does not add the periods (D22, item 1). It leaves out the database size, a running worker's last-seen time and the growing length of a period still going. They change every minute, so the owner would never see "No change".
+9. **Spec text out of date, for the spec owner (not edited here).** R2's Email note and S2-C3 say Email never reads Working; S5-C5 replaces both. "Page layout" block 4 names disk free, which the owner dropped. "Page layout" block 6 does not name the support file.
+
+### D21. Criteria map
+
+| Criterion | Covered by |
+|---|---|
+| S5-C3 | D15.1 to D15.8 |
+| S5-C4 | D14.1 (word, icon, cause lines, Not working wins), D14.2 (headline), D15.2 (slow rows) |
+| S5-C5 (UI) | D16 |
+| S5-C6 (UI) | D18.1 to D18.3 |
+| S5-C7 | D17 |
+| S6-C2 (UI) | D19 (owner row of D19.2), D22 |
+| S6-C3 (UI) | D19 (admin row of D19.2) |
+| S6-C4 (UI) | D19.1 (no paragraph and no button for members and guests) |
+
+### D22. Answers to the Frontend Engineer (screen review, 2026-11-05)
+
+These change D15, D17 and D20 as written. Each answer gives its reason.
+
+1. **"No change" leaves out the periods.** Confirmed. The periods come from their own read, which "Check again" does not send, so comparing them would compare a value that the press did not refresh.
+2. **"Check again" refreshes the status only; the timeline polls every 60 seconds on its own, while the page is visible, with no focus refresh.** Confirmed. Samples are taken once a minute, so a refetch on the press would gain at most a minute. The timeline can trail the parts list by up to about 2 minutes, for example a "Still going" row beside a part that reads Working again. The parts list is the current answer, and the timeline is history.
+3. **Units B, KB, MB, GB, TB.** Confirmed: this is D17. `Intl.NumberFormat` formats the number only, because its own unit names ("kB", "byte") differ from D17.
+4. **"No problems since <date>." when the oldest sample is younger than 29 days.** Confirmed. Hourly deletion makes a full history up to a few minutes younger than 30 days, so a 30-day limit would show the date for a full history. A history 29 to 30 days deep reads "in the last 30 days", which can claim at most one unchecked day, once in the life of an installation. D15.6 is no longer Proposed.
+5. **Timeline rows have two lines at every width.** Confirmed. A period sentence runs to about 70 characters, so a one-line row with the meta at the right (D9.5) would truncate or wrap at 1440px. D15.8 applies at every width.
 
 ## Deferred
 

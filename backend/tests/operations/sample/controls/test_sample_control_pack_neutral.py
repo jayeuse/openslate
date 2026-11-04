@@ -92,6 +92,9 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
         "review_mfa_status",
         "review_system_status",
         "review_sign_in_history",
+        "review_health_periods",
+        "download_organization_support_file",
+        "download_installation_support_file",
     }
     bulk = next(
         action for action in manage if action.values["operation"] == "revoke_admin_sessions"

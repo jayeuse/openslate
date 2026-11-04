@@ -21,6 +21,7 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity.mfa_observations import initialize_observation
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.policy.models import Group, GroupMember
+from app.systems.access.users import invitation_provider
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
@@ -30,7 +31,6 @@ from app.systems.access.users.coordination import (
     token_cutoff,
     validate_identity_profile,
 )
-from app.systems.access.users.invitation_provider import prepare_invitation_user
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
@@ -283,7 +283,7 @@ def invite_user(
             provider_user.app_metadata.get(k) != v for k, v in expected_marker.items()
         ):
             raise InvitationError("Provider invitation does not match")
-        sent = provider.admin_send_invitation(user.email)
+        sent = invitation_provider.send_invitation_email(provider, user.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         db.refresh(user, with_for_update=True)
@@ -403,8 +403,8 @@ def resend_invitation(
             return get_user(db, profile.id)
         if profile.status != UserStatus.PENDING.value:
             raise InvitationError("Invitation is not pending")
-        provider_user = prepare_invitation_user(provider, profile, membership)
-        sent = provider.admin_send_invitation(profile.email)
+        provider_user = invitation_provider.prepare_invitation_user(provider, profile, membership)
+        sent = invitation_provider.send_invitation_email(provider, profile.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         profile.supabase_user_id = provider_user.id
@@ -478,8 +478,8 @@ def reconcile_invitation(
             ):
                 raise InvitationError("Bootstrap reservation is unavailable")
         operation_id = membership.provider_invitation_operation_id
-        provider_user = prepare_invitation_user(provider, profile, membership)
-        sent = provider.admin_send_invitation(profile.email)
+        provider_user = invitation_provider.prepare_invitation_user(provider, profile, membership)
+        sent = invitation_provider.send_invitation_email(provider, profile.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         profile.supabase_user_id = provider_user.id
