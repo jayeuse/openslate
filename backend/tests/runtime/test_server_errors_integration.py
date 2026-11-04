@@ -35,7 +35,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def member_world(monkeypatch):
+def member_world(monkeypatch, real_server_error_writes):
     """A committed organization A, a member of A, and an organization B they do not join."""
 
     first, second = committed_organization("errors-a"), committed_organization("errors-b")
