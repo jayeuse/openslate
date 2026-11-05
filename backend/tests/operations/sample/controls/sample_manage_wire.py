@@ -80,7 +80,7 @@ def _installation_file(problem):
         "summary": {"kind": "installation", "generated_at": _AT, "application_version": "0.1.0",
                     "parts": _PARTS, "problem_periods_30d": 0, "server_errors_30d": 1,
                     "workers_not_running": ["comms_jobs"], "database_bytes": 4096},
-        "versions": {"application": "0.1.0", "schema_revision": "f8852c638a76",
+        "versions": {"application": "0.1.0", "schema_revision": "65bf3d1eb512",
                      "postgresql": "17.4"},
         "database": {"bytes": 4096, "measured_at": _AT},
         "workers": [{"key": "comms_jobs", "state": "never_seen", "last_seen_at": None}],

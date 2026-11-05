@@ -121,7 +121,7 @@ class Membership(BaseModel):
         UniqueConstraint("org_id", "user_id", name="uq_memberships_org_user"),
         Index(
             "uq_memberships_user_pending", "user_id", unique=True,
-            postgresql_where=text("status = 'pending' AND is_deleted = false"),
+            postgresql_where=text("status = 'pending' AND is_deleted IS FALSE"),
         ),
         CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_memberships_role"),
         CheckConstraint(

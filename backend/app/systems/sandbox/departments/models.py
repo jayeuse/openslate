@@ -23,7 +23,7 @@ class Department(BaseModel):
             "org_id",
             "department_name",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 

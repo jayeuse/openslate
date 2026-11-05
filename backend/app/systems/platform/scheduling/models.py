@@ -310,7 +310,7 @@ class InAppNotification(BaseModel):
             "recipient_id",
             "created_at",
             "id",
-            postgresql_where=text("read_at IS NULL AND is_deleted = false"),
+            postgresql_where=text("read_at IS NULL AND is_deleted IS FALSE"),
         ),
     )
 

@@ -46,13 +46,13 @@ class RelationshipEdge(BaseModel):
             "source_record_id",
             "target_record_id",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index(
             "ix_relationship_edges_active_target",
             "field_id",
             "target_record_id",
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         # The record foreign keys' delete checks cover every edge, deleted ones too; the
         # partial field-led indexes above cannot serve them.

@@ -63,13 +63,13 @@ class Board(BaseModel):
             "org_id",
             "scope",
             unique=True,
-            postgresql_where=text("scope = 'company' AND NOT is_deleted"),
+            postgresql_where=text("scope = 'company' AND is_deleted IS FALSE"),
         ),
         Index(
             "uq_boards_department",
             "department_id",
             unique=True,
-            postgresql_where=text("scope = 'department' AND NOT is_deleted"),
+            postgresql_where=text("scope = 'department' AND is_deleted IS FALSE"),
         ),
     )
 
@@ -113,7 +113,7 @@ class BoardGroup(BaseModel):
             "board_id",
             "group_id",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index("ix_board_groups_group_id", "group_id"),
     )

@@ -104,7 +104,7 @@ class CommsMessage(BaseModel):
             "org_id",
             "conversation_id",
             "seq",
-            postgresql_where=text("parent_id IS NULL AND is_deleted = false"),
+            postgresql_where=text("parent_id IS NULL AND is_deleted IS FALSE"),
         ),
         Index("ix_comms_messages_replies", "org_id", "parent_id", "seq"),
         Index("ix_comms_messages_quote", "org_id", "reply_to_id"),

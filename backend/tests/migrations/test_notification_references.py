@@ -260,4 +260,4 @@ def test_unread_index_and_nullable_work_do_not_remove_existing_recipient_index(
     assert "ix_in_app_notifications_recipient_created" in indexes
     unread = indexes["ix_in_app_notifications_recipient_unread"]
     assert "(recipient_id, created_at, id)" in unread
-    assert "read_at IS NULL" in unread and "is_deleted = false" in unread
+    assert "read_at IS NULL" in unread and "is_deleted IS FALSE" in unread

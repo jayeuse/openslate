@@ -107,7 +107,7 @@ def _assert_dashboard_schema(connection: Connection) -> None:
     assert "create unique index" in active_position
     assert "(dashboard_id, position)" in active_position
     assert "where" in active_position
-    assert "is_deleted = false" in active_position
+    assert "is_deleted is false" in active_position
 
     config_column = (
         connection.execute(

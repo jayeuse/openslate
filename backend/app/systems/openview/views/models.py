@@ -40,7 +40,7 @@ class SavedView(BaseModel):
             "uq_saved_views_module_default",
             "module_id",
             unique=True,
-            postgresql_where=text("is_default AND NOT is_deleted"),
+            postgresql_where=text("is_default IS TRUE AND is_deleted IS FALSE"),
         ),
     )
     org_id: Mapped[UUID] = mapped_column(
