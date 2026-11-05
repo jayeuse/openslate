@@ -82,8 +82,19 @@ AUDIT_EXPORT_LIMIT = 10_000
 
 
 def _logged_record_id(key: str) -> ColumnElement[Any]:
+    """The record an entry's snapshot names, as a value that can find it by primary key.
+
+    The text-to-UUID cast is not leakproof, so under row-level security a bare comparison
+    with ``records.id`` cannot be an index condition: the check would read every record the
+    reader can read, once for each hidden entry. The subselect makes the value a parameter.
+    """
+
     snapshot = func.coalesce(AuditLog.after[key].astext, AuditLog.before[key].astext)
-    return sql_cast(snapshot, PostgreSQLUUID(as_uuid=True))
+    return (
+        select(sql_cast(snapshot, PostgreSQLUUID(as_uuid=True)))
+        .correlate(AuditLog)
+        .scalar_subquery()
+    )
 
 
 def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
