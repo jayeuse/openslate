@@ -6,4 +6,10 @@
 - Never bake `BACKEND_URL`, frontend runtime configuration, or private/backend secrets into the image.
 - `caddy/` contains production gateway artifacts. Caddy is not part of ordinary local development.
 - Target: one full Compose stack per client (micro–medium SMB, on-premise first) on Linux or Windows Docker Desktop using WSL2/Linux containers. Windows startup, reboot, persistent-volume, and restore acceptance remain pending until run on Windows. macOS workstation development is allowed, but macOS is not a server deployment target. Do not introduce fleet/orchestrated deployment into these artifacts.
-- `/api/health` reports API-process liveness. `/api/ready` returns bounded database, Auth, Storage, and SMTP-configuration component states; all four are required and determine its 200/503 result. SMTP readiness means its host, port, and sender settings are present, not that mail can be delivered. A guarded production Compose rehearsal exercised TLS trust, bounded readiness failure/recovery, encrypted five-volume restore, restored-file authorization, and service restart with Linux containers on macOS Docker Desktop. Native Linux host boot/reboot, Windows acceptance, and the canonical release gate/final review remain pending; do not describe this infrastructure as production-ready.
+- `/api/health` reports API-process liveness; `/api/ready` reports the required database, Auth, Storage, and SMTP-configuration components (`../docs/architecture/11-infrastructure.md`).
+- Native Linux host boot/reboot, Windows acceptance, and the canonical release gate remain pending; do not describe this infrastructure as production-ready.
+
+## Skills
+
+- Compose files and Dockerfiles: [`project-tooling`](../.agents/skills/project-tooling/SKILL.md). Use it for each change under `supabase/`, `docker/`, or `caddy/`.
+- Compose exposure: [`webapp-security-review`](../.agents/skills/webapp-security-review/SKILL.md). Use it when a change touches exposed ports, gateway rules, or where secrets reach an image or a container.
