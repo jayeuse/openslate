@@ -113,6 +113,52 @@ test("the page reads headline, parts, About and help, in that order", () => {
   expect(markup).not.toMatch(/Checking/);
 });
 
+/** Each pane's name and the block titles inside it, in DOM order. */
+function panes(markup: string) {
+  return markup
+    .split('data-health-pane="')
+    .slice(1)
+    .map((pane) => ({
+      name: pane.slice(0, pane.indexOf('"')),
+      blocks: [...pane.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map(
+        (heading) => heading[1],
+      ),
+    }));
+}
+
+test("SP-C4: the panes follow what renders, with no empty pane and no tab stop", () => {
+  const organization: OrganizationBlock = "pending";
+  const installation: InstallationBlock = "pending";
+  const parts = { name: "parts", blocks: ["Parts of Slate Operations"] };
+  const help = {
+    name: "help",
+    blocks: ["About this system", "When something goes wrong"],
+  };
+  // Blocks 3 and 4 are null for a member, and while the identity loads (D24).
+  expect(panes(words(view(result)))).toEqual([parts, help]);
+  expect(panes(words(view(result, { organization })))).toEqual([
+    parts,
+    { name: "details", blocks: ["Your organization"] },
+    help,
+  ]);
+  expect(panes(words(view(result, { organization, installation })))).toEqual([
+    parts,
+    { name: "details", blocks: ["Your organization", "Installation"] },
+    help,
+  ]);
+  // An installation owner who is not an admin.
+  expect(panes(words(view(result, { installation })))).toEqual([
+    parts,
+    { name: "details", blocks: ["Installation"] },
+    help,
+  ]);
+  const opening = view(result, { organization, installation }).match(
+    /<div[^>]*data-health-pane[^>]*>/g,
+  );
+  expect(opening).toHaveLength(3);
+  expect(opening?.join("")).not.toContain("tabindex");
+});
+
 test("each status is a word beside an icon whose shape differs", () => {
   const markup = view({ ...result, status: status("set_up") });
   // Working, Not working and Set up rows; the headline's icon is CircleX.
@@ -245,9 +291,9 @@ test("S3-C5: an admin reads Your organization between the parts and About", () =
     ">Your organization</h2>",
     ">Backups</dt>",
     "</svg>Late</span>",
-    // Finding 4: each part is its own unbreakable span; the line wraps
-    // only between parts.
-    ">Last good backup on Oct 30 at 2:00 AM</span> · <span>Latest run: Failed</span>",
+    // Each part is its own span, and the separator its own (D35.7): from
+    // 1280px a part takes its own line and the separator hides.
+    ">Last good backup on Oct 30 at 2:00 AM</span><span> · </span><span>Latest run: Failed</span>",
     ">The person who runs your server manages backups.<",
     ">Failed jobs</dt>",
     ">2 jobs failed in the last 7 days<",

@@ -94,7 +94,7 @@ Email is a special case. Readiness checks only that email is configured (`readin
 
 ## Page layout (`/manage?view=health`)
 
-Reading order, one column, readable width, the slim Manage grammar. On a phone the same order stacks with no horizontal scroll.
+Reading order, the slim Manage grammar. From 1280px the blocks sit in panes under the headline ("Design (still-page relayout)"). Below 1280px they form one column. On a phone the same order stacks with no horizontal scroll.
 
 1. **Headline.** The R3 sentence, the check time, and a "Check again" button. The page also refreshes every 60 seconds while visible and when the window regains focus.
 2. **Parts of Slate Operations.** One row per part (R1): name, status word with icon (R2), one plain line of cause when it does not work, for example "Messages that need email, such as invitations, wait until email works."
@@ -499,7 +499,7 @@ Error toasts stay until dismissed (`timeout: 0`), so Copy stays reachable. The t
 - Title (`data-slot="page-title"`): "System health".
 - Meta line: "See whether Slate Operations works now, and what to do when it does not."
 - No header actions. "Check again" belongs to the status that it refreshes, so it sits in block 1.
-- Under the header, the four blocks form one column, at most 672px wide (`max-w-2xl`), left-aligned, with 16px between blocks. Each block is a `section` card (`bg-card`, `border-border`, the large radius), as in `updates-panel.tsx`.
+- Under the header, the blocks sit in panes from 1280px (D23, D24) and form one full-width column below 1280px (D30), with 16px between blocks. Each block is a `section` card (`bg-card`, `border-border`, the large radius), as in `updates-panel.tsx`.
 - Block 3 (Your organization, S3) has its place between blocks 2 and 5. In S2 nothing renders there: no card, no heading, and no gap.
 
 **D2.2 Block 1, the headline.** This card has no 56px header. Its parts, in DOM order:
@@ -607,11 +607,11 @@ The words are the same for every role (D4, question 6).
 
 | | 390 × 844 | 1440 × 900 |
 |---|---|---|
-| Page | Manage's 12px padding; the page scrolls | The Still Page Rule: the header stays, and the column under it is the one `manage-scroll` panel. The cards should fit in Slate at 100% text, and only the panel scrolls when they do not |
-| Width | The cards fill the width | One column, at most 672px, left-aligned |
+| Page | Manage's 12px padding; the page scrolls | The Still Page Rule: the header and the headline band stay, and each pane under them scrolls on its own (D23, D25) |
+| Width | The cards fill the width | The band and the panes fill the width (D24) |
 | Block 1 | Icon and headline, then the check line, then "Check again" on its own row at the start (44px) | "Check again" at the top right of the card (32px) |
-| Block 2 | Name above status above cause | 14rem name column, status and cause at its right |
-| Blocks 5 and 6 | The same label-left rows (7rem); the paragraphs wrap | 8.5rem label column |
+| Block 2 | Name above status above cause | 7.5rem name column, status and cause at its right (D27) |
+| Blocks 5 and 6 | The same label-left rows (7rem); the paragraphs wrap | 6rem label column (D27) |
 | Horizontal scroll | None. The reference line wraps between its parts, and a full ID breaks anywhere | None |
 
 Keyboard order follows the DOM and the visual order. The page title takes focus by program only (`tabIndex={-1}`, as today). The tab stops are "Check again", then "Copy reference" (only in an error state), then the version link (installation owner only). The rows hold no controls. Each control uses the standard focus outline (2px `--focus`, 2px offset). No card that holds a control uses an overflow clip that could cut the outline.
@@ -724,7 +724,7 @@ Written by the Product Designer (TASK-0008) against `main` 542102d1. `ui-ux-pro-
 - After a result: the card renders only when the response carries the organization part. Without it there is no card, no heading and no gap (D2.1). This covers members, guests, department managers, and an admin whose role changed since the identity loaded.
 - First load: the card frame and its skeleton render only when the identity says the person is an admin of the bound organization. While the identity loads, nothing renders there.
 
-**D8.2 Frame.** A card with a 56px header and the `h2` "Your organization". The body is a `dl` with the block 2 grid (D2.3): a 14rem muted label column from 640px, the label above the value below 640px, 12px between rows. The value columns of blocks 2 and 3 then line up. Rows, always in this order: Backups, Failed jobs, Sign-in activity. In each value cell, line 1 is ink at weight 500, line 2 is muted, and the link comes last. Links use the D2.5 link style (`text-action-text`, 44px tall below 1280px) through `GuardedWorkspaceLink`.
+**D8.2 Frame.** A card with a 56px header and the `h2` "Your organization". The body is a `dl` with the block 2 grid (D2.3): a 14rem muted label column from 640px, the label above the value below 640px, 12px between rows. The value columns of blocks 2 and 3 then line up. From 1280px the two blocks sit in different panes, and D27 sets the label columns. Rows, always in this order: Backups, Failed jobs, Sign-in activity. In each value cell, line 1 is ink at weight 500, line 2 is muted, and the link comes last. Links use the D2.5 link style (`text-action-text`, 44px tall below 1280px) through `GuardedWorkspaceLink`.
 
 **D8.3 Backups.** These status words extend R2 for this row only. Each shape has one meaning on the page: `CircleMinus` is "not set up" here as in block 2, and Late gets a shape of its own.
 
@@ -1059,6 +1059,198 @@ These change D15, D17 and D20 as written. Each answer gives its reason.
 3. **Units B, KB, MB, GB, TB.** Confirmed: this is D17. `Intl.NumberFormat` formats the number only, because its own unit names ("kB", "byte") differ from D17.
 4. **"No problems since <date>." when the oldest sample is younger than 29 days.** Confirmed. Hourly deletion makes a full history up to a few minutes younger than 30 days, so a 30-day limit would show the date for a full history. A history 29 to 30 days deep reads "in the last 30 days", which can claim at most one unchecked day, once in the life of an installation. D15.6 is no longer Proposed.
 5. **Timeline rows have two lines at every width.** Confirmed. A period sentence runs to about 70 characters, so a one-line row with the meta at the right (D9.5) would truncate or wrap at 1440px. D15.8 applies at every width.
+
+## Design (still-page relayout)
+
+Written by the Product Designer (TASK-0020) on the PR #89 content, against `main` 856d859d. The Human Owner rejected the 672px column on 2026-11-05: the page scrolled and the right side was empty. `ui-ux-pro-max` set the panes, the scroll rules and the responsive behavior; `impeccable` works inside them. This section changes only the frame. It changes no word, no block, no state, no token and no component. The earlier design sections apply unless a decision here says otherwise.
+
+Names used here: the **band** is block 1. **Pane 1** holds block 2. **Pane 2** holds blocks 3 and 4. **Pane 3** holds blocks 5 and 6.
+
+### D23. Frame
+
+**D23.1 The arrangement.** From 1280px a full-width band sits on top, and the panes sit under it side by side. This is the Backup grammar: a summary across the top, then panes that fill the height. Reason: one main pane and one side pane cannot hold the owner's blocks. At 672px wide, blocks 3, 4, 5 and 6 need 1048px in one side pane, and the grid under an 86px band has 634px.
+
+**D23.2 The mount stays.** The mount at `manage/page.tsx:1527` keeps `manage-scroll`, as the Backup mount does. Only the frame inside `SystemHealthView` changes.
+
+| Element | Classes |
+|---|---|
+| Root (today `flex max-w-2xl min-w-0 flex-col gap-4`) | `flex min-w-0 flex-col gap-4 xl:h-full`. `max-w-2xl` goes (D30) |
+| Band | The block 1 `section`, with `xl:shrink-0` |
+| Grid | `grid min-w-0 gap-4 xl:min-h-[15rem] xl:flex-1 xl:grid-rows-[minmax(0,1fr)]`, and the tracks of D24 |
+| Pane | `relative flex min-w-0 flex-col gap-4 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain`, and `data-health-pane` (D24). A `div`, with no `tabIndex` |
+| Last card in each pane | `xl:flex-1`, through `xl:[&>:last-child]:flex-1` on the pane, because the last card differs by role (D35) |
+
+**D23.3 Cards fill their pane.** The last card in a pane takes the free height, so its bottom edge meets the pane's bottom edge. A table card does the same (PD66). Free height therefore sits inside the last card, under its rows. No pane shows bare ground under a card. Rows stay at the top of the card and keep their height.
+
+**D23.4 Floor.** The grid keeps at least 15rem. Below that height the `manage-scroll` section scrolls, as Backup does at its floor. The page never scrolls. At rest this needs a viewport about 490px tall or less. No size in D28 or D29 reaches it.
+
+### D24. Panes by role
+
+The tracks depend on what renders, not on the role name. Pane 2 renders only when block 3 or block 4 renders (D8.1, D18.1). With neither there is no pane 2, no gap and no empty `div`.
+
+| Viewer | Band | Pane 1 | Pane 2 | Pane 3 | Grid tracks |
+|---|---|---|---|---|---|
+| Member or guest | Block 1 | Block 2 with Last 30 days | None | Blocks 5, 6 | `xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]` |
+| Organization admin | Block 1 | Block 2 with Last 30 days | Block 3 | Blocks 5, 6 with the support file | `xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_20rem]` |
+| Installation owner who is an admin | Block 1 | Block 2 with Last 30 days | Blocks 3, 4 | Blocks 5, 6 with the support file | `xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_20rem]` |
+
+- `data-health-pane` is `parts`, `details` or `help`. It gives the tests a stable name and has no style.
+- The two-pane tracks are the Backup tracks. Pane 3 holds the same two blocks for every role, so About and help never move when a role or an organization changes.
+- Pane 2 is wider than pane 1 because its values are the longest single lines on the page. Pane 3 is fixed because its text reads well at 320px and gains nothing from more width.
+- An installation owner who is not an admin gets block 4 alone in pane 2, with the three-pane tracks.
+- While the identity loads, blocks 3 and 4 do not render (D8.1), so the grid has two panes. It takes three panes when the identity or the first result arrives. This is the only change of tracks, and it happens once. Do not reserve an empty pane for it.
+
+### D25. What scrolls
+
+- Each pane scrolls alone, with the quiet scrollbar. Each pane is `relative`, so screen-reader text cannot stretch it.
+- The band, the page header and the shell never scroll.
+- **Last 30 days lives in pane 1, inside block 2 (D15.1).** Pane 1 is its one scroller. "Show older" adds rows to the card, the card grows, and pane 1 scrolls. The band, pane 2, pane 3 and the page do not move.
+- The list has no scroller of its own. Reason: when parts fail, their cause lines fill the card. With all four parts down and the block 1 Alert at 1280 × 720, block 2 needs 547px with an empty timeline, and pane 1 has 376px. A list region would have no height at the moment a person needs it. One scroller per pane needs no floor and nests nothing, as Organization and Backup do.
+- The part rows scroll away with a long list. The band stays, so the answer to "does it work now" stays in view.
+- D15.5 does not change. Focus goes to the first new row, and the browser scrolls that row into view inside pane 1. "Show older" stays at the end of the list.
+- When a pane scrolls, its 8px scrollbar lane narrows its cards by 8px, as in the Organization side pane. Do not add `scrollbar-gutter`: it would keep the panes short of the band's right edge at rest.
+
+### D26. The band
+
+From 1280px the check line sits on the headline's row, after the sentence. The band is then 66px tall, not 86px.
+
+- Inside the block 1 `LoadingRegion`, one new `div` holds the icon with the `h2`, and the check line: `flex flex-col xl:flex-row xl:flex-wrap xl:items-baseline xl:gap-x-3`. The check line takes `xl:mt-0`. The `h2` takes `xl:self-baseline`, because its neighbor in the `flex items-start` row is an icon with no text baseline (D35).
+- A long sentence or a long suffix wraps the check line to a second row, and the band is then 86px or taller. The panes shorten by the same amount.
+- The DOM order of D2.2 does not change. "Check again" stays at the top right (D2.8).
+- The loading skeleton follows: its two bars sit in one row from 1280px (`xl:flex-row xl:items-center xl:gap-3`), so the band keeps its height when the data arrives.
+- Reason: pane 2 needs 644px for the owner. At 86px the band leaves 634px, and pane 2 would scroll at rest. A full-width band also has room for the line.
+
+### D27. Label columns
+
+| Width of the card | Block 2 | Blocks 3 and 4 |
+|---|---|---|
+| Below 1280px viewport | As today: 14rem from 640px, stacked below 640px | The same |
+| From 1280px, card 30rem or wider | 12rem | 7.5rem |
+| From 1280px, card 20rem to under 30rem | 7.5rem | 7.5rem |
+| From 1280px, card under 20rem | Stacked: the label above the value | Stacked |
+
+Block 5 keeps its own row (7rem, 8.5rem from 640px), and takes 6rem from 1280px (D35): `xl:grid-cols-[6rem_minmax(0,1fr)]`. "Version" needs 48px. The value column is then 178px, and "0.1.0 · Updates & licensing" needs 168px.
+
+- The width is the card's, by container query. A viewport query cannot see the sidebar, which runs 220px to 360px or collapses to a rail. Add `@container` to the `section` of blocks 2, 3 and 4.
+- A phone card is about 23rem wide, so the container variants must sit behind `xl:`. Without it, a phone would lose its stacked rows.
+- Row classes for blocks 3 and 4: `grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5 xl:grid-cols-[minmax(0,1fr)] xl:gap-0.5 xl:@min-[20rem]:grid-cols-[7.5rem_minmax(0,1fr)] xl:@min-[20rem]:gap-3`. Block 2 adds `xl:@min-[30rem]:grid-cols-[12rem_minmax(0,1fr)]`.
+- 7.5rem is 1rem under the Manage label column. The longest label of blocks 3 and 4, "Scheduled reports", needs 118px of its 120px. The 16px goes to the value column, where the longest real line needs it (D28).
+- "Saving and loading your data" needs 186px, so it fits 12rem and wraps to two lines at 7.5rem. This is accepted (D35). It costs 20px at rest. A 12rem column at 1440 × 900 leaves 121px for values, and the Email Not set up cause line then takes six lines or more. At 7.5rem it takes four.
+- Geist is the widest of the three UI fonts. On these labels and values, Atkinson Hyperlegible Next and Archivo measure up to 5% narrower and never wider. The looks set letter spacing only on titles, field labels, table heads and badges, not on `dt` or `dd`. So these widths hold in all four looks, and no look needs its own rule.
+- **The Backups detail changes in block 3.** The parts used `whitespace-nowrap`. "Last good backup on Nov 28 at 12:00 PM" needs 266px, and the value column is 194px at 1280 × 720. A pane with `overflow-y-auto` would then scroll sideways. Use `inline-block max-w-full`: a part stays whole when it fits on a line, and it wraps only when it cannot. From 1280px each part takes its own line (`xl:block`) and the " · " hides (`xl:hidden`), so no line starts with a separator (D35).
+
+### D28. Expected heights at 1440 × 900
+
+The panel is 1160 × 736. The band is 66px, the gap is 16px, and the panes are 654px tall. Values are for Slate at 100% text and the en-PH 12-hour time. They come from a scratch layout with the page's sizes and Geist. That layout reproduced the live figures at 672px. The build with the D35 frame confirmed the first table below on 2026-11-05.
+
+| Viewer | Pane 1 | Pane 2 | Pane 3 | Panel scroll at rest |
+|---|---|---|---|---|
+| Installation owner who is an admin | 359 wide, 354 used | 449 wide, 644 used (342, 16, 286) | 320 wide, 572 used (106, 16, 450) | None |
+| Organization admin | 359 wide, 354 used | 449 wide, 362 used | 320 wide, 620 used (106, 16, 498) | None |
+| Member or guest | 696 wide, 314 used | None | 448 wide, 332 used (106, 16, 210) | None |
+
+Pane 1 here has one period, as in the live measure. Other data changes pane 1 and pane 2:
+
+| Data | Effect |
+|---|---|
+| No period | Pane 1 uses 319 (owner, admin), 299 (member) |
+| Email Not set up, with its cause line, and no period | Pane 1 uses 399 (owner, admin) |
+| 5 periods and "Show older" | Pane 1 uses 704 and scrolls by 50 (owner, admin). It uses 584 and fits (member) |
+| Every worker Running | Pane 2 uses 624 (owner) |
+| A second worker with a line 2 | Pane 2 uses 664 and scrolls by 10 (owner) |
+
+**Margin.** The value column of blocks 3 and 4 is 283px. The longest real line, "Last good backup on Nov 28 at 12:00 PM", needs 266px, so it has 17px to spare. The longest in any English format, "Last good backup on Sept 28 at 12:00 p.m.", needs 276px and has 7px. So no date wraps a part at 1440 × 900.
+
+Pane 2 has 10px of height to spare for the owner with a Late backup and one worker with a line 2. Healthy data has 30px or more. A date, a count or a word can no longer use that margin. Only a second worker with a line 2 can: that is a fault, pane 2 then scrolls by 10, and the page stays still.
+
+### D29. Other sizes
+
+Widths are panes 1, 2, 3 for the owner and the admin. Pane height is the panel height less 82.
+
+| Viewport | Panel | Pane height | Widths | Owner at rest | Admin at rest | Member at rest |
+|---|---|---|---|---|---|---|
+| 1280 × 720 | 1000 × 556 | 474 | 288, 360, 320 | Pane 1 fits (422). Pane 2 scrolls by 230. Pane 3 scrolls by 98 | Panes 1, 2 fit. Pane 3 scrolls by 146 | Fits |
+| 1366 × 768 | 1086 × 604 | 522 | 326, 408, 320 | Pane 1 fits. Pane 2 scrolls by 142. Pane 3 scrolls by 50 | Panes 1, 2 fit. Pane 3 scrolls by 98 | Fits |
+| 1920 × 1080 | 1640 × 916 | 834 | 572, 716, 320 | Fits: 314, 624, 572 | Fits: 314, 322, 620 | Fits |
+| 1280 × 720, sidebar 360px | 880 × 556 | 474 | 235, 293, 320 | Pane 1 fits (442). Pane 2 scrolls by 410. Pane 3 scrolls by 98 | Panes 1, 2 fit. Pane 3 scrolls by 146 | Fits |
+
+- **Extra width** goes to panes 1 and 2 in the ratio 1 : 1.25. Pane 3 stays at 320px. For a member, it goes to pane 1, and pane 3 stops at 448px.
+- **Extra height** goes to the last card of each pane (D23.3). Rows do not stretch. Five periods fit at 1920 × 1080 with no scroll.
+- **Label columns at these sizes (D27):** at 1280 × 720, block 2 is stacked and blocks 3 and 4 are label-left. At 1366 and 1440, all three use 7.5rem. At 1920, block 2 uses 12rem. With a 360px sidebar at 1280, blocks 2, 3 and 4 are stacked. A member's block 2 uses 12rem at every size here except the 360px sidebar row, where pane 1 is 416px.
+- At 1280 × 720 no arrangement shows all of the owner's rows: blocks 3 and 4 alone need 704px, and the panes are 474px. With the D28 data every block title stays in view at rest, and the Installation header shows in pane 2.
+- The 1366 row is here because 1366 × 768 is a common laptop size.
+
+### D30. Below 1280px
+
+One column, the page scrolls, and the order is the order of today. The grid and the panes have no `xl:` effect, so the panes are plain blocks with 16px gaps.
+
+**The 672px cap goes.** Cards fill the width, as in every other Manage section. Reason: at 1279px the panel is 999px wide, so the cap would leave 327px blank on the right. That is the same defect the owner rejected. The cap moves to the one place that needs it: the text wrapper of block 6 keeps `max-w-2xl`, so its paragraphs keep today's line length. Label columns stay at 14rem from 640px and stacked below 640px.
+
+### D31. Order
+
+No order in this spec changes. The DOM order stays block 1, 2, 3, 4, 5, 6, and each pane holds a run of neighboring blocks, so the visual order reads pane by pane in the same order. No block uses CSS `order` or a grid placement. D8.6 and D19.3 stand as written: "Check again", "Copy reference" (error), "Show older", the block 3 links, the version link, "Download support file", then the "Copy reference" of its Alert.
+
+The panes have no `tabindex`, so they add no tab stop of their own. A keyboard person reaches pane content through its links and buttons, as in the other Manage panes. A pane with no control below the fold relies on the browser's own keyboard scrolling.
+
+### D32. States
+
+- D2.7, D8.6, D15.7, D18.3 and D19.4 do not change. The frame renders at once, and only the data waits.
+- **The block 1 Alert** grows the band, and the panes shorten by the same amount. With a three-line Alert the band is about 164px, so the panes are about 556px at 1440 × 900 and 376px at 1280 × 720.
+- **The server banner** (D3.5) shortens the panel, and the panes shorten by its height. The page does not start to scroll. With the 40px banner at 1440 × 900 the panes are 614px. Owner pane 2 then scrolls by 30, and admin pane 3 by 6.
+- An Alert in block 6, and the error blocks of the timeline, grow their card. Their pane scrolls.
+
+### D33. Older tests
+
+One older expectation changes: `system-health-view.spec.ts:296` reads the " · " between two spans, and D35 item 7 puts it in a span of its own. A search of `frontend/tests/isolated/manage/system-health-view.spec.ts` and `frontend/tests/http/manage-system-health.spec.ts` found no layout value: neither file has a width, a viewport, `max-w-2xl`, `manage-scroll` or a scroll measure. No other older expectation changes. These checks stay true only if the panes are `div`s and the DOM order holds:
+
+- `system-health-view.spec.ts:92`: the reading order through `inOrder`, and exactly four `<section` elements in the member view.
+- `manage-system-health.spec.ts:103` and `:370`: the `h2` order.
+
+### Acceptance criteria (still-page relayout)
+
+| ID | Criterion |
+|---|---|
+| SP-C1 | At 1280 × 720, 1440 × 900 and 1920 × 1080, for each role in D24: the document does not scroll, and the `manage-scroll` section has `scrollHeight` equal to `clientHeight`. |
+| SP-C2 | At the same sizes: the band's left and right edges equal the section's. The first pane's left edge and the last pane's right edge equal the band's, within 1px. The bottom of every pane equals the bottom of the section, within 1px. |
+| SP-C3 | In every pane whose content is shorter than the pane, the last card's bottom edge equals the pane's bottom edge, within 1px. |
+| SP-C4 | `[data-health-pane]` count and contents match D24: member or guest `parts`, `help`; admin `parts`, `details` (block 3), `help`; owner `parts`, `details` (blocks 3, 4), `help`. |
+| SP-C5 | At 1440 × 900 in en-PH, the owner's data is one period, a Late backup with the longest real line ("Last good backup on Nov 28 at 12:00 PM", "Latest run: Interrupted"), and one worker with a line 2. Every pane has `scrollHeight` equal to `clientHeight`, and the "Last good backup" part takes one line. The same holds for the admin and the member. The test must not choose a short date. |
+| SP-C6 | "Show older" with 15 rows at 1440 × 900: pane `parts` has `scrollHeight` above `clientHeight`. The document, the section, the band and the other panes keep their sizes and positions. The first new row has focus and is inside the pane's visible area. |
+| SP-C7 | With the server banner, and with the block 1 Alert, at 1280 × 720 and 1440 × 900: SP-C1 still holds, and the panes are shorter by the height added. |
+| SP-C8 | In every pane at 1280 × 720, 1440 × 900 and at 1280 × 720 with a 360px sidebar, with the longest fixture ("Last good backup on Nov 28 at 12:00 PM"): `scrollWidth` equals `clientWidth`. |
+| SP-C9 | Label columns match D27, for the owner: at 1440 × 900 every `dt` in blocks 2, 3 and 4 is 120px wide, and the block 5 `dt` is 96px wide, with the owner's version value on one line; at 1920 × 1080 a block 2 `dt` is 192px wide; at 1280 × 720 a block 2 `dt` and its `dd` share a left edge. For a member at 1440 × 900, a block 2 `dt` is 192px wide. |
+| SP-C10 | At 1440 × 900 with a short sentence: the check line's top is above the `h2`'s bottom, and the band is under 72px tall. In the DOM, the check line follows the `h2`. |
+| SP-C11 | At 1024 × 768 and 390 × 844: the document scrolls, each card's width equals the section's width, no pane scrolls, the block order is 1 to 6, and there is no horizontal scroll. At 1024 × 768 block 2's `dt` is 224px wide. At 390 × 844 the `dt` sits above its `dd`. |
+| SP-C12 | Tab order at 1440 × 900 as the owner equals D19.3. No pane has `tabindex`. No block has a CSS `order`. Every word in each state stays as earlier sections give it. |
+| SP-C13 | SP-C1 and SP-C2 hold in Whiteboard, Triplicate and Stockroom, in light and dark. The theme files hold no System health rule. |
+
+### D34. Criteria map
+
+| Criterion | Covered by |
+|---|---|
+| SP-C1, SP-C2, SP-C3 | D23, D24 |
+| SP-C4 | D24 |
+| SP-C5 | D26, D28 |
+| SP-C6 | D25 |
+| SP-C7 | D23.4, D32 |
+| SP-C8, SP-C9 | D27 |
+| SP-C10 | D26 |
+| SP-C11 | D30 |
+| SP-C12 | D31, D33 |
+| SP-C13 | D27 |
+
+### D35. Answers from the screen review (2026-11-05)
+
+These change D24, D27, D28 and D29 as now written.
+
+1. **Version row.** Rejected as built. In the 320px pane the value column was 138px, so "0.1.0 ·" sat on line 1 and the link on line 2, and block 5 was 126px. Fix: a 6rem label column from 1280px. No word changes.
+2. **Margin.** The first tracks gave a 250px value column, and a two-digit date wrapped. The tracks are now 1 : 1.25, and the label column is 7.5rem. The value column is 283px. A chosen date can no longer decide a criterion (SP-C5).
+3. **"Saving and loading your data" on two lines in pane 1.** Accepted. A wider label column takes the width from cause lines, which matter when a part fails.
+4. **D29 figures.** The first build measured 270 and 118 at 1280 × 720, and the 250 and 98 here were wrong: the scratch layout used 24-hour times, and the Version row wrapped. With the D35 frame the build measures 230 and 98 (382, 16, 306 in pane 2). At this width the Nov 28 line and "2 jobs failed in the last 7 days" each take two lines. This changes no decision: D29 allows panes to scroll at 1280 × 720, and SP-C5 applies at 1440 × 900. The 1280 × 720 owner row of D29 is measured on the build. The 1366, 1920 and 360px sidebar rows are from the scratch layout.
+5. **Pane variant.** Accepted: `xl:[&>:last-child]:flex-1` on the pane in place of a class on each card. The last card differs by role, so one rule is simpler and cannot miss a card.
+6. **`xl:self-baseline` on the `h2`.** Accepted. The measured baselines of the `h2` and the check line are equal.
+7. **Separator in the Backups detail.** A second line began with "· Latest run". This is the same fault as item 1. From 1280px each part takes its own line, and the separator hides. Below 1280px nothing visible changes. At 1920 × 1080 this adds 20px to block 3.
+8. **Tests the D35 frame changes.** `d28Organization` takes the SP-C5 line. `termWidths` for blocks 2, 3 and 4 at 1440 × 900 read 120, not 136. `system-health-view.spec.ts:296` reads the new separator span.
 
 ## Deferred
 
