@@ -244,7 +244,7 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     assert len(result.users) == 44
     # Every active internal member can act; guests, pending and disabled accounts cannot.
     assert len(result.actors) == 30
-    assert len(result.groups) == 9
+    assert len(result.groups) == 11
     assert {person.status for person in result.users.values()} == {
         "active",
         "pending",
@@ -274,14 +274,14 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     assert len(acceptance_clients) == 39
     assert all(client.fsyncs_before_completion for client in acceptance_clients)
     assert all(client.fsyncs_before_completion[0] > 0 for client in acceptance_clients)
-    assert len(admin.mapping_calls) == 9 + 44  # groups plus people
+    assert len(admin.mapping_calls) == 11 + 44  # groups plus people
     assert {kind for kind, _, _ in admin.mapping_calls} == {"group", "user"}
     group_access_writes = [
         (body, headers)
         for method, path, body, headers in admin.calls
         if method == "PUT" and path.endswith("/access")
     ]
-    assert len(group_access_writes) == 9
+    assert len(group_access_writes) == 11
     assert all(headers.get("If-Match") for _, headers in group_access_writes)
     group_keys = {group_id: key for key, group_id in result.groups.items()}
     scoped_access = {
@@ -311,6 +311,13 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     }
     assert scoped_access["guest-readers"] == {
         (department_id, None): "manage" for department_id in DEPARTMENTS.values()
+    }
+    assert scoped_access["sales-writers"] == {(DEPARTMENTS["sales"], None): "write"}
+    assert scoped_access["sales-readers"] == {(DEPARTMENTS["sales"], None): "read"}
+    assert {"Sales Writers", "Sales Readers"} <= {
+        body["name"]
+        for method, path, body, _ in admin.calls
+        if method == "POST" and path == "/api/access/groups"
     }
     assert (
         result.actors["internal_sales_lead"].user_id

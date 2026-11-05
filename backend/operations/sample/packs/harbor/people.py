@@ -50,6 +50,8 @@ GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
     ),
     "internal-audit": (("finance", None, "read"), ("purchasing", None, "read")),
     "guest-readers": tuple((key, None, "manage") for key in DEPARTMENT_KEYS),
+    "sales-writers": (("sales", None, "write"),),
+    "sales-readers": (("sales", None, "read"),),
 }
 # Modules named by group access or by later phases, resolved to server IDs before people.
 MODULE_KEYS = tuple(
