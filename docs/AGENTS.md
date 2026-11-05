@@ -6,4 +6,9 @@
 - Do not create a document when an existing one has the right scope; do not update documentation for internal refactors that preserve documented behavior.
 - Docs explain system architecture, behavior, contracts, and workflows. Do not add test-run results, review findings, dated verification snapshots, task handoffs, or task-specific waivers. Test plans describe how testing works and its boundaries; they are not execution logs.
 - Target deployment is single-tenant per client (micro–medium SMB, on-premise first, hosted later). This is design intent, not implemented hosted deployment; never describe multi-tenant SaaS as existing.
+- `docs/specs/` holds feature specs and `docs/plans/` holds plans. Proposed behavior stays there, never in the verified architecture documents.
 - Terminology lives in `docs/architecture/21-glossary.md`. Use its preferred terms in new docs and plans; add a row there when a new term appears.
+
+## Skills
+
+- Spec files: [`sdd-workflow`](../.agents/skills/sdd-workflow/SKILL.md). Use it to write or update a spec under `docs/specs/`.

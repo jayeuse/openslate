@@ -2,36 +2,25 @@
 
 # Claude Code in Slate Operations
 
-Everything in `AGENTS.md` above applies. This section only covers where Claude Code differs from the Codex setup, and how Claude does design work here.
-
-## Role
-
-Claude is the design and frontend agent for this repository: UI, UX, visual design, brand, design system, and UI copy. Default working scope is `frontend/`. Take backend work only when the task explicitly assigns it, and then follow the backend skills and scoped `AGENTS.md` files as written.
+Everything in `AGENTS.md` above applies. This section only covers where Claude Code differs from the Codex setup.
 
 ## Codex-to-Claude mapping
 
 - **Skills.** `.claude/skills` is a symlink to `.agents/skills`. They are the same files; the skill paths in `AGENTS.md` stay valid. Edit skills in `.agents/skills` only.
 - **Orchestration.** The Codex fleet exists in Claude as user-level subagents in `~/.claude/agents/`, generated from `~/.codex/agents/*.toml` by `~/.agents/scripts/sync-claude-agents.py`. Same names and instructions; models map luna → `sonnet`, sol → `opus`, astra → `fable`, except `implement`, which runs on `opus` (medium effort). Follow the orchestration rules and `.agents/orchestration/PROTOCOL.md` referenced in `AGENTS.md` with these subagents. `agent-task.py doctor` checks the Codex setup only.
 - **Subagents.**
-  - Fleet (user-level): `explore`, `check_runner`, `browser`, `implement`, `implement_complex`, `review`, `deep_review`, `analyst`, `deep_analyst`, `research`. `AGENTS.md` still says `utility`; use `check_runner` for that role.
+  - Fleet (user-level): `explore`, `check_runner`, `browser`, `implement`, `implement_complex`, `review`, `deep_review`, `analyst`, `deep_analyst`, `research`.
   - `ui-reviewer` (project): fresh-context visual and accessibility review of a finished UI change. Prefer it over `review` for visual quality; use `review` for diff and acceptance criteria. Both may run on the same change.
   - `impeccable-finish-reviewer`, `impeccable-documenter`, `impeccable-manual-edit-applier` (project): spawned by the impeccable skill itself. They are generated from `.agents/skills/impeccable/agents/*.toml`; regenerate them after an Impeccable update.
   - Built-in `Explore` and `Plan` are different from the fleet `explore`. For repository tracing, use the fleet `explore`.
 - **MCP servers** (`.mcp.json`): `playwright` (browser and screenshots, output in `.playwright-mcp/`), `shadcn` (component registry and source), `context7` (current library docs). There is no PostgreSQL MCP for Claude; use the documented CLI path when database evidence is authorized.
 
-## Design work
+## Library facts
 
-- **Design skills: `ui-ux-pro-max` and `impeccable` only. `ui-ux-pro-max` always has priority over `impeccable`.** `ui-ux-pro-max` owns system layout, information architecture, flows, interface and UI changes, interaction patterns, responsive behavior, accessibility, and UX improvements that make the product easier to use. `impeccable` owns design choices and visual presentation inside that structure: typography, color, tokens, spacing rhythm, motion, polish, and brand voice. `impeccable` stays the only writer of the design-system files (`DESIGN.md`, `.impeccable/design.json`) and records `ui-ux-pro-max` layout decisions there. On any conflict, the `ui-ux-pro-max` decision wins and `impeccable` adjusts the visuals; `impeccable` never overrides a layout, flow, or usability decision. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
-- **Design truth** lives in `.impeccable/design.json`, `PRODUCT.md`, and the tokens in `frontend/src/app/globals.css`. Point to these files; never copy token values into other documents.
-- **No image generation** exists in this harness. Build code-led: SVG for marks, icons, and illustrations; CSS and canvas for texture and motion. The existing comps in `.impeccable/mocks/` are valid references. If a flow needs a new raster comp or asset, say so and continue code-led; never fake one.
-- **Library facts.** This is Next.js 16, React 19, and Tailwind v4 (CSS-first). Before writing framework code from memory, check `node_modules/next/dist/docs/` (per `frontend/AGENTS.md`) or Context7. For a shadcn primitive, check `src/components/ui/` first, then the shadcn MCP.
+- This is Next.js 16, React 19, and Tailwind v4 (CSS-first). Before writing framework code from memory, check `node_modules/next/dist/docs/` (per `frontend/AGENTS.md`) or Context7. For a shadcn primitive, check `src/components/ui/` first, then the shadcn MCP.
 
 Correct: `Checked Context7 for the Tailwind v4 @theme syntax, then added the token to globals.css.`
 Wrong: `Added a tailwind.config.ts with the new color.` (v4 here has no config file.)
-
-Correct: `Settled the /boards filter layout and keyboard flow with ui-ux-pro-max, then had impeccable choose type, color, and spacing within that layout.`
-Wrong: `Let impeccable move the /boards filters into a side panel for visual balance, against the ui-ux-pro-max layout.`
-Wrong: `Ran design:design-critique on /boards, then design:accessibility-review.`
 
 ## Visual verification loop
 
@@ -39,7 +28,7 @@ Required for every change that affects rendered UI. Code review alone is not ver
 
 1. Start the dev server with `npm run dev` in `frontend/`, in the background. Reuse it if it already runs. The port is `FRONTEND_DEV_PORT` (default 3000).
 2. Use the playwright MCP to open the changed route and take screenshots at desktop (1440x900) and mobile (390x844).
-3. Compare the screenshots with the request and the design system. Fix material problems.
+3. Compare the screenshots with the request. Fix material problems.
 4. Take at most two screenshot rounds. Batch fixes between rounds; do not screenshot after each small edit.
 5. For a non-trivial change, spawn `ui-reviewer` with the request, the changed files, and the screenshot paths. Skip this when `impeccable-finish-reviewer` already reviewed the build.
 6. Run the frontend static checks once the work unit stabilizes, following the testing rules in `AGENTS.md`.
@@ -101,12 +90,12 @@ The advisor is Fable, set with `/advisor fable` in user settings. Subagents inhe
 
 Consult the advisor:
 
-1. Before committing to a design direction, layout approach, or component structure for a new or redesigned surface.
+1. Before you choose the layout approach or component structure for a new or rebuilt surface.
 2. After two screenshot rounds that still show a material problem, or when the same error repeats after a fix.
 3. Before reporting a large UI change as done, after `ui-reviewer` or `impeccable-finish-reviewer` has returned. Give it the reviewer's findings and your fixes.
 4. When a reviewer and your own evidence disagree.
 
-Do not consult it for token or copy tweaks, lint and format fixes, single-component styling changes, or questions that the design files already answer.
+Do not consult it for token or copy tweaks, lint and format fixes, single-component styling changes, or questions that the repository's files already answer.
 
 If the advisor is unavailable or declines, continue and state it in one line in the final report.
 
@@ -115,10 +104,6 @@ Wrong: `Changed the button padding from 8 to 10; consulting the advisor to confi
 
 Correct: `Mobile toolbar still overflows after two rounds. Consulting the advisor with both screenshots and the two attempted fixes.`
 Wrong: `Toolbar still overflows. Trying a third and fourth variation.`
-
-## Impeccable hook
-
-The impeccable design hook runs after each Edit/Write on UI files and again at Stop (configured in `.claude/settings.json`). Treat its findings with the triage rules in `.agents/skills/impeccable/reference/hooks.md`: fix real problems, never add an ignore to skip a fix, and ask before `ignore-file` or `ignore-rule`.
 
 ## PR review findings
 
