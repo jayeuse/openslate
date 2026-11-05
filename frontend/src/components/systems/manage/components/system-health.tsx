@@ -5,6 +5,7 @@ import {
   CircleAlert,
   CircleCheck,
   CircleDashed,
+  CircleGauge,
   CircleMinus,
   CircleX,
   ExternalLink,
@@ -43,20 +44,27 @@ import {
   checkTime,
   checkTimeText,
   failedJobsText,
+  installationRows,
   nextCheckSuffix,
   PART_NAMES,
   PART_ORDER,
   partRows,
   signInActivityText,
+  storageText,
   systemHeadline,
   type BackupState,
   type BackupsRow,
   type CheckSuffix,
   type CheckTrigger,
   type HeadlineTone,
+  type InstallationRows,
   type PartStatus,
+  type WorkerState,
+  WORKER_LABELS,
 } from "../domain/health-rules";
 import { useWorkspaceRegion } from "./backup-time";
+import { SupportFile } from "./system-health-support-file";
+import { SystemHealthTimeline } from "./system-health-timeline";
 
 const CONNECTION_MESSAGE =
   "Could not connect. Check your connection and try again.";
@@ -66,7 +74,19 @@ const CONNECTION_MESSAGE =
  * a skeleton while the first read runs, dashes when it failed.
  */
 export type OrganizationBlock =
-  { backups: BackupsRow; failedJobs: string; signIns: string } | "pending";
+  | {
+      backups: BackupsRow;
+      failedJobs: string;
+      signIns: string;
+      storage: string;
+    }
+  | "pending";
+
+/**
+ * Block 4's values (D18), or "pending" for the installation owner's card
+ * before any result.
+ */
+export type InstallationBlock = InstallationRows | "pending";
 
 /** What the page shows for its status read (D2.7). */
 export type SystemHealthState =
@@ -80,10 +100,14 @@ export type SystemHealthState =
     }
   | { kind: "unavailable"; failure: ApiErrorText };
 
-const TONE_ICONS: Readonly<Record<HeadlineTone, LucideIcon>> = {
-  working: CircleCheck,
-  not_set_up: CircleMinus,
-  not_working: CircleX,
+const TONE_ICONS: Readonly<
+  Record<HeadlineTone, { icon: LucideIcon; className: string }>
+> = {
+  working: { icon: CircleCheck, className: "text-flow-text" },
+  not_set_up: { icon: CircleMinus, className: "text-warn-text" },
+  // D14.1: no other word on the page uses the gauge shape.
+  slow: { icon: CircleGauge, className: "text-warn-text" },
+  not_working: { icon: CircleX, className: "text-danger-text" },
 };
 
 const PART_ICONS: Readonly<
@@ -93,7 +117,17 @@ const PART_ICONS: Readonly<
   set_up: { icon: CircleDashed, className: "text-muted-foreground" },
   not_set_up: { icon: CircleMinus, className: "text-warn-text" },
   not_working: { icon: CircleX, className: "text-danger-text" },
+  slow: { icon: CircleGauge, className: "text-warn-text" },
   unknown: null,
+};
+
+// D18.3: a worker's state by shape as well as color.
+const WORKER_ICONS: Readonly<
+  Record<WorkerState, { icon: LucideIcon; className: string }>
+> = {
+  running: { icon: CircleCheck, className: "text-flow-text" },
+  not_seen: { icon: CircleX, className: "text-danger-text" },
+  never_seen: { icon: CircleDashed, className: "text-muted-foreground" },
 };
 
 // D8.3: these words extend R2 for the Backups row only; Late has its own
@@ -302,8 +336,16 @@ export function SystemHealth({ viewer }: { viewer: ReferenceViewer }) {
           organizationPart.lockouts,
           region,
         ),
+        storage: storageText(organizationPart.storage_used_bytes, region),
       }
     : !data && viewer !== "member"
+      ? "pending"
+      : null;
+  // D18.1: the same rule for block 4 and the installation owner.
+  const installationPart = data?.installation;
+  const installation: InstallationBlock | null = installationPart
+    ? installationRows(installationPart, new Date(status.dataUpdatedAt), region)
+    : !data && installationOwner
       ? "pending"
       : null;
 
@@ -316,6 +358,9 @@ export function SystemHealth({ viewer }: { viewer: ReferenceViewer }) {
       releaseLink={releaseLink}
       viewer={viewer}
       organization={organization}
+      installation={installation}
+      timeline={<SystemHealthTimeline />}
+      supportFile={<SupportFile viewer={viewer} />}
       linkTo={(href, label) => (
         <GuardedWorkspaceLink href={href} className={linkClassName}>
           {label}
@@ -330,6 +375,17 @@ const linkClassName =
 
 const cardClassName =
   "bg-card border-border min-w-0 rounded-[var(--radius)] border";
+
+// D27: label columns follow the card, not the viewport, because a viewport
+// query cannot see the sidebar. The container variants stay behind `xl:`, or
+// a phone card would lose its stacked rows.
+const rowClassName =
+  "grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5 xl:grid-cols-[minmax(0,1fr)] xl:gap-0.5 xl:@min-[20rem]:grid-cols-[7.5rem_minmax(0,1fr)] xl:@min-[20rem]:gap-3";
+
+// D23: a pane scrolls alone from 1280px, and its last card takes the free
+// height, so no pane shows bare ground under a card.
+const paneClassName =
+  "relative flex min-w-0 flex-col gap-4 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:[&>:last-child]:flex-1";
 
 function CardHeader({ id, children }: { id: string; children: ReactNode }) {
   return (
@@ -351,7 +407,10 @@ function PartList({ rows }: { rows: ReturnType<typeof partRows> | null }) {
         return (
           <div
             key={key}
-            className="grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5"
+            className={cn(
+              rowClassName,
+              "xl:@min-[30rem]:grid-cols-[12rem_minmax(0,1fr)]",
+            )}
           >
             <dt className="text-muted-foreground">{PART_NAMES[key]}</dt>
             <dd className="min-w-0">
@@ -395,7 +454,7 @@ function OrganizationRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5">
+    <div className={rowClassName}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="flex min-w-0 flex-col items-start">{children}</dd>
     </div>
@@ -442,13 +501,16 @@ function OrganizationList({
               ) : null}
               {backups.word}
             </span>
-            {/* Finding 4: each part stays whole; the line wraps only
-                between parts. */}
+            {/* Each part stays whole when it fits a line, and a wider part
+                wraps, so a pane never scrolls sideways (D27). From 1280px each
+                part takes its own line, with no separator (D35.7). */}
             <span className="text-muted-foreground tabular-nums">
               {backups.detail.map((part, index) => (
                 <Fragment key={part}>
-                  {index > 0 ? " · " : null}
-                  <span className="whitespace-nowrap">{part}</span>
+                  {index > 0 ? <span className="xl:hidden"> · </span> : null}
+                  <span className="inline-block max-w-full xl:block">
+                    {part}
+                  </span>
                 </Fragment>
               ))}
             </span>
@@ -482,6 +544,20 @@ function OrganizationList({
           ? linkTo("/access?view=security", "Open Security in Access")
           : null}
       </OrganizationRow>
+      {/* D17: a size is not a status, so no icon; no page lists storage by
+          organization, so no link. */}
+      <OrganizationRow label="File storage">
+        {values ? (
+          <span className="font-medium tabular-nums">{values.storage}</span>
+        ) : (
+          placeholder(false)
+        )}
+        {links ? (
+          <span className="text-muted-foreground">
+            Storage limit: not set yet
+          </span>
+        ) : null}
+      </OrganizationRow>
     </dl>
   );
 }
@@ -499,7 +575,7 @@ function OrganizationCard({
   return (
     <section
       aria-labelledby="system-health-organization"
-      className={cardClassName}
+      className={cn(cardClassName, "@container")}
     >
       <CardHeader id="system-health-organization">Your organization</CardHeader>
       <LoadingRegion
@@ -516,8 +592,92 @@ function OrganizationCard({
   );
 }
 
-/** The page body for one state: blocks 1, 2, 3 (admins), 5 and 6 in reading
- * order. */
+/**
+ * Block 4's rows (D18.2): Database size, then the five workers, always in this
+ * order. `skeleton` is the first load (a 120px bar each, a circle before each
+ * worker); `dash` is a failed first read.
+ */
+function InstallationList({
+  cells,
+}: {
+  cells: InstallationRows | "skeleton" | "dash";
+}) {
+  const values = typeof cells === "string" ? null : cells;
+  const placeholder = (withIcon: boolean) =>
+    cells === "skeleton" ? (
+      <span className="flex items-center gap-2">
+        {withIcon ? <Skeleton className="size-4 rounded-full" /> : null}
+        <Skeleton className="h-3.5 w-30" />
+      </span>
+    ) : (
+      <span className="font-medium">—</span>
+    );
+  return (
+    <dl className="grid min-w-0 gap-3 px-4 py-3 text-sm sm:gap-0 sm:py-2">
+      <OrganizationRow label="Database size">
+        {values ? (
+          <span className="font-medium tabular-nums">{values.database}</span>
+        ) : (
+          placeholder(false)
+        )}
+      </OrganizationRow>
+      {WORKER_LABELS.map(([key, label]) => {
+        const worker = values?.workers.find((row) => row.key === key);
+        const icon = worker?.state ? WORKER_ICONS[worker.state] : null;
+        return (
+          <OrganizationRow key={key} label={label}>
+            {worker ? (
+              <>
+                <span className="flex items-center gap-2 font-medium tabular-nums">
+                  {icon ? (
+                    <icon.icon
+                      aria-hidden="true"
+                      className={cn("size-4 shrink-0", icon.className)}
+                    />
+                  ) : null}
+                  {worker.word}
+                </span>
+                {worker.detail ? (
+                  <span className="text-muted-foreground">{worker.detail}</span>
+                ) : null}
+              </>
+            ) : (
+              placeholder(true)
+            )}
+          </OrganizationRow>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** Block 4, Installation (D18), for the installation owner only. */
+function InstallationCard({
+  block,
+  loading,
+}: {
+  block: InstallationBlock;
+  loading: boolean;
+}) {
+  return (
+    <section
+      aria-labelledby="system-health-installation"
+      className={cn(cardClassName, "@container")}
+    >
+      <CardHeader id="system-health-installation">Installation</CardHeader>
+      <LoadingRegion
+        loading={loading}
+        label="Loading system status"
+        skeleton={<InstallationList cells="skeleton" />}
+      >
+        <InstallationList cells={block === "pending" ? "dash" : block} />
+      </LoadingRegion>
+    </section>
+  );
+}
+
+/** The page body for one state: blocks 1, 2, 3 (admins), 4 (the owner), 5
+ * and 6 in reading order. */
 export function SystemHealthView({
   state,
   busy,
@@ -526,6 +686,9 @@ export function SystemHealthView({
   releaseLink,
   viewer,
   organization,
+  installation,
+  timeline,
+  supportFile,
   linkTo,
 }: {
   state: SystemHealthState;
@@ -537,20 +700,30 @@ export function SystemHealthView({
   viewer: ReferenceViewer;
   /** Block 3; null renders no card, heading or gap (D8.1). */
   organization: OrganizationBlock | null;
+  /** Block 4; null renders no card, heading or gap (D18.1). */
+  installation: InstallationBlock | null;
+  /** The 30-day timeline under the parts (D15.1). */
+  timeline: ReactNode;
+  /** Block 6's support file, for admins and the owner (D19.1). */
+  supportFile: ReactNode;
   linkTo: (href: Route, label: string) => ReactNode;
 }) {
   const loading = state.kind === "loading";
   const result = state.kind === "result" ? state : null;
   const headline = result ? systemHeadline(result.status.parts) : null;
-  const HeadlineIcon = headline ? TONE_ICONS[headline.tone] : null;
+  const headlineIcon = headline ? TONE_ICONS[headline.tone] : null;
   const failure = state.kind === "loading" ? null : state.failure;
   const rows = partRows(result?.status.parts ?? []);
   const advice = referenceAdvice(viewer);
+  // D24: the middle pane exists only when block 3 or block 4 renders.
+  const details = organization !== null || installation !== null;
   return (
-    <div className="flex max-w-2xl min-w-0 flex-col gap-4">
+    // From 1280px the band sits over panes that fill the section; when notices
+    // leave too little room, the section scrolls instead (D23, Still Page).
+    <div className="flex min-w-0 flex-col gap-4 xl:h-full">
       <section
         aria-labelledby="system-health-headline"
-        className={cn(cardClassName, "p-4")}
+        className={cn(cardClassName, "p-4 xl:shrink-0")}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
@@ -558,43 +731,43 @@ export function SystemHealthView({
               loading={loading}
               label="Loading system status"
               skeleton={
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:gap-3">
                   <Skeleton className="h-[1.125rem] w-3/5" />
                   <Skeleton className="h-3.5 w-24" />
                 </div>
               }
             >
-              <div className="flex items-start gap-2">
-                {HeadlineIcon ? (
-                  <HeadlineIcon
-                    aria-hidden="true"
-                    className={cn(
-                      "mt-0.5 size-5 shrink-0",
-                      headline?.tone === "working"
-                        ? "text-flow-text"
-                        : headline?.tone === "not_set_up"
-                          ? "text-warn-text"
-                          : "text-danger-text",
-                    )}
-                  />
+              <div className="flex flex-col xl:flex-row xl:flex-wrap xl:items-baseline xl:gap-x-3">
+                {/* `self-baseline` gives this row the sentence's baseline, not
+                    the icon's bottom edge, for the check line beside it. */}
+                <div className="flex items-start gap-2">
+                  {headlineIcon ? (
+                    <headlineIcon.icon
+                      aria-hidden="true"
+                      className={cn(
+                        "mt-0.5 size-5 shrink-0",
+                        headlineIcon.className,
+                      )}
+                    />
+                  ) : null}
+                  <h2
+                    id="system-health-headline"
+                    data-slot="section-title"
+                    className="text-lg font-semibold xl:self-baseline"
+                  >
+                    {headline
+                      ? headline.sentence
+                      : state.kind === "unavailable"
+                        ? "The status cannot be checked now."
+                        : "System status"}
+                  </h2>
+                </div>
+                {result ? (
+                  <p className="text-muted-foreground mt-1 text-sm tabular-nums xl:mt-0">
+                    {result.checkLine}
+                  </p>
                 ) : null}
-                <h2
-                  id="system-health-headline"
-                  data-slot="section-title"
-                  className="text-lg font-semibold"
-                >
-                  {headline
-                    ? headline.sentence
-                    : state.kind === "unavailable"
-                      ? "The status cannot be checked now."
-                      : "System status"}
-                </h2>
               </div>
-              {result ? (
-                <p className="text-muted-foreground mt-1 text-sm tabular-nums">
-                  {result.checkLine}
-                </p>
-              ) : null}
             </LoadingRegion>
           </div>
           {/* A focused button that turns disabled loses focus, so a running
@@ -631,73 +804,105 @@ export function SystemHealthView({
         </span>
       </section>
 
-      <section aria-labelledby="system-health-parts" className={cardClassName}>
-        <CardHeader id="system-health-parts">
-          Parts of Slate Operations
-        </CardHeader>
-        {/* One region for the four cells, so the label is announced once;
-            the part names are fixed and render at once (D2.7). */}
-        <LoadingRegion
-          loading={loading}
-          label="Loading system status"
-          skeleton={<PartList rows={null} />}
-        >
-          <PartList rows={rows} />
-        </LoadingRegion>
-      </section>
-
-      {organization ? (
-        <OrganizationCard
-          block={organization}
-          loading={loading}
-          linkTo={linkTo}
-        />
-      ) : null}
-
-      <section aria-labelledby="system-health-about" className={cardClassName}>
-        <CardHeader id="system-health-about">About this system</CardHeader>
-        <dl className="grid min-w-0 px-4 py-2 text-sm">
-          <div className="grid min-w-0 grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-3 py-1.5 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
-            <dt className="text-muted-foreground">Version</dt>
-            <dd className="min-w-0 tabular-nums">
-              <LoadingRegion
-                loading={loading}
-                label="Loading system status"
-                skeleton={<Skeleton className="h-3.5 w-12" />}
-              >
-                <span className="flex flex-wrap items-baseline gap-x-1">
-                  <span>{result ? result.status.version : "—"}</span>
-                  {releaseLink ? (
-                    <>
-                      <span
-                        aria-hidden="true"
-                        className="text-muted-foreground"
-                      >
-                        ·
-                      </span>
-                      {releaseLink}
-                    </>
-                  ) : null}
-                </span>
-              </LoadingRegion>
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section aria-labelledby="system-health-help" className={cardClassName}>
-        <CardHeader id="system-health-help">
-          When something goes wrong
-        </CardHeader>
-        <div className="flex flex-col gap-2 px-4 py-3 text-sm leading-6">
-          <p>
-            When an action fails, its message shows a reference, for example
-            “Reference <code className="font-mono">4f9c2e1a</code>”, with a Copy
-            button.{advice ? ` ${advice}` : ""}
-          </p>
-          <p>{notLoadingAdvice(viewer)}</p>
+      <div
+        className={cn(
+          "grid min-w-0 gap-4 xl:min-h-[15rem] xl:flex-1 xl:grid-rows-[minmax(0,1fr)]",
+          details
+            ? "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_20rem]"
+            : "xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]",
+        )}
+      >
+        <div data-health-pane="parts" className={paneClassName}>
+          <section
+            aria-labelledby="system-health-parts"
+            className={cn(cardClassName, "@container")}
+          >
+            <CardHeader id="system-health-parts">
+              Parts of Slate Operations
+            </CardHeader>
+            {/* One region for the four cells, so the label is announced once;
+                the part names are fixed and render at once (D2.7). */}
+            <LoadingRegion
+              loading={loading}
+              label="Loading system status"
+              skeleton={<PartList rows={null} />}
+            >
+              <PartList rows={rows} />
+            </LoadingRegion>
+            {timeline}
+          </section>
         </div>
-      </section>
+
+        {details ? (
+          <div data-health-pane="details" className={paneClassName}>
+            {organization ? (
+              <OrganizationCard
+                block={organization}
+                loading={loading}
+                linkTo={linkTo}
+              />
+            ) : null}
+
+            {installation ? (
+              <InstallationCard block={installation} loading={loading} />
+            ) : null}
+          </div>
+        ) : null}
+
+        <div data-health-pane="help" className={paneClassName}>
+          <section
+            aria-labelledby="system-health-about"
+            className={cardClassName}
+          >
+            <CardHeader id="system-health-about">About this system</CardHeader>
+            <dl className="grid min-w-0 px-4 py-2 text-sm">
+              <div className="grid min-w-0 grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-3 py-1.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] xl:grid-cols-[6rem_minmax(0,1fr)]">
+                <dt className="text-muted-foreground">Version</dt>
+                <dd className="min-w-0 tabular-nums">
+                  <LoadingRegion
+                    loading={loading}
+                    label="Loading system status"
+                    skeleton={<Skeleton className="h-3.5 w-12" />}
+                  >
+                    <span className="flex flex-wrap items-baseline gap-x-1">
+                      <span>{result ? result.status.version : "—"}</span>
+                      {releaseLink ? (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="text-muted-foreground"
+                          >
+                            ·
+                          </span>
+                          {releaseLink}
+                        </>
+                      ) : null}
+                    </span>
+                  </LoadingRegion>
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section
+            aria-labelledby="system-health-help"
+            className={cardClassName}
+          >
+            <CardHeader id="system-health-help">
+              When something goes wrong
+            </CardHeader>
+            <div className="flex max-w-2xl flex-col gap-2 px-4 py-3 text-sm leading-6">
+              <p>
+                When an action fails, its message shows a reference, for example
+                “Reference <code className="font-mono">4f9c2e1a</code>”, with a
+                Copy button.{advice ? ` ${advice}` : ""}
+              </p>
+              <p>{notLoadingAdvice(viewer)}</p>
+              {supportFile}
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

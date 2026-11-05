@@ -1,8 +1,9 @@
-"""The admin-only organization part of the system status (S3).
+"""The admin-only organization part of the system status (S3, S5-C7).
 
 Read-only: backup freshness against the schedule, failed jobs and sign-in activity of the
-last 7 days in the bound organization. It never locks or creates the backup policy and
-never returns a run list, name, size, path, snapshot or failure code.
+last 7 days, and the file storage in use, all in the bound organization. It never locks or
+creates the backup policy and never returns a run list, name, backup size, path, snapshot
+or failure code.
 """
 
 from datetime import datetime, timedelta
@@ -18,6 +19,7 @@ from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.service import _security_events_of_bound_organization
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.service import BackupStateError, installation_id
+from app.systems.manage.health.installation import storage_used_bytes
 from app.systems.manage.health.schemas import (
     BackupResult,
     OrganizationBackups,
@@ -131,4 +133,5 @@ def organization_status(
         failed_jobs=failed_jobs,
         failed_sign_ins=failed_sign_ins,
         lockouts=lockouts,
+        storage_used_bytes=storage_used_bytes(db),
     )

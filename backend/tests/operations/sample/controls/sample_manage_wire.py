@@ -46,10 +46,61 @@ def _workspace_profile(dataset):
     }
 
 
+_AT = "2026-11-05T10:42:00Z"
+_PARTS = [{"key": "data", "status": "working"}, {"key": "email", "status": "set_up"}]
+
+
+def _health_periods(problem):
+    return {
+        "items": [{"part": "email", "kind": "not_working", "started_at": "2026-11-04T09:00:00Z",
+                   "ended_at": "2026-11-04T09:12:00Z"}],
+        "pagination": {"limit": 5, "offset": 0, "count": 2 if problem == "health_periods_shape"
+                       else 1, "total": 1, "has_more": False},
+        "oldest_sample_at": "2026-10-06T00:00:00Z",
+    }
+
+
+def _organization_file(problem):
+    body = {
+        "summary": {"kind": "organization", "generated_at": _AT, "application_version": "0.1.0",
+                    "parts": _PARTS, "problem_periods_30d": 0, "server_errors_30d": 0,
+                    "storage_used_bytes": 1200},
+        "versions": {"application": "0.1.0"},
+        "periods": [],
+        "storage": {"used_bytes": 1200},
+        "server_errors": {"total_30d": 0, "truncated": False, "items": []},
+    }
+    if problem == "organization_file_scope":
+        body["workers"] = []
+    return body
+
+
+def _installation_file(problem):
+    body = {
+        "summary": {"kind": "installation", "generated_at": _AT, "application_version": "0.1.0",
+                    "parts": _PARTS, "problem_periods_30d": 0, "server_errors_30d": 1,
+                    "workers_not_running": ["comms_jobs"], "database_bytes": 4096},
+        "versions": {"application": "0.1.0", "schema_revision": "f8852c638a76",
+                     "postgresql": "17.4"},
+        "database": {"bytes": 4096, "measured_at": _AT},
+        "workers": [{"key": "comms_jobs", "state": "never_seen", "last_seen_at": None}],
+        "organizations": [{"org_id": _id("workspace"), "storage_used_bytes": 1200}],
+        "samples": {"columns": ["sampled_at", "data_status"], "rows": [[_AT, "working"]]},
+        "periods": [],
+        "server_errors": {"total_30d": 1, "truncated": False, "items": [
+            {"request_id": _id("server-error"), "occurred_at": _AT, "status": 500,
+             "method": "GET", "route": "/api/records/{record_id}", "org_id": None},
+        ]},
+    }
+    if problem == "installation_file_shape":
+        body["summary"] = body.pop("summary")
+    return body
+
+
 def _manage_run(tmp_path, pack_key, problem=None):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
-    assert len(actions) == 7, "Every new noninteractive Phase B route needs its own action"
+    assert len(actions) == 10, "Every new noninteractive Phase B route needs its own action"
     people = {
         p.key: p
         for p in dataset.organization.actors.people
@@ -164,10 +215,20 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     "parts": [{"key": key, "status": statuses[key]} for key in keys],
                     "version": "0.1.0",
                     "checked_at": "2026-11-02T10:42:05.123456Z",
-                    # The status control runs as a plain member, who gets no organization part.
+                    # The status control runs as a plain member, who gets no organization or
+                    # installation part.
                     "organization": None,
+                    "installation": None,
                 },
             )
+        if path == "/api/system/health-periods":
+            return httpx.Response(200, headers=headers, json=_health_periods(problem))
+        if path == "/api/system/diagnostics/organization":
+            assert actor == "admin"
+            return httpx.Response(200, headers=headers, json=_organization_file(problem))
+        if path == "/api/system/diagnostics/installation":
+            assert actor == "operator"
+            return httpx.Response(200, headers=headers, json=_installation_file(problem))
         if path == "/api/auth/sign-in-events":
             kinds = ["sign_in_failed"] if problem == "sign_in_history_shape" else ["signed_in"]
             return httpx.Response(

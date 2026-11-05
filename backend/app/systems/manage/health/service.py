@@ -6,6 +6,7 @@ from time import monotonic
 
 from app.core.base_model import utc_now
 from app.core.readiness import ReadinessSnapshot, get_readiness_snapshot
+from app.systems.manage.health.history import HealthHistory, email_word
 from app.systems.manage.health.schemas import PartKey, PartStatus, SystemPart
 
 CACHE_SECONDS = 30.0
@@ -48,15 +49,42 @@ def cached_readiness() -> tuple[ReadinessSnapshot, datetime]:
         return _cached[0], _cached[1]
 
 
-def system_parts(snapshot: ReadinessSnapshot) -> list[SystemPart]:
+def system_parts(
+    snapshot: ReadinessSnapshot,
+    history: HealthHistory | None = None,
+    *,
+    now: datetime | None = None,
+) -> list[SystemPart]:
+    """The four words: Email from real send outcomes, Slow only on a working timed part."""
+
     components = snapshot["components"]
     parts = []
     for key, name in _PARTS:
         component = components.get(name)
-        readiness = component["status"] if component is not None else "unavailable"
-        status = _STATUS[readiness]
-        # Configuration presence does not prove that mail is delivered.
-        if key == "email" and status == "working":
-            status = "set_up"
+        readiness = component["status"] if component is not None else None
+        status: PartStatus
+        if key == "email":
+            # Configuration presence alone never proves that mail is delivered.
+            accepted, failed = (
+                (history.email_accepted_at, history.email_failed_at)
+                if history is not None
+                else (None, None)
+            )
+            status = email_word(readiness, accepted, failed, now or utc_now())
+        else:
+            status = _STATUS[readiness or "unavailable"]
+            if status == "working" and history is not None and key in history.slow:
+                status = "slow"
         parts.append(SystemPart(key=key, status=status))
     return parts
+
+
+def sample_statuses(snapshot: ReadinessSnapshot) -> dict[PartKey, PartStatus]:
+    """The stored word of each timed part, as the probe found it (no Slow, no Email)."""
+
+    components = snapshot["components"]
+    statuses: dict[PartKey, PartStatus] = {}
+    for key, name in _PARTS[:3]:
+        component = components.get(name)
+        statuses[key] = _STATUS[component["status"] if component is not None else "unavailable"]
+    return statuses

@@ -33,6 +33,7 @@ from app.systems.manage.audit import service as audit_service
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
+from app.systems.manage.health import signals
 from app.systems.manage.workspace.security_policy import load_platform_policy, validate_password
 
 
@@ -126,7 +127,16 @@ def request_recovery(
     )
     stage = "provider_request_unconfirmed"
     try:
-        client.request_recovery(email)
+        try:
+            client.request_recovery(email)
+        except SupabaseAuthUnavailable as error:
+            # Only an Auth server failure says email is not working. A 4xx refuses this
+            # request (an address Auth rejects, its per-address limit) and says nothing about
+            # delivery. A 200 proves nothing either: Auth also answers it for unknown emails,
+            # so successes come from invitations only (S5-C5, J1 A).
+            if error.kind is not None and error.kind.startswith("http_5"):
+                signals.record_signal("email_failed")
+            raise
         stage = "event_commit"
         audit_service.append_committed_security_event(
             _action_event(

@@ -4,9 +4,28 @@ from app.core.integrations.supabase_auth import (
     ProviderUser,
     ProviderUserNotFound,
     SupabaseAuthClient,
+    SupabaseAuthUnavailable,
 )
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, User
+from app.systems.manage.health import signals
+
+
+def send_invitation_email(provider: SupabaseAuthClient, email: str) -> ProviderUser:
+    """Ask Auth to send the invitation and record whether it accepted (S5-C5).
+
+    A 5xx or 429 means email did not go out; other refusals and transport errors say
+    nothing about delivery and record nothing. The answer and any error are unchanged.
+    """
+
+    try:
+        sent = provider.admin_send_invitation(email)
+    except SupabaseAuthUnavailable as error:
+        if error.kind is not None and (error.kind == "http_429" or error.kind.startswith("http_5")):
+            signals.record_signal("email_failed")
+        raise
+    signals.record_signal("email_accepted")
+    return sent
 
 
 def _require_owned(user: ProviderUser, profile: User, membership: Membership) -> None:

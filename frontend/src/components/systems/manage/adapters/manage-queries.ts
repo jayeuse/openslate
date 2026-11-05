@@ -97,6 +97,7 @@ export const manageKeys = {
     ["manage", "maintenance", "backup-exports", id] as const,
   version: () => ["manage", "maintenance", "version"] as const,
   systemStatus: () => ["manage", "system-status"] as const,
+  systemHealthPeriods: () => ["manage", "system-health-periods"] as const,
 };
 
 export const manageBackupStatusOptions = () =>

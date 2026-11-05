@@ -1,6 +1,6 @@
 # System health for the people who use Slate Operations
 
-> **Status: S1 and S2 built (2026-11-03); S3 to S6 clarified by the owner (2026-11-03), waiting to start.** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
+> **Status: S1 to S4 built (2026-11-03); S5 and S6 in progress (2026-11-05).** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
 
 ## Outcome
 
@@ -80,7 +80,7 @@ When the server does not answer, the page cannot tell anyone anything, because F
 | Not set up | The part is not configured on this installation. | readiness `not_configured` |
 | Set up | Configured, but Slate Operations cannot test it yet (email only). | smtp `ready` |
 
-Email is a special case. Readiness checks only that email is configured (`readiness.py:167-171`), not that mail is delivered. Until S5 records send failures, the Email row says "Set up" with the line "Slate Operations cannot yet confirm delivery", never "Working".
+Email is a special case. Readiness checks only that email is configured (`readiness.py:167-171`), not that mail is delivered. Until S5 records send failures, the Email row says "Set up" with the line "Slate Operations cannot yet confirm delivery", never "Working". From S5, the Email row follows real send results (S5-C5, D16); this paragraph describes S2.
 
 "Slow" needs a measured latency, so it arrives with stored samples (S5), not before.
 
@@ -94,7 +94,7 @@ Email is a special case. Readiness checks only that email is configured (`readin
 
 ## Page layout (`/manage?view=health`)
 
-Reading order, one column, readable width, the slim Manage grammar. On a phone the same order stacks with no horizontal scroll.
+Reading order, the slim Manage grammar. From 1280px the blocks sit in panes under the headline ("Design (still-page relayout)"). Below 1280px they form one column. On a phone the same order stacks with no horizontal scroll.
 
 1. **Headline.** The R3 sentence, the check time, and a "Check again" button. The page also refreshes every 60 seconds while visible and when the window regains focus.
 2. **Parts of Slate Operations.** One row per part (R1): name, status word with icon (R2), one plain line of cause when it does not work, for example "Messages that need email, such as invitations, wait until email works."
@@ -102,9 +102,9 @@ Reading order, one column, readable width, the slim Manage grammar. On a phone t
    - Backups: "Last backup today at 02:00 · verified" or "No backup in the last 2 days". Status word, time and result only.
    - Failed jobs: "2 jobs failed in the last 7 days", linked to Manage → Jobs.
    - Sign-in activity: a link to Access → Security.
-4. **Installation** (installation owner only, S4): disk free, database size, background workers.
+4. **Installation** (installation owner only, S5): database size and background workers. Host disk was dropped by the owner on 2026-11-03.
 5. **About this system.** Version, plus the release-notes link for the installation owner as today.
-6. **When something goes wrong.** Two sentences on error references (R5), and what to do when Slate Operations does not load: "Wait a minute and reload. If it still does not load, tell your administrator."
+6. **When something goes wrong.** Two sentences on error references (R5), and what to do when Slate Operations does not load: "Wait a minute and reload. If it still does not load, tell your administrator." From S6, admins and the owner also get "Download support file" here (D19).
 
 **Shell banner (S2).** When requests fail with no response, a banner shows at the top of the app: "Slate Operations cannot reach its server. Changes you make now may not save. It tries again on its own." It clears on the next success. It is a banner, not a curtain, and it does not block the page.
 
@@ -138,7 +138,7 @@ Tests and reviews cite these IDs.
 
 - **S2-C1.** `GET /api/system/status` answers every signed-in person of the bound organization (admin, member, guest, member with no group access) with the four R1 parts and their R2 status words, the version, and the check time. A request with no session gets 401.
 - **S2-C2.** The endpoint probes readiness at most once in 30 seconds per process and returns the time of the probe it used.
-- **S2-C3.** The Email part is "Set up" or "Not set up" or "Not working", never "Working" (R2).
+- **S2-C3.** The Email part is "Set up" or "Not set up" or "Not working", never "Working" (R2). S5-C5 replaces this from S5: Email reads Working after a real successful send.
 - **S2-C4.** The response and the page contain no service names, hosts, ports, error strings, or data of another organization (R1, R4).
 - **S2-C5.** Manage → System health (`/manage?view=health`) shows for every role. Manage → Organization stays the default Manage tab.
 - **S2-C6.** The page shows, in this order: the R3 headline with the check time and "Check again"; one row per part with icon and word, and a plain cause line when a part does not work; About this system (version, plus the release-notes link for the installation owner only); When something goes wrong. It loads in the page frame with no curtain, and refreshes every 60 seconds while visible and when the window regains focus.
@@ -173,6 +173,28 @@ Approved by the Human Owner on 2026-11-03 ("Start S3 and S4"), with the choices 
 
 - **D6-C1.** In error references and in block 6, an admin reads "Give this reference to the person who runs your server.", the installation owner reads no second sentence, and members and guests keep "Give this reference to your administrator."
 - **D7-C1.** Audit and Security events find an entry by the 8-character reference (the end of `request_id`) as well as by the full ID, with today's admin-only access.
+
+## Acceptance criteria (S5, S6)
+
+Approved by the Human Owner on 2026-11-05 ("Start S5 and S6"), with the choices in "Owner decisions for S3 to S6" and these defaults: the error log stores server errors (5xx) only; email outcomes come from the requests FastAPI makes to Auth (invitations and recovery requests); while the database is down no error is stored, and the samples record the outage. Tests and reviews cite these IDs.
+
+**S5 History and installation**
+
+- **S5-C1.** The installation records one sample a minute, not one per API process: each part's status and the time its check took. With several API processes, only one writes. Samples have no organization column.
+- **S5-C2.** Samples older than 30 days are deleted at least once a day.
+- **S5-C3.** Every signed-in person sees a 30-day timeline under the parts: each period when a part did not work or was slow, as a plain sentence with its day and length, for example "Email did not work for 12 minutes on Tuesday", newest first. With no such period: "No problems in the last 30 days." It shows nothing about any organization (R4).
+- **S5-C4.** A part shows "Slow" when its check took longer than 1 second on the last 3 samples in a row, in the current status and in the timeline. "Not working" always wins over "Slow".
+- **S5-C5.** FastAPI records the outcome of each email it asks Auth to send (invitations and recovery requests) and changes none of those responses (a recovery request stays 204). The Email part reads Working after a recent successful send, Not working after recent failures, and Set up when no recent outcome exists. It never reads Working without a real success.
+- **S5-C6.** Each in-app worker (record triggers, report scheduling, Comms jobs, provider sign-out) records when it last ran; the backup runner keeps its existing heartbeat. The installation owner's block 4 shows each worker as running or "not seen since" a time, and the database size. Nobody else gets this block or its data.
+- **S5-C7.** Organization admins see their organization's file storage in use, summed from its file records, with "Storage limit: not set yet". Members and guests do not.
+- **S5-C8.** The sampler, the heartbeats and the email outcomes write no audit row and no security event. `/api/health` and `/api/ready` do not change, and the status request stays read-only.
+
+**S6 Diagnostics export**
+
+- **S6-C1.** Each server error (5xx) is stored with its request ID, status, route template (no IDs or values), the bound organization when there is one, and its time, and kept 30 days. No request body, header, personal data or record data is stored. Two kinds are not stored by design: the `/api/ready` 503 (readiness has its own samples) and requests whose method fails the method pattern.
+- **S6-C2.** The installation owner can download one JSON file: a summary at the top, versions, database size, worker heartbeats, 30 days of samples and recent server errors.
+- **S6-C3.** An organization admin can download one JSON file for their organization only: versions, the parts timeline, their organization's storage and its own server errors. It holds no database size, no workers and no data of another organization (R4).
+- **S6-C4.** Members and guests cannot download a diagnostics file and see no download action.
 
 ## API contract (S1, S2)
 
@@ -347,6 +369,74 @@ On a failed password sign-in, look up the local account with that email and set 
 | T12 | D7-C1 | PG | `reference` by suffix and full ID on both lists, uppercase accepted; other organization's match not returned; bad format 422 |
 | T13 | DQ1 | PG | Wrong password for a real account writes a failure with `subject_id` and user agent; unknown email writes none with a subject; both responses identical; a source-address lockout has no subject |
 
+## API contract (S5, S6)
+
+Fixed by the Software Architect (TASK-0015) against `main` 856d859d, database head e46611902f25. Owner choices (2026-11-05, recommended options under the owner's standing instruction): J1 A — recovery requests record failures only, and only Auth 5xx answers count (revised 2026-11-05 after the security review: an unauthenticated caller could otherwise trigger 400 or 429 answers and make Email read Not working); successes come from invitations. J2 A — no security event on a diagnostics download (as the audit CSV export). D20-7 (parent): the owner's installation file lists each organization's storage total. Paths relative to `backend/app/`.
+
+### Sampler (S5-C1, S5-C2)
+
+- `manage/health/worker.py` `SystemHealthWorker`, created in `create_app` as `app.state.health_worker`, started after the other workers in `application_lifespan`, stopped first, before `dispose_readiness_resources()`; same test gate as the other workers (`environment != "test" or e2e_background_workers`).
+- One thread per process; wakes at each UTC minute + a random 0–10 s offset; one retention attempt per hour.
+- Probe: new `get_timed_readiness_snapshot() -> (ReadinessSnapshot, dict[str, int])` in `core/readiness.py`, timing each part with `perf_counter` inside the shared in-flight probe and its 2 s budget; on timeout unfinished parts are `unavailable` with the time used. `get_readiness_snapshot()`, `/api/ready` and the 30 s cache keep their behavior.
+- Per tick: skip if the minute's row exists → probe outside any transaction → short transaction on `AuditSession(bind=get_engine())` (not the read-only readiness engine) → `pg_try_advisory_xact_lock(hashtextextended('slateops:system-health-sampler',0))`, else skip → re-check, insert buffered minutes and this minute, commit. Primary key on `sampled_at` is the second guard. `database_bytes = pg_database_size(current_database())` by the writer.
+- Database down: the sample (data `not_working`, `database_bytes` null) goes into a per-process `deque(maxlen=1440)` and flushes at the next lock win, skipping existing minutes.
+- Retention: `SELECT public.retain_system_health()` hourly from every process (the function takes its own try-lock).
+- Test hooks: `sample_once(now=, probe=)`, `retain_once()`, injectable clock, stubbable timed probe.
+
+### Tables (one migration, `down_revision = "e46611902f25"`; models `__audit_enabled__ = False`)
+
+| Table | Columns | Keys | RLS and grants to `slateops_app` |
+|---|---|---|---|
+| `system_health_samples` | `sampled_at timestamptz` PK with CHECK seconds = 0; `{data,signing_in,files}_status` NOT NULL CHECK IN (working, not_working, not_set_up); `{data,signing_in,files}_ms integer NULL` ≥ 0; `email_status` NOT NULL CHECK IN (working, not_working, set_up, not_set_up); `database_bytes bigint NULL` ≥ 0 | PK | no RLS (no organization column, installation-wide); SELECT, INSERT |
+| `system_health_signals` | `key text` PK CHECK IN (record_triggers, report_scheduling, comms_jobs, provider_signout, email_accepted, email_failed); `last_seen_at timestamptz NULL` | PK; the migration inserts all six rows | no RLS; SELECT, UPDATE |
+| `server_errors` | `request_id uuid` PK; `occurred_at timestamptz NOT NULL DEFAULT now()`; `status smallint` CHECK 500–599; `method text` CHECK `^[A-Z]{3,7}$`; `route text` length ≤ 200; `org_id uuid NULL` FK organizations ON DELETE RESTRICT | `(occurred_at)`, `(org_id, occurred_at)` | RLS as security_events: SELECT and INSERT `org_id IS NULL OR org_id = bound`; SELECT, INSERT |
+
+- `public.retain_system_health() RETURNS integer`, `SECURITY DEFINER`, owner `slateops_owner`, `search_path pg_catalog, pg_temp`, try-xact-lock, deletes samples and errors older than 30 days and errors beyond the newest 50,000 in batches ≤ 5,000, no proof event; `REVOKE ALL FROM PUBLIC; GRANT EXECUTE TO slateops_app`; added to the root-function lists.
+- `server_errors` joins `ORGANIZATION_TABLES` and `MIXED_TABLES` in `tests/migrations/test_organization_root.py`.
+
+### Email outcomes (S5-C5)
+
+- Invitations: `send_invitation_email(provider, email)` in `access/users/invitation_provider.py`, used at `users/service.py:286, :407, :482`; 200 → `email_accepted`; `SupabaseAuthUnavailable` `http_5xx`/`http_429` → `email_failed`; transport errors and other 4xx record nothing; the original exception is re-raised unchanged.
+- Recovery (J1 A, revised): in `provider_actions.request_recovery`, only an Auth 5xx records `email_failed` (4xx and 429 record nothing) (add `kind=f"http_{status}"` at `supabase_auth.py:220-221`); a 200 records nothing (Auth answers 200 for unknown emails). Responses unchanged (204 on success, the existing 503).
+- `record_signal(key)` in `manage/health/signals.py`: own `AuditSession`, `SELECT … FOR UPDATE`, `last_seen_at = max(old, now)`, commit, never raises (logs `operational_attention reason_code=health_signal_write_failed`).
+- Email word (read from the 60 s history cache, so it can lag a send by up to 60 s): smtp `not_configured` → `not_set_up`; else `email_failed` within 24 h and newer than `email_accepted` → `not_working`; else `email_accepted` within 24 h → `working`; else `set_up`. Working means Auth accepted the send.
+
+### Heartbeats (S5-C6)
+
+`record_triggers` after `TriggerWorker._run` `run_once` (lane 0); `report_scheduling` and `comms_jobs` in `ReportSchedulingWorker._run` after `_poll` when each is due; `provider_signout` after `run_once`. At most one write per key per 60 s per process (`monotonic`), outside `worker_organization`. The backup runner keeps `BackupPolicy.runner_last_seen_at`.
+
+### Status response, periods read, storage, installation (S5-C3, C4, C6, C7)
+
+- `PartStatus` gains `slow`; Email may be `working` (replaces S2-C3); Email is never slow. A part is `slow` when its current word is `working` and the newest 3 samples are within the last 4 minutes, each `working` with `ms > 1000`. Not working wins.
+- History cache: per process, 60 s TTL, no bypass, holds periods and slow parts, no organization data.
+- Periods per part: not_working runs (gaps ≤ 2 minutes) and slow runs (working, `ms > 1000`, ≥ 3 samples); `ended_at` = last bad sample + 1 minute, or `null` while ongoing (the run reaches the newest sample, at most 3 minutes old).
+- `GET /api/system/health-periods` (`list_system_health_periods`, `get_current_user`, same answer for everyone): `limit` 1–100 default 5, `offset` ≥ 0 → `{items: [{part, kind: "not_working"|"slow", started_at, ended_at|null}], pagination, oldest_sample_at|null}`; ongoing first (`started_at` desc), then ended by `ended_at` desc, ties in part order. The frontend de-duplicates by `part:kind:started_at`.
+- `organization.storage_used_bytes: int | None`: `SUM(actual_size)` for `org_id = bound`, `state IN ('ready','deleting')`, `actual_size IS NOT NULL`, under files RLS; trashed files count until purged; pending, rejected and avatars do not; on error `null`.
+- `installation: InstallationStatus | None` for `is_platform_operator(db, person.id)`, else `null` (never 403): `database_bytes`, `database_measured_at` from the newest sample with a size ≤ 10 minutes old, else null; `workers [{key, state: "running"|"not_seen"|"never_seen", last_seen_at|null}]` in order record_triggers, report_scheduling, comms_jobs, provider_signout, backup_runner; running within 3 minutes (5 for backup_runner, `backups/service.py:200`); `backup_runner` reads the `BackupPolicy` singleton directly.
+- "No change" (D20-6): the frontend ignores `installation.database_bytes`, `database_measured_at` and a running worker's `last_seen_at`.
+
+### Server error log (S6-C1)
+
+- `RequestContext.org_id` set only at `common/dependencies/auth.py:275` (after IP and MFA checks).
+- In `request_middleware.py` after the headers (`:199`), when `status >= 500`: `await run_in_threadpool(record_server_error, …)`, never raising; stores `request_id`, `status`, `method`, the `_request_route()` template or `"unknown"`, `org_id`, time; no body, header, query, user or record data; fresh `AuditSession` bound through `worker_organization(org_id)`.
+- The database-unavailable path writes nothing; after a failed write, writes pause 30 s per process; cap 120 per minute per process (overflow counted in one `operational_attention reason_code=server_error_log_dropped` line).
+
+### Diagnostics downloads (S6-C2 to S6-C4)
+
+- `GET /api/system/diagnostics/installation` (`download_installation_diagnostics`; `require_fresh_exact_admin` + `require_platform_operator`) and `GET /api/system/diagnostics/organization` (`download_organization_diagnostics`; `require_admin`). Members and guests 403; no session 401. Sync handlers returning JSON with `Cache-Control: no-store` and `Content-Disposition: attachment; filename="slateops-diagnostics-<installation|organization>-YYYYMMDD-HHMMZ.json"`; `summary` first; no audit row or security event (J2 A).
+- Installation file: `summary`, `versions {application, schema_revision, postgresql}`, `database`, `workers`, `organizations [{org_id, storage_used_bytes}]`, `samples {columns, rows}` (30 days), `periods` (≤ 1000), `server_errors {total_30d, truncated, items ≤ 1000}`; other organizations are read one at a time in a new session inside `worker_organization(org)`, plus one unbound pass for null-organization rows.
+- Organization file: `summary`, `versions {application}`, `periods` (≤ 1000), `storage {used_bytes}`, `server_errors` of the bound organization only (no `org_id`, no null-organization rows); no database, workers or samples.
+
+### Cloud mode
+
+Nothing depends on `cluster_name` or `installation_id()`; only transaction-scoped advisory locks; retention follows `retain_security_events`; storage cost about 15 MB. Risk: probes over the internet may read Slow; measure in the cloud spike (the 1 s limit stays). On Cloud `backup_runner` reads never_seen; C8 hides it with the backup controls.
+
+### Backend tests
+
+I-1 two samplers one row, lock held skips, rollback then later write (S5-C1); I-2 buffered flush, one row per minute (S5-C1); I-3 timed probe and `/api/ready` unchanged (S5-C1, C8); I-4 retention and denied direct DELETE (S5-C2); I-5 period table unit (S5-C3); I-6 identical periods for every role, 401 (S5-C3); I-7 Slow rule (S5-C4); I-8 invitation and recovery outcomes with unchanged responses (S5-C5); I-9 email word table (S5-C5); I-10 owner installation part, runtime-role `pg_database_size` (S5-C6); I-11 heartbeat throttle (S5-C6); I-12 storage sum scope (S5-C7); I-13 no audit or security rows (S5-C8); I-14 error row exactness, no row for database 503, 4xx, success, non-member `X-Org` (S6-C1); I-15 cap and pause (S6-C1); I-16 `server_errors` RLS (S6-C1); I-17 owner file (S6-C2); I-18 admin file scope (S6-C3); I-19 member, guest 403, no session 401 (S6-C4).
+
+After the build: update `docs/architecture/18-observability.md` and `07-api-architecture.md`, and the D19.2 owner paragraph (each organization's storage total).
+
 ## Design (S1, S2)
 
 `ui-ux-pro-max` set the structure, flows, keyboard order, and responsive behavior. `impeccable` set the presentation inside that structure. The design adds no token: each color below is an existing token utility in `frontend/src/app/globals.css`. For anything this section does not name, `DESIGN.md` applies (Manage sections, Slim controls, Request feedback, Loading, Words).
@@ -409,7 +499,7 @@ Error toasts stay until dismissed (`timeout: 0`), so Copy stays reachable. The t
 - Title (`data-slot="page-title"`): "System health".
 - Meta line: "See whether Slate Operations works now, and what to do when it does not."
 - No header actions. "Check again" belongs to the status that it refreshes, so it sits in block 1.
-- Under the header, the four blocks form one column, at most 672px wide (`max-w-2xl`), left-aligned, with 16px between blocks. Each block is a `section` card (`bg-card`, `border-border`, the large radius), as in `updates-panel.tsx`.
+- Under the header, the blocks sit in panes from 1280px (D23, D24) and form one full-width column below 1280px (D30), with 16px between blocks. Each block is a `section` card (`bg-card`, `border-border`, the large radius), as in `updates-panel.tsx`.
 - Block 3 (Your organization, S3) has its place between blocks 2 and 5. In S2 nothing renders there: no card, no heading, and no gap.
 
 **D2.2 Block 1, the headline.** This card has no 56px header. Its parts, in DOM order:
@@ -517,11 +607,11 @@ The words are the same for every role (D4, question 6).
 
 | | 390 × 844 | 1440 × 900 |
 |---|---|---|
-| Page | Manage's 12px padding; the page scrolls | The Still Page Rule: the header stays, and the column under it is the one `manage-scroll` panel. The cards should fit in Slate at 100% text, and only the panel scrolls when they do not |
-| Width | The cards fill the width | One column, at most 672px, left-aligned |
+| Page | Manage's 12px padding; the page scrolls | The Still Page Rule: the header and the headline band stay, and each pane under them scrolls on its own (D23, D25) |
+| Width | The cards fill the width | The band and the panes fill the width (D24) |
 | Block 1 | Icon and headline, then the check line, then "Check again" on its own row at the start (44px) | "Check again" at the top right of the card (32px) |
-| Block 2 | Name above status above cause | 14rem name column, status and cause at its right |
-| Blocks 5 and 6 | The same label-left rows (7rem); the paragraphs wrap | 8.5rem label column |
+| Block 2 | Name above status above cause | 7.5rem name column, status and cause at its right (D27) |
+| Blocks 5 and 6 | The same label-left rows (7rem); the paragraphs wrap | 6rem label column (D27) |
 | Horizontal scroll | None. The reference line wraps between its parts, and a full ID breaks anywhere | None |
 
 Keyboard order follows the DOM and the visual order. The page title takes focus by program only (`tabIndex={-1}`, as today). The tab stops are "Check again", then "Copy reference" (only in an error state), then the version link (installation owner only). The rows hold no controls. Each control uses the standard focus outline (2px `--focus`, 2px offset). No card that holds a control uses an overflow clip that could cut the outline.
@@ -634,7 +724,7 @@ Written by the Product Designer (TASK-0008) against `main` 542102d1. `ui-ux-pro-
 - After a result: the card renders only when the response carries the organization part. Without it there is no card, no heading and no gap (D2.1). This covers members, guests, department managers, and an admin whose role changed since the identity loaded.
 - First load: the card frame and its skeleton render only when the identity says the person is an admin of the bound organization. While the identity loads, nothing renders there.
 
-**D8.2 Frame.** A card with a 56px header and the `h2` "Your organization". The body is a `dl` with the block 2 grid (D2.3): a 14rem muted label column from 640px, the label above the value below 640px, 12px between rows. The value columns of blocks 2 and 3 then line up. Rows, always in this order: Backups, Failed jobs, Sign-in activity. In each value cell, line 1 is ink at weight 500, line 2 is muted, and the link comes last. Links use the D2.5 link style (`text-action-text`, 44px tall below 1280px) through `GuardedWorkspaceLink`.
+**D8.2 Frame.** A card with a 56px header and the `h2` "Your organization". The body is a `dl` with the block 2 grid (D2.3): a 14rem muted label column from 640px, the label above the value below 640px, 12px between rows. The value columns of blocks 2 and 3 then line up. From 1280px the two blocks sit in different panes, and D27 sets the label columns. Rows, always in this order: Backups, Failed jobs, Sign-in activity. In each value cell, line 1 is ink at weight 500, line 2 is muted, and the link comes last. Links use the D2.5 link style (`text-action-text`, 44px tall below 1280px) through `GuardedWorkspaceLink`.
 
 **D8.3 Backups.** These status words extend R2 for this row only. Each shape has one meaning on the page: `CircleMinus` is "not set up" here as in block 2, and Late gets a shape of its own.
 
@@ -780,6 +870,387 @@ These extend D8, D9 and the Reference filter. Each answer gives its one-line rea
    - The error clears as soon as the field holds a valid reference or is empty.
    - Reason: today every keystroke before the 8th shows the error, and Security events swaps the list for "Check the filter values to review security events." The list flickers away while the person types a valid reference.
 4. **Sign-in history when the identity read fails.** The active sessions above already show "Sessions could not be loaded. Try again." with "Retry sessions" and the reference, and that retry reads the identity again. So the history shows no second error block and no skeleton. Under its heading and intro, it shows one muted line: "Your sign-in history shows when your sessions load." It has no "Show older". After a successful retry, the history loads with its own D9.4 states. Reason: one cause, one error, one retry. A skeleton that never ends says "Loading" for ever.
+
+## Design (S5, S6)
+
+Written by the Product Designer (TASK-0014) against `main` 856d859d. `ui-ux-pro-max` set the structure, states and keyboard order; `impeccable` set the presentation inside it. No new token. "Design (S1, S2)" and "Design (S3, S4)" apply unless this section says otherwise: the card frame (D2.1), icons and words (D2.3), refresh and announcements (D2.4), loading and errors (D2.7), widths and keyboard (D2.8), `ErrorReference` with the D6 wording, the block 3 grid (D8.2), and "Show older" (D9.3). The Software Architect fixes the field names; D20 lists the values this design needs. Items marked Proposed are design proposals, not decisions.
+
+### D14. Slow (S5-C4)
+
+**D14.1 The word.** Slow is a fifth status word for a part, in block 2, in the headline and in the timeline (D15).
+
+| Word | Icon (lucide, 16px; 20px in the headline) | Icon color |
+|---|---|---|
+| Slow | `CircleGauge` | `text-warn-text` |
+
+No other word on the page uses the gauge shape (`CircleCheck`, `CircleDashed`, `CircleMinus`, `CircleX`, `CircleAlert`), so the shape repeats the word. Not working always wins: a part whose check fails shows Not working, never Slow. The page shows the word the response gives and never computes Slow from check times (D20, item 1). Proposed: Email is never Slow, because its word comes from real sends (D16), not from a timed check.
+
+| Part | Cause line for Slow (muted, under the word) |
+|---|---|
+| Saving and loading your data | "Pages may load and save more slowly than usual." |
+| Signing in | "Signing in may take longer than usual." |
+| Files and pictures | "Files and pictures may upload and open more slowly than usual." |
+| Email (only if the Proposed rule above is declined) | "Email may take longer than usual." |
+
+**D14.2 Headline.** This extends D2.2 and D4 answer 8.
+
+- Up to three sentences, in this order: Not working, Slow, Not set up.
+- The Slow sentence has no "not". One part: "Saving and loading your data is slow." · "Signing in is slow." · "Files and pictures are slow." Two or more: "Some parts are slow: Signing in, Files and pictures."
+- "Everything else works." follows only when exactly one sentence shows and at least one part is Working or Set up. A Slow part does not count as working.
+- All four parts Not working keep their own sentence (D2.2).
+- Icon: `CircleX` when a part is Not working, else `CircleGauge` (warn) when a part is Slow, else `CircleMinus` when a part is Not set up, else `CircleCheck`.
+- Examples: "Signing in is slow. Everything else works." · "Email is not working. Files and pictures are slow." · "Files and pictures are not working. Signing in is slow. Email is not set up."
+
+### D15. The last 30 days (S5-C3)
+
+**D15.1 Place.** Inside block 2, under the parts list, so each part's history sits with its status and the block numbers stay. A top rule (`border-border`) separates it. The sub-heading is the `h3` "Last 30 days" (14px, weight 600, ink), and the list is an `ol` labelled by it. No graph for anyone, the installation owner included: one sentence per period gives the part, the state, the day and the length, which is all that a graph would show (R6).
+
+**D15.2 Rows.** The D9.2 row grammar with no control: a 16px icon (`aria-hidden`), the sentence (ink, weight 500), and a muted meta line (13px, tabular figures). "Did not work" rows use `CircleX` (`text-danger-text`); slow rows use `CircleGauge` (`text-warn-text`).
+
+| Part | Ended, not working | Ended, slow | Still going, not working | Still going, slow |
+|---|---|---|---|---|
+| Saving and loading your data | "Saving and loading your data did not work for {length} {day}." | "Saving and loading your data was slow for {length} {day}." | "Saving and loading your data has not worked since {time} {day}." | "Saving and loading your data has been slow since {time} {day}." |
+| Signing in | "Signing in did not work for …" | "Signing in was slow for …" | "Signing in has not worked since …" | "Signing in has been slow since …" |
+| Files and pictures | "Files and pictures did not work for …" | "Files and pictures were slow for …" | "Files and pictures have not worked since …" | "Files and pictures have been slow since …" |
+| Email | "Email did not work for …" | "Email was slow for …" (only if D14.1's Proposed rule is declined) | "Email has not worked since …" | "Email has been slow since …" (the same) |
+
+- Meta line of an ended period: "10:42 to 10:54"; across midnight, "Nov 1 at 23:50 to Nov 2 at 01:10". Of a period still going: "Still going". Times are local, with no seconds, through the D2.2 formatter.
+- Not set up and Set up are not problems and make no row.
+
+**D15.3 Lengths.** From the start to the end, in whole minutes, at least 1 minute. A part that is zero is left out. Numbers use the workspace locale; "1" takes the singular.
+
+| Length | Reads | Examples |
+|---|---|---|
+| Under 60 minutes | minutes | "1 minute" · "12 minutes" |
+| 60 minutes to under 24 hours | hours, then minutes | "1 hour" · "1 hour 30 minutes" · "5 hours 1 minute" |
+| 24 hours or more | days, then hours; minutes are dropped | "1 day" · "2 days 3 hours" |
+
+A Slow period lasts at least 3 samples, so it does not read "1 minute" in practice. The page does not enforce this.
+
+**D15.4 Days.** The day of the start, in the organization time zone, with the `signInWhen` steps but the long weekday, because the day sits in a sentence:
+
+| Start | {day} | Example |
+|---|---|---|
+| Today | "today" | "Email has not worked since 10:42 today." |
+| Yesterday | "yesterday" | "Signing in was slow for 4 minutes yesterday." |
+| 2 to 6 days ago | "on Tuesday" | "Email did not work for 12 minutes on Tuesday." |
+| 7 days ago or more | "on Nov 1" | "Files and pictures did not work for 1 hour 30 minutes on Nov 1." |
+
+**D15.5 Order and paging.** Periods still going come first, then ended periods by end time, newest first. The list shows the 5 newest rows. "Show older" under the list adds 10 rows at a time, with every D9.3 rule: outline button, busy as `aria-disabled` and `aria-busy`, focus to the first new row, removed when nothing older exists. When older rows fail to load, the rows stay, with "Older periods could not be loaded.", "Retry" and `ErrorReference`. A refresh keeps the number of rows the person opened.
+
+**D15.6 Empty and short history.**
+
+- No period in 30 days: "No problems in the last 30 days." (muted, 44px line, no icon).
+- Proposed: when the oldest sample is younger than 30 days, "No problems since Nov 3." takes its place, because the 30-day sentence would claim days that were not checked. With no sample yet: "No history is recorded yet." (D20, item 2.)
+
+**D15.7 Loading, refresh, errors.** When the periods come in the status response, they follow block 2: one `LoadingRegion` (three 40px skeleton rows under the heading), D2.7 on failure, an update in place at each result. When they have their own read, they get the D9.4 states: "Loading the last 30 days…", then "The last 30 days could not be loaded.", "Retry" and `ErrorReference`. A timeline change is never announced on its own and never changes the headline.
+
+**D15.8 Phone.** At 390px a row has two lines and is at least 56px tall. The meta line wraps only around "to", and each time stays whole. No horizontal scroll.
+
+### D16. Email after S5 (S5-C5)
+
+The four words stay. Their source and two cause lines change.
+
+| Word | When (S5-C5) | Icon | Cause line |
+|---|---|---|---|
+| Working | A recent send succeeded | `CircleCheck` | None |
+| Not working | Recent sends failed | `CircleX` | "Invitations and password emails may not arrive until email works." |
+| Set up | Email is configured, and no recent send has an outcome | `CircleDashed` | "No email was sent recently, so Slate Operations cannot confirm that it works." |
+| Not set up | Email is not configured | `CircleMinus` | Unchanged (D2.3) |
+
+- "Slate Operations cannot yet confirm delivery." goes. Set up now means "no recent send to judge by".
+- The old Not working line said that messages wait. This design does not know that a failed send is retried, so the new line promises no wait and no retry.
+- The page shows Working only when the response says Working. The headline rules do not change: Set up counts as working, and Not working is named.
+
+### D17. File storage in block 3 (S5-C7)
+
+A fourth row in block 3, after Sign-in activity, in the D8.2 grid. The label is "File storage". No icon, because a size is not a status. No link, because no page lists storage by organization.
+
+- Line 1 (ink, weight 500): "Files use 1.2 GB". With no files: "No files are stored yet". Under 1 KB: "Files use less than 1 KB". When the server cannot read it: "File storage cannot be read now."
+- Line 2 (muted), always: "Storage limit: not set yet".
+- Sizes, here and in D18: decimal units (1 KB = 1,000 bytes), so the unit names are exact: B, KB, MB, GB, TB. Use the largest unit with a value of 1 or more; one decimal under 10 ("1.2 GB"), whole numbers from 10 ("12 GB", "340 MB"); a trailing ".0" is dropped. `Intl.NumberFormat` with `style: "unit"` and `unitDisplay: "short"` in the workspace locale.
+- Loading adds a fourth 160px skeleton bar (D8.6). Members, guests and department managers get no block 3, so no storage.
+
+### D18. Installation, block 4 (S5-C6)
+
+**D18.1 When it shows.** Between blocks 3 and 5, for the installation owner only. D8.1 applies: after a result, the card renders only when the response carries the installation part; before one, only when the identity says owner (`viewer === "owner"`). Nobody else gets a card, a heading, a gap or a request. No host disk figure (owner decision for S5).
+
+**D18.2 Rows.** A card with a 56px header and the `h2` "Installation", then a `dl` in the D8.2 grid, always in this order:
+
+| Row label | Worker or value (S5-C6) |
+|---|---|
+| Database size | the database size |
+| Record triggers | record-trigger worker |
+| Scheduled reports | report scheduling worker |
+| OpenComms jobs | Comms job worker |
+| Sign-out cleanup | provider sign-out worker |
+| Backup runner | backup runner (its existing heartbeat) |
+
+The labels name what each worker does, checked in the code: report scheduling sends OpenView's scheduled reports, and provider sign-out finishes ending a session at the sign-in provider after Slate Operations ends it (`provider_signout.py`).
+
+**D18.3 Values.** Database size, line 1, with no icon and the D17 size rules: "1.4 GB"; unreadable: "Cannot be read now." Each worker:
+
+| State | Icon | Line 1 (ink, weight 500) | Line 2 (muted) |
+|---|---|---|---|
+| Running | `CircleCheck`, `text-flow-text` | "Running" | None |
+| Seen before, not recently | `CircleX`, `text-danger-text` | "Not seen since 10:42" · "Not seen since Nov 1 at 23:58" | "Its work waits until it runs again." |
+| Never seen | `CircleDashed`, `text-muted-foreground` | "Not seen yet" | "Check that it runs on your server." |
+
+The time uses the D2.2 formatter and its same-day rule. The server decides the state and how long "recently" is (D20, item 5). Block 4 never changes the headline (as D8.6). Loading: one `LoadingRegion` ("Loading system status"), the six labels at once, a 120px bar for each value with a 16px circle before each worker bar. A failed read follows D8.6. Below 640px the label sits above the value.
+
+### D19. Support file (S6-C2 to S6-C4)
+
+**D19.1 Place.** Block 6, "When something goes wrong", gains a third paragraph and one button, for organization admins and the installation owner. Members and guests see neither, and while the identity loads nothing renders there (S6-C4). Reason: a person downloads this file to report a problem, and block 6 is where the page says how to report one. Alternative not taken: a header action on block 3 (admin) and block 4 (owner), which puts one action in two places beside status values it does not change.
+
+**D19.2 Words and file.**
+
+| Viewer | Paragraph 3 | File name |
+|---|---|---|
+| Organization admin who does not own the installation | "A support file helps the person who runs your server find a problem. It lists the versions, the last 30 days of the parts, your organization's file storage, and its recent server errors with their references. It holds no records, no personal data and nothing from other organizations." | `slateops-diagnostics-organization-20261105-1042Z.json` |
+| Installation owner | "A support file helps whoever supports your installation find a problem. It lists the versions, the database size, the background workers, each organization's file storage, 30 days of checks, and recent server errors with their references. It holds no records and no personal data." | `slateops-diagnostics-installation-20261105-1042Z.json` |
+
+- The owner gets the installation file only, also as an admin of the organization. It lists each organization's file storage total (parent decision, 2026-11-05; D20, item 7).
+- The name follows the server-set `slateops-` names (`slateops-audit.csv`, `slateops-sandbox.json`), with the UTC time of the download, because the times inside the file are UTC. The server sets it in `Content-Disposition`.
+- "No personal data" rests on S6-C1. If the contract adds a personal value, this sentence changes.
+
+**D19.3 Button.** `Button`, variant outline: the lucide `Download` icon (16px, `aria-hidden`), then "Download support file". 44px tall below 1280px, 32px from 1280px. It sits under paragraph 3 at the start, never full width. Keyboard order of the page (extends D8.6): "Check again", "Copy reference" (error), "Show older", the block 3 links, the version link, "Download support file", then the "Copy reference" of its Alert.
+
+**D19.4 States.** The download is a fetch with the session, then a save through `URL.createObjectURL`, as in `export-dialog.tsx`, so a failure can show its message and reference. A plain link would turn a failure into a browser error page.
+
+- Busy: the label stays; `aria-disabled` and `aria-busy`; presses are ignored (D2.4). A `role="status"` span beside the button, empty from the first render, shows "Preparing the support file…" after 300ms, so a fast download shows nothing.
+- Success: the browser saves the file. The span shows "Support file downloaded." for 4 seconds, then empties. Focus stays on the button.
+- Failure with a response: a destructive `Alert` under the button: "The support file could not be prepared. Try again in a minute." and `ErrorReference` with the D6 wording (the owner reads no line 2). It closes at the next press.
+- Failure with no response: the same Alert with "Could not connect. Check your connection and try again." and no reference (S1-C5).
+- 403, because the role changed after the page loaded: "Only an administrator can download a support file." with no reference, as a refusal notice (D1.4). The paragraph and the button go at the next identity read. A 401 follows the signed-out behavior (D2.4).
+
+### D20. Values this design needs
+
+For the Software Architect, unless an item says otherwise.
+
+1. **Slow.** A Slow status value for data, signing in and files, with Not working already winning. Proposed: the server decides Slow, so the rule lives in one place; Email is never Slow.
+2. **Timeline.** For each period: the part, the kind (not working or slow), the start, and the end or a sign that it is still going. Whether periods come in the status response or in their own read, and how older periods load (5 first, then 10 at a time). Proposed: the time of the oldest kept sample (D15.6).
+3. **Email.** The status word only. The length of "recent" is the server's.
+4. **Storage.** The bytes in use by the organization's files, or a sign that the server cannot read them. Whether files in the trash count.
+5. **Installation.** The database size in bytes, or a sign that it cannot be read. For each of the five workers: running, not seen recently, or never seen, and the last-seen time. The staleness limit for each worker.
+6. **Support file.** One download read for each role, the file name in `Content-Disposition`, and `request_id` in its error body (S1-C1).
+7. **Owner file.** Decided by the parent (2026-11-05): one file for the owner, and it lists each organization's file storage total.
+8. **Frontend, no contract value: "No change" (D2.4).** The same-result comparison adds the storage bytes and each worker's state and not-seen time. It does not add the periods (D22, item 1). It leaves out the database size, a running worker's last-seen time and the growing length of a period still going. They change every minute, so the owner would never see "No change".
+9. **Spec text out of date, for the spec owner (not edited here).** R2's Email note and S2-C3 say Email never reads Working; S5-C5 replaces both. "Page layout" block 4 names disk free, which the owner dropped. "Page layout" block 6 does not name the support file.
+
+### D21. Criteria map
+
+| Criterion | Covered by |
+|---|---|
+| S5-C3 | D15.1 to D15.8 |
+| S5-C4 | D14.1 (word, icon, cause lines, Not working wins), D14.2 (headline), D15.2 (slow rows) |
+| S5-C5 (UI) | D16 |
+| S5-C6 (UI) | D18.1 to D18.3 |
+| S5-C7 | D17 |
+| S6-C2 (UI) | D19 (owner row of D19.2), D22 |
+| S6-C3 (UI) | D19 (admin row of D19.2) |
+| S6-C4 (UI) | D19.1 (no paragraph and no button for members and guests) |
+
+### D22. Answers to the Frontend Engineer (screen review, 2026-11-05)
+
+These change D15, D17 and D20 as written. Each answer gives its reason.
+
+1. **"No change" leaves out the periods.** Confirmed. The periods come from their own read, which "Check again" does not send, so comparing them would compare a value that the press did not refresh.
+2. **"Check again" refreshes the status only; the timeline polls every 60 seconds on its own, while the page is visible, with no focus refresh.** Confirmed. Samples are taken once a minute, so a refetch on the press would gain at most a minute. The timeline can trail the parts list by up to about 2 minutes, for example a "Still going" row beside a part that reads Working again. The parts list is the current answer, and the timeline is history.
+3. **Units B, KB, MB, GB, TB.** Confirmed: this is D17. `Intl.NumberFormat` formats the number only, because its own unit names ("kB", "byte") differ from D17.
+4. **"No problems since <date>." when the oldest sample is younger than 29 days.** Confirmed. Hourly deletion makes a full history up to a few minutes younger than 30 days, so a 30-day limit would show the date for a full history. A history 29 to 30 days deep reads "in the last 30 days", which can claim at most one unchecked day, once in the life of an installation. D15.6 is no longer Proposed.
+5. **Timeline rows have two lines at every width.** Confirmed. A period sentence runs to about 70 characters, so a one-line row with the meta at the right (D9.5) would truncate or wrap at 1440px. D15.8 applies at every width.
+
+## Design (still-page relayout)
+
+Written by the Product Designer (TASK-0020) on the PR #89 content, against `main` 856d859d. The Human Owner rejected the 672px column on 2026-11-05: the page scrolled and the right side was empty. `ui-ux-pro-max` set the panes, the scroll rules and the responsive behavior; `impeccable` works inside them. This section changes only the frame. It changes no word, no block, no state, no token and no component. The earlier design sections apply unless a decision here says otherwise.
+
+Names used here: the **band** is block 1. **Pane 1** holds block 2. **Pane 2** holds blocks 3 and 4. **Pane 3** holds blocks 5 and 6.
+
+### D23. Frame
+
+**D23.1 The arrangement.** From 1280px a full-width band sits on top, and the panes sit under it side by side. This is the Backup grammar: a summary across the top, then panes that fill the height. Reason: one main pane and one side pane cannot hold the owner's blocks. At 672px wide, blocks 3, 4, 5 and 6 need 1048px in one side pane, and the grid under an 86px band has 634px.
+
+**D23.2 The mount stays.** The mount at `manage/page.tsx:1527` keeps `manage-scroll`, as the Backup mount does. Only the frame inside `SystemHealthView` changes.
+
+| Element | Classes |
+|---|---|
+| Root (today `flex max-w-2xl min-w-0 flex-col gap-4`) | `flex min-w-0 flex-col gap-4 xl:h-full`. `max-w-2xl` goes (D30) |
+| Band | The block 1 `section`, with `xl:shrink-0` |
+| Grid | `grid min-w-0 gap-4 xl:min-h-[15rem] xl:flex-1 xl:grid-rows-[minmax(0,1fr)]`, and the tracks of D24 |
+| Pane | `relative flex min-w-0 flex-col gap-4 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain`, and `data-health-pane` (D24). A `div`, with no `tabIndex` |
+| Last card in each pane | `xl:flex-1`, through `xl:[&>:last-child]:flex-1` on the pane, because the last card differs by role (D35) |
+
+**D23.3 Cards fill their pane.** The last card in a pane takes the free height, so its bottom edge meets the pane's bottom edge. A table card does the same (PD66). Free height therefore sits inside the last card, under its rows. No pane shows bare ground under a card. Rows stay at the top of the card and keep their height.
+
+**D23.4 Floor.** The grid keeps at least 15rem. Below that height the `manage-scroll` section scrolls, as Backup does at its floor. The page never scrolls. At rest this needs a viewport about 490px tall or less. No size in D28 or D29 reaches it.
+
+### D24. Panes by role
+
+The tracks depend on what renders, not on the role name. Pane 2 renders only when block 3 or block 4 renders (D8.1, D18.1). With neither there is no pane 2, no gap and no empty `div`.
+
+| Viewer | Band | Pane 1 | Pane 2 | Pane 3 | Grid tracks |
+|---|---|---|---|---|---|
+| Member or guest | Block 1 | Block 2 with Last 30 days | None | Blocks 5, 6 | `xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]` |
+| Organization admin | Block 1 | Block 2 with Last 30 days | Block 3 | Blocks 5, 6 with the support file | `xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_20rem]` |
+| Installation owner who is an admin | Block 1 | Block 2 with Last 30 days | Blocks 3, 4 | Blocks 5, 6 with the support file | `xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_20rem]` |
+
+- `data-health-pane` is `parts`, `details` or `help`. It gives the tests a stable name and has no style.
+- The two-pane tracks are the Backup tracks. Pane 3 holds the same two blocks for every role, so About and help never move when a role or an organization changes.
+- Pane 2 is wider than pane 1 because its values are the longest single lines on the page. Pane 3 is fixed because its text reads well at 320px and gains nothing from more width.
+- An installation owner who is not an admin gets block 4 alone in pane 2, with the three-pane tracks.
+- While the identity loads, blocks 3 and 4 do not render (D8.1), so the grid has two panes. It takes three panes when the identity or the first result arrives. This is the only change of tracks, and it happens once. Do not reserve an empty pane for it.
+
+### D25. What scrolls
+
+- Each pane scrolls alone, with the quiet scrollbar. Each pane is `relative`, so screen-reader text cannot stretch it.
+- The band, the page header and the shell never scroll.
+- **Last 30 days lives in pane 1, inside block 2 (D15.1).** Pane 1 is its one scroller. "Show older" adds rows to the card, the card grows, and pane 1 scrolls. The band, pane 2, pane 3 and the page do not move.
+- The list has no scroller of its own. Reason: when parts fail, their cause lines fill the card. With all four parts down and the block 1 Alert at 1280 × 720, block 2 needs 547px with an empty timeline, and pane 1 has 376px. A list region would have no height at the moment a person needs it. One scroller per pane needs no floor and nests nothing, as Organization and Backup do.
+- The part rows scroll away with a long list. The band stays, so the answer to "does it work now" stays in view.
+- D15.5 does not change. Focus goes to the first new row, and the browser scrolls that row into view inside pane 1. "Show older" stays at the end of the list.
+- When a pane scrolls, its 8px scrollbar lane narrows its cards by 8px, as in the Organization side pane. Do not add `scrollbar-gutter`: it would keep the panes short of the band's right edge at rest.
+
+### D26. The band
+
+From 1280px the check line sits on the headline's row, after the sentence. The band is then 66px tall, not 86px.
+
+- Inside the block 1 `LoadingRegion`, one new `div` holds the icon with the `h2`, and the check line: `flex flex-col xl:flex-row xl:flex-wrap xl:items-baseline xl:gap-x-3`. The check line takes `xl:mt-0`. The `h2` takes `xl:self-baseline`, because its neighbor in the `flex items-start` row is an icon with no text baseline (D35).
+- A long sentence or a long suffix wraps the check line to a second row, and the band is then 86px or taller. The panes shorten by the same amount.
+- The DOM order of D2.2 does not change. "Check again" stays at the top right (D2.8).
+- The loading skeleton follows: its two bars sit in one row from 1280px (`xl:flex-row xl:items-center xl:gap-3`), so the band keeps its height when the data arrives.
+- Reason: pane 2 needs 644px for the owner. At 86px the band leaves 634px, and pane 2 would scroll at rest. A full-width band also has room for the line.
+
+### D27. Label columns
+
+| Width of the card | Block 2 | Blocks 3 and 4 |
+|---|---|---|
+| Below 1280px viewport | As today: 14rem from 640px, stacked below 640px | The same |
+| From 1280px, card 30rem or wider | 12rem | 7.5rem |
+| From 1280px, card 20rem to under 30rem | 7.5rem | 7.5rem |
+| From 1280px, card under 20rem | Stacked: the label above the value | Stacked |
+
+Block 5 keeps its own row (7rem, 8.5rem from 640px), and takes 6rem from 1280px (D35): `xl:grid-cols-[6rem_minmax(0,1fr)]`. "Version" needs 48px. The value column is then 178px, and "0.1.0 · Updates & licensing" needs 168px.
+
+- The width is the card's, by container query. A viewport query cannot see the sidebar, which runs 220px to 360px or collapses to a rail. Add `@container` to the `section` of blocks 2, 3 and 4.
+- A phone card is about 23rem wide, so the container variants must sit behind `xl:`. Without it, a phone would lose its stacked rows.
+- Row classes for blocks 3 and 4: `grid min-w-0 gap-0.5 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-3 sm:py-1.5 xl:grid-cols-[minmax(0,1fr)] xl:gap-0.5 xl:@min-[20rem]:grid-cols-[7.5rem_minmax(0,1fr)] xl:@min-[20rem]:gap-3`. Block 2 adds `xl:@min-[30rem]:grid-cols-[12rem_minmax(0,1fr)]`.
+- 7.5rem is 1rem under the Manage label column. The longest label of blocks 3 and 4, "Scheduled reports", needs 118px of its 120px. The 16px goes to the value column, where the longest real line needs it (D28).
+- "Saving and loading your data" needs 186px, so it fits 12rem and wraps to two lines at 7.5rem. This is accepted (D35). It costs 20px at rest. A 12rem column at 1440 × 900 leaves 121px for values, and the Email Not set up cause line then takes six lines or more. At 7.5rem it takes four.
+- Geist is the widest of the three UI fonts. On these labels and values, Atkinson Hyperlegible Next and Archivo measure up to 5% narrower and never wider. The looks set letter spacing only on titles, field labels, table heads and badges, not on `dt` or `dd`. So these widths hold in all four looks, and no look needs its own rule.
+- **The Backups detail changes in block 3.** The parts used `whitespace-nowrap`. "Last good backup on Nov 28 at 12:00 PM" needs 266px, and the value column is 194px at 1280 × 720. A pane with `overflow-y-auto` would then scroll sideways. Use `inline-block max-w-full`: a part stays whole when it fits on a line, and it wraps only when it cannot. From 1280px each part takes its own line (`xl:block`) and the " · " hides (`xl:hidden`), so no line starts with a separator (D35).
+
+### D28. Expected heights at 1440 × 900
+
+The panel is 1160 × 736. The band is 66px, the gap is 16px, and the panes are 654px tall. Values are for Slate at 100% text and the en-PH 12-hour time. They come from a scratch layout with the page's sizes and Geist. That layout reproduced the live figures at 672px. The build with the D35 frame confirmed the first table below on 2026-11-05.
+
+| Viewer | Pane 1 | Pane 2 | Pane 3 | Panel scroll at rest |
+|---|---|---|---|---|
+| Installation owner who is an admin | 359 wide, 354 used | 449 wide, 644 used (342, 16, 286) | 320 wide, 572 used (106, 16, 450) | None |
+| Organization admin | 359 wide, 354 used | 449 wide, 362 used | 320 wide, 620 used (106, 16, 498) | None |
+| Member or guest | 696 wide, 314 used | None | 448 wide, 332 used (106, 16, 210) | None |
+
+Pane 1 here has one period, as in the live measure. Other data changes pane 1 and pane 2:
+
+| Data | Effect |
+|---|---|
+| No period | Pane 1 uses 319 (owner, admin), 299 (member) |
+| Email Not set up, with its cause line, and no period | Pane 1 uses 399 (owner, admin) |
+| 5 periods and "Show older" | Pane 1 uses 704 and scrolls by 50 (owner, admin). It uses 584 and fits (member) |
+| Every worker Running | Pane 2 uses 624 (owner) |
+| A second worker with a line 2 | Pane 2 uses 664 and scrolls by 10 (owner) |
+
+**Margin.** The value column of blocks 3 and 4 is 283px. The longest real line, "Last good backup on Nov 28 at 12:00 PM", needs 266px, so it has 17px to spare. The longest in any English format, "Last good backup on Sept 28 at 12:00 p.m.", needs 276px and has 7px. So no date wraps a part at 1440 × 900.
+
+Pane 2 has 10px of height to spare for the owner with a Late backup and one worker with a line 2. Healthy data has 30px or more. A date, a count or a word can no longer use that margin. Only a second worker with a line 2 can: that is a fault, pane 2 then scrolls by 10, and the page stays still.
+
+### D29. Other sizes
+
+Widths are panes 1, 2, 3 for the owner and the admin. Pane height is the panel height less 82.
+
+| Viewport | Panel | Pane height | Widths | Owner at rest | Admin at rest | Member at rest |
+|---|---|---|---|---|---|---|
+| 1280 × 720 | 1000 × 556 | 474 | 288, 360, 320 | Pane 1 fits (422). Pane 2 scrolls by 230. Pane 3 scrolls by 98 | Panes 1, 2 fit. Pane 3 scrolls by 146 | Fits |
+| 1366 × 768 | 1086 × 604 | 522 | 326, 408, 320 | Pane 1 fits. Pane 2 scrolls by 142. Pane 3 scrolls by 50 | Panes 1, 2 fit. Pane 3 scrolls by 98 | Fits |
+| 1920 × 1080 | 1640 × 916 | 834 | 572, 716, 320 | Fits: 314, 624, 572 | Fits: 314, 322, 620 | Fits |
+| 1280 × 720, sidebar 360px | 880 × 556 | 474 | 235, 293, 320 | Pane 1 fits (442). Pane 2 scrolls by 410. Pane 3 scrolls by 98 | Panes 1, 2 fit. Pane 3 scrolls by 146 | Fits |
+
+- **Extra width** goes to panes 1 and 2 in the ratio 1 : 1.25. Pane 3 stays at 320px. For a member, it goes to pane 1, and pane 3 stops at 448px.
+- **Extra height** goes to the last card of each pane (D23.3). Rows do not stretch. Five periods fit at 1920 × 1080 with no scroll.
+- **Label columns at these sizes (D27):** at 1280 × 720, block 2 is stacked and blocks 3 and 4 are label-left. At 1366 and 1440, all three use 7.5rem. At 1920, block 2 uses 12rem. With a 360px sidebar at 1280, blocks 2, 3 and 4 are stacked. A member's block 2 uses 12rem at every size here except the 360px sidebar row, where pane 1 is 416px.
+- At 1280 × 720 no arrangement shows all of the owner's rows: blocks 3 and 4 alone need 704px, and the panes are 474px. With the D28 data every block title stays in view at rest, and the Installation header shows in pane 2.
+- The 1366 row is here because 1366 × 768 is a common laptop size.
+
+### D30. Below 1280px
+
+One column, the page scrolls, and the order is the order of today. The grid and the panes have no `xl:` effect, so the panes are plain blocks with 16px gaps.
+
+**The 672px cap goes.** Cards fill the width, as in every other Manage section. Reason: at 1279px the panel is 999px wide, so the cap would leave 327px blank on the right. That is the same defect the owner rejected. The cap moves to the one place that needs it: the text wrapper of block 6 keeps `max-w-2xl`, so its paragraphs keep today's line length. Label columns stay at 14rem from 640px and stacked below 640px.
+
+### D31. Order
+
+No order in this spec changes. The DOM order stays block 1, 2, 3, 4, 5, 6, and each pane holds a run of neighboring blocks, so the visual order reads pane by pane in the same order. No block uses CSS `order` or a grid placement. D8.6 and D19.3 stand as written: "Check again", "Copy reference" (error), "Show older", the block 3 links, the version link, "Download support file", then the "Copy reference" of its Alert.
+
+The panes have no `tabindex`, so they add no tab stop of their own. A keyboard person reaches pane content through its links and buttons, as in the other Manage panes. A pane with no control below the fold relies on the browser's own keyboard scrolling.
+
+### D32. States
+
+- D2.7, D8.6, D15.7, D18.3 and D19.4 do not change. The frame renders at once, and only the data waits.
+- **The block 1 Alert** grows the band, and the panes shorten by the same amount. With a three-line Alert the band is about 164px, so the panes are about 556px at 1440 × 900 and 376px at 1280 × 720.
+- **The server banner** (D3.5) shortens the panel, and the panes shorten by its height. The page does not start to scroll. With the 40px banner at 1440 × 900 the panes are 614px. Owner pane 2 then scrolls by 30, and admin pane 3 by 6.
+- An Alert in block 6, and the error blocks of the timeline, grow their card. Their pane scrolls.
+
+### D33. Older tests
+
+One older expectation changes: `system-health-view.spec.ts:296` reads the " · " between two spans, and D35 item 7 puts it in a span of its own. A search of `frontend/tests/isolated/manage/system-health-view.spec.ts` and `frontend/tests/http/manage-system-health.spec.ts` found no layout value: neither file has a width, a viewport, `max-w-2xl`, `manage-scroll` or a scroll measure. No other older expectation changes. These checks stay true only if the panes are `div`s and the DOM order holds:
+
+- `system-health-view.spec.ts:92`: the reading order through `inOrder`, and exactly four `<section` elements in the member view.
+- `manage-system-health.spec.ts:103` and `:370`: the `h2` order.
+
+### Acceptance criteria (still-page relayout)
+
+| ID | Criterion |
+|---|---|
+| SP-C1 | At 1280 × 720, 1440 × 900 and 1920 × 1080, for each role in D24: the document does not scroll, and the `manage-scroll` section has `scrollHeight` equal to `clientHeight`. |
+| SP-C2 | At the same sizes: the band's left and right edges equal the section's. The first pane's left edge and the last pane's right edge equal the band's, within 1px. The bottom of every pane equals the bottom of the section, within 1px. |
+| SP-C3 | In every pane whose content is shorter than the pane, the last card's bottom edge equals the pane's bottom edge, within 1px. |
+| SP-C4 | `[data-health-pane]` count and contents match D24: member or guest `parts`, `help`; admin `parts`, `details` (block 3), `help`; owner `parts`, `details` (blocks 3, 4), `help`. |
+| SP-C5 | At 1440 × 900 in en-PH, the owner's data is one period, a Late backup with the longest real line ("Last good backup on Nov 28 at 12:00 PM", "Latest run: Interrupted"), and one worker with a line 2. Every pane has `scrollHeight` equal to `clientHeight`, and the "Last good backup" part takes one line. The same holds for the admin and the member. The test must not choose a short date. |
+| SP-C6 | "Show older" with 15 rows at 1440 × 900: pane `parts` has `scrollHeight` above `clientHeight`. The document, the section, the band and the other panes keep their sizes and positions. The first new row has focus and is inside the pane's visible area. |
+| SP-C7 | With the server banner, and with the block 1 Alert, at 1280 × 720 and 1440 × 900: SP-C1 still holds, and the panes are shorter by the height added. |
+| SP-C8 | In every pane at 1280 × 720, 1440 × 900 and at 1280 × 720 with a 360px sidebar, with the longest fixture ("Last good backup on Nov 28 at 12:00 PM"): `scrollWidth` equals `clientWidth`. |
+| SP-C9 | Label columns match D27, for the owner: at 1440 × 900 every `dt` in blocks 2, 3 and 4 is 120px wide, and the block 5 `dt` is 96px wide, with the owner's version value on one line; at 1920 × 1080 a block 2 `dt` is 192px wide; at 1280 × 720 a block 2 `dt` and its `dd` share a left edge. For a member at 1440 × 900, a block 2 `dt` is 192px wide. |
+| SP-C10 | At 1440 × 900 with a short sentence: the check line's top is above the `h2`'s bottom, and the band is under 72px tall. In the DOM, the check line follows the `h2`. |
+| SP-C11 | At 1024 × 768 and 390 × 844: the document scrolls, each card's width equals the section's width, no pane scrolls, the block order is 1 to 6, and there is no horizontal scroll. At 1024 × 768 block 2's `dt` is 224px wide. At 390 × 844 the `dt` sits above its `dd`. |
+| SP-C12 | Tab order at 1440 × 900 as the owner equals D19.3. No pane has `tabindex`. No block has a CSS `order`. Every word in each state stays as earlier sections give it. |
+| SP-C13 | SP-C1 and SP-C2 hold in Whiteboard, Triplicate and Stockroom, in light and dark. The theme files hold no System health rule. |
+
+### D34. Criteria map
+
+| Criterion | Covered by |
+|---|---|
+| SP-C1, SP-C2, SP-C3 | D23, D24 |
+| SP-C4 | D24 |
+| SP-C5 | D26, D28 |
+| SP-C6 | D25 |
+| SP-C7 | D23.4, D32 |
+| SP-C8, SP-C9 | D27 |
+| SP-C10 | D26 |
+| SP-C11 | D30 |
+| SP-C12 | D31, D33 |
+| SP-C13 | D27 |
+
+### D35. Answers from the screen review (2026-11-05)
+
+These change D24, D27, D28 and D29 as now written.
+
+1. **Version row.** Rejected as built. In the 320px pane the value column was 138px, so "0.1.0 ·" sat on line 1 and the link on line 2, and block 5 was 126px. Fix: a 6rem label column from 1280px. No word changes.
+2. **Margin.** The first tracks gave a 250px value column, and a two-digit date wrapped. The tracks are now 1 : 1.25, and the label column is 7.5rem. The value column is 283px. A chosen date can no longer decide a criterion (SP-C5).
+3. **"Saving and loading your data" on two lines in pane 1.** Accepted. A wider label column takes the width from cause lines, which matter when a part fails.
+4. **D29 figures.** The first build measured 270 and 118 at 1280 × 720, and the 250 and 98 here were wrong: the scratch layout used 24-hour times, and the Version row wrapped. With the D35 frame the build measures 230 and 98 (382, 16, 306 in pane 2). At this width the Nov 28 line and "2 jobs failed in the last 7 days" each take two lines. This changes no decision: D29 allows panes to scroll at 1280 × 720, and SP-C5 applies at 1440 × 900. The 1280 × 720 owner row of D29 is measured on the build. The 1366, 1920 and 360px sidebar rows are from the scratch layout.
+5. **Pane variant.** Accepted: `xl:[&>:last-child]:flex-1` on the pane in place of a class on each card. The last card differs by role, so one rule is simpler and cannot miss a card.
+6. **`xl:self-baseline` on the `h2`.** Accepted. The measured baselines of the `h2` and the check line are equal.
+7. **Separator in the Backups detail.** A second line began with "· Latest run". This is the same fault as item 1. From 1280px each part takes its own line, and the separator hides. Below 1280px nothing visible changes. At 1920 × 1080 this adds 20px to block 3.
+8. **Tests the D35 frame changes.** `d28Organization` takes the SP-C5 line. `termWidths` for blocks 2, 3 and 4 at 1440 × 900 read 120, not 136. `system-health-view.spec.ts:296` reads the new separator span.
 
 ## Deferred
 

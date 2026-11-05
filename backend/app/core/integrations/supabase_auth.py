@@ -218,7 +218,9 @@ class SupabaseAuthClient:
     def request_recovery(self, email: str) -> None:
         response = self._request("POST", "recover", json={"email": email})
         if response.status_code != 200:
-            raise SupabaseAuthUnavailable("Supabase recovery is unavailable")
+            raise SupabaseAuthUnavailable(
+                "Supabase recovery is unavailable", kind=f"http_{response.status_code}"
+            )
 
     def request_email_change(self, access_token: str, email: str) -> ProviderUser:
         from app.core.integrations.supabase_email_changes import request_email_change

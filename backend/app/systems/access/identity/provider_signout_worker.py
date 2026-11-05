@@ -14,6 +14,7 @@ from app.core.observability import log_event
 from app.systems.access.identity.provider_signout import drain_provider_signouts
 from app.systems.access.identity.session_retention import retain_terminal_sessions
 from app.systems.manage.audit.retention import retain_security_events
+from app.systems.manage.health import signals
 
 _POLL_SECONDS = 30
 _RETENTION_SECONDS = 3600
@@ -91,6 +92,7 @@ class ProviderSignoutWorker:
                     reason_code="provider_signout_poll_failed",
                     upstream="supabase-auth",
                 )
+            signals.beat("provider_signout")
             if self._stop.is_set():
                 break
             if monotonic() >= retention_due:

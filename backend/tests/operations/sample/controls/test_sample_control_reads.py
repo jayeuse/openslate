@@ -316,6 +316,9 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "retention_restore_lost",
         "system_status_shape",
         "sign_in_history_shape",
+        "health_periods_shape",
+        "organization_file_scope",
+        "installation_file_shape",
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
@@ -333,8 +336,15 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         credentials[key] = SampleActorCredential(
             original.user_id, credentials[other].email, original.password
         )
+    health = {
+        "health_periods_shape": "review_health_periods",
+        "organization_file_scope": "download_organization_support_file",
+        "installation_file_shape": "download_installation_support_file",
+    }
     operation = (
-        "review_sign_in_history"
+        health[problem]
+        if problem in health
+        else "review_sign_in_history"
         if problem == "sign_in_history_shape"
         else "review_system_status"
         if problem == "system_status_shape"
@@ -370,6 +380,9 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "retention_restore_lost": "Workspace security policy was not restored",
         "system_status_shape": "System status differs from the four parts in order",
         "sign_in_history_shape": "Sign-in history lacks the actor's sign-in, newest first",
+        "health_periods_shape": "System health periods differ from the first page",
+        "organization_file_scope": "Organization support file holds more than its organization",
+        "installation_file_shape": "Installation support file differs from its contract",
     }
     expected_error = (
         SampleWriteOutcomeUnknown if problem == "bulk_unknown" else SamplePhaseActionError

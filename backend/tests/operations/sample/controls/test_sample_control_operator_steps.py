@@ -33,6 +33,7 @@ def test_operator_runs_exactly_the_installation_steps(pack_key):
         "control:backups:review_backup_history",
         "control:backups:review_version",
         "control:update-workspace-security",
+        "control:download-installation-support-file",
         "controls:access:restore_guest",
     }
     assert operator <= OPERATOR_ACTIONS

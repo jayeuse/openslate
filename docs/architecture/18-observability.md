@@ -17,16 +17,77 @@ ready; otherwise it is 503.
 gives the same readiness to every signed-in person of the bound organization (admin,
 member, or guest; `get_current_user`). It names plain parts, not services: `data`
 (database), `signing_in` (auth), `files` (storage), and `email` (smtp), always in that
-order, each with `working`, `not_working`, or `not_set_up`. Email is `set_up` when it is
-configured and never `working`, because readiness does not test delivery; a missing
-component is `not_working`. The response also holds the application `version` and the
-UTC `checked_at` time of the probe it used, and nothing else. Each process probes
+order, each with `working`, `slow`, `not_working`, or `not_set_up`; a missing component
+is `not_working`. A working timed part reads `slow` when the newest three stored samples,
+all from the last four minutes, each took over one second; `not_working` always wins.
+Email follows recorded send outcomes, never configuration alone: `not_set_up` without
+SMTP configuration, `not_working` after a refused send in the last 24 hours that is newer
+than the last accepted one, `working` after a send Auth accepted in the last 24 hours, and
+`set_up` otherwise. The response also holds the application `version`, the UTC
+`checked_at` time of the probe it used, the admin-only `organization` part (its
+`storage_used_bytes` sums the bound organization's `ready` and `deleting` file sizes,
+trash included until purged), and the installation owner's `installation` part (database
+size from a sample at most 10 minutes old, and each worker as `running`, `not_seen`, or
+`never_seen`: within 3 minutes for the in-app workers, 5 for the backup runner). Each
+process probes
 readiness at most once in 30 seconds and returns the cached snapshot with its original
 check time until then, including the caller-timeout fallback; there is no bypass
 ([`service.py`](../../backend/app/systems/manage/health/service.py)). Concurrent misses
 share readiness's one in-flight probe. The route ends its request transaction before
 the probe and writes no audit row or security event. `/api/health` and `/api/ready` do
 not use this cache and stay unauthenticated.
+
+Each API process runs a [sampler](../../backend/app/systems/manage/health/worker.py)
+thread (not in `ENVIRONMENT=test` unless `E2E_BACKGROUND_WORKERS` is on). At each UTC
+minute plus up to 10 seconds it times the readiness parts inside the shared in-flight
+probe (`get_timed_readiness_snapshot`), outside any transaction, and writes one
+`system_health_samples` row while it holds a transaction advisory lock; another process
+skips that minute. The table has no organization column. While the database refuses the
+write, a process keeps up to 1,440 minutes in memory with data `not_working` and writes
+them at its next lock win, skipping minutes already stored. Hourly, every process calls
+`public.retain_system_health()`, a try-locked owner function that deletes samples and
+server errors older than 30 days and server errors beyond the newest 50,000. The runtime
+role can only read and insert samples and server errors.
+
+`system_health_signals` holds six installation-wide times
+([`signals.py`](../../backend/app/systems/manage/health/signals.py)): when the
+record-trigger worker (lane 0), report scheduling, Comms jobs, and provider sign-out last
+ran (at most one write a minute per process and worker), and when Auth last accepted or
+refused an email. An invitation send records `email_accepted` on success and
+`email_failed` on a 5xx or 429; a recovery request records only `email_failed`, and only
+on an Auth 5xx, because Auth answers 200 for unknown emails too and an unauthenticated
+caller can provoke 4xx and 429 answers. Each write uses its own
+session, never raises, and changes no response. The backup runner keeps its own
+`runner_last_seen_at`.
+
+`GET /api/system/health-periods` returns the same answer to every signed-in person:
+each run in the last 30 days when a part did not work or was slow (three samples or more),
+newest first with runs still going first, in offset pages (default 5, at most 100), and
+the oldest kept sample time. A run joins samples up to two minutes apart and is still
+going while it reaches a newest sample at most three minutes old. Periods, Slow parts and
+email outcomes come from a per-process history cache with a 60-second lifetime that holds
+no organization data
+([`history.py`](../../backend/app/systems/manage/health/history.py)).
+
+The request middleware stores each 5xx response in `server_errors`
+([`errors.py`](../../backend/app/systems/manage/health/errors.py)): the request ID, status,
+method, route template, time, and the organization the request bound after its address
+and MFA checks, never a body, header, query, person, or record value. It stores nothing
+for the middleware's database-unavailable 503, nor for `/api/ready`. A process writes at
+most 120 rows a minute and pauses for 30 seconds after a failed write; dropped rows are
+counted in one `server_error_log_dropped` log line. Row security admits a bound
+transaction's own organization and rows of no organization.
+
+Two support files download as JSON attachments named
+`slateops-diagnostics-<installation|organization>-YYYYMMDD-HHMMZ.json`, each with its
+summary first, and write no audit row or security event. The installation owner's file
+(`GET /api/system/diagnostics/installation`) holds the versions (application, schema
+revision, PostgreSQL), database size, workers, each organization's file storage total,
+30 days of samples, up to 1,000 periods, and up to 1,000 recent server errors with the 30-day
+total. It reads each organization in its own bound session and then the errors of no
+organization in an unbound one. An organization admin's file
+(`GET /api/system/diagnostics/organization`) holds the application version, the periods,
+the bound organization's storage, and that organization's own server errors only.
 
 SMTP readiness means the host, port, and sender address are configured; it does not
 test email delivery. The snapshot does not check application-schema compatibility, backups, restore behavior, or
@@ -74,8 +135,9 @@ complete application or host health.
 
 ## Monitoring gaps
 
-The repository does not provide centralized telemetry, alerting, backup freshness
-reporting, a packaged-host diagnostics bundle, or a customer support export workflow.
+The repository does not provide centralized telemetry, alerting, or a packaged-host
+diagnostics bundle. The support files above hold application diagnostics only, with no
+host disk or log figures.
 `/api/ready` is a bounded component signal, not a full installation or release check.
 Operators must monitor provider services, disk and volume capacity, SMTP delivery,
 and backup repository/restore readiness separately. Saved backup cadence/retention

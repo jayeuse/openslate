@@ -17,7 +17,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, Gr
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from app.systems.manage.backups.models import BackupPolicy
-from app.systems.manage.health import service
+from app.systems.manage.health import history, service
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import create_member, create_organization
 from tests.organization_scope_support import scoped_override
@@ -37,6 +37,9 @@ READY = {
 def people(integration_db: Session, monkeypatch) -> tuple[Session, UUID, dict[str, User]]:
     monkeypatch.setattr(service, "_cached", None)
     monkeypatch.setattr(service, "get_readiness_snapshot", lambda: READY)
+    # S5-C5: no recent email outcome, whatever other tests' invitations recorded.
+    monkeypatch.setattr(history, "_cached", None)
+    monkeypatch.setattr(history, "email_signals", lambda db: (None, None))
     db = integration_db
     organization = create_organization(db)
     admin, _ = create_member(db, organization, "admin")
@@ -133,7 +136,9 @@ def test_s3_c1_c6_only_an_admin_gets_the_organization_part_and_it_writes_nothing
     admin = answers["admin"]
     assert admin.status_code == 200, admin.text
     organization = admin.json()["organization"]
-    assert set(organization) == {"since", "backups", "failed_jobs", "failed_sign_ins", "lockouts"}
+    assert set(organization) == {
+        "since", "backups", "failed_jobs", "failed_sign_ins", "lockouts", "storage_used_bytes",
+    }
     assert set(organization["backups"]) == {"state", "last_success_at", "last_result"}
     assert organization["failed_sign_ins"] == 0
     assert organization["lockouts"] == 0

@@ -910,6 +910,12 @@ Correct: on a phone, Back up now keeps its title, the named close, and Cancel be
 
 Wrong: a "Saved · Discard · Save" bar before any edit, or a closed dialog that keeps an edit behind an "Unsaved changes" chip.
 
+**System health.** The page is a full-width band with panes under it (`docs/specs/system-health.md`: D23 to D34, SP-C1 to SP-C13). The band holds the headline sentence, the check line on the same row, and Check again. The first pane holds Parts of Slate Operations with Last 30 days. The last pane holds About this system and When something goes wrong, for every role. A middle pane holds Your organization and Installation, and it renders only when one of them does, so a member gets two panes and no blank column. Each pane scrolls alone, the last card in a pane takes the free height, and Last 30 days grows inside the first pane. Label-left rows follow the width of their card, not the viewport. Below 1280px the blocks stack in the same order, at full width.
+
+Correct: the installation owner at 1440px sees the band, then Parts with Last 30 days, then Your organization over Installation, then About over the help card. The panes end on one line, and nothing scrolls at rest.
+
+Wrong: one left-aligned column that scrolls as a whole beside a blank right half, or a member's grid that keeps an empty middle pane.
+
 **Words.** One object keeps one word in the section, its dialogs, and Help: "backup schedule", never "policy"; "Manual" and "Automatic" for the source. Work on the server names "the person who runs your server". "Installation owner" names the in-app account, and only in refusals and the hidden-section notice ("Only the installation owner can do this.").
 
 Correct: the Updates meta line "The person who runs your server installs updates."

@@ -1788,10 +1788,28 @@
     "path": "/api/jobs/{param}/{param}/retry"
   },
   {
+    "adapter": "frontend/src/components/systems/manage/adapters/system-diagnostics-api.ts",
+    "function": "downloadInstallationDiagnostics",
+    "method": "GET",
+    "path": "/api/system/diagnostics/installation"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/system-diagnostics-api.ts",
+    "function": "downloadOrganizationDiagnostics",
+    "method": "GET",
+    "path": "/api/system/diagnostics/organization"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/system-status-api.ts",
     "function": "getSystemStatus",
     "method": "GET",
     "path": "/api/system/status"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/system-health-periods-api.ts",
+    "function": "listSystemHealthPeriods",
+    "method": "GET",
+    "path": "/api/system/health-periods"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",

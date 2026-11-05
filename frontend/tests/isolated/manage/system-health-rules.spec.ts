@@ -9,8 +9,18 @@ import {
   nextCheckSuffix,
   partRows,
   signInActivityText,
+  healthPeriodKey,
+  installationRows,
+  mergePeriods,
+  periodLength,
+  periodRow,
+  storageText,
   systemHeadline,
+  timelineEmptyText,
+  type HealthPeriod,
+  type InstallationStatus,
   type OrganizationStatus,
+  type StatusCheck,
   type SystemPart,
 } from "../../../src/components/systems/manage/domain/health-rules";
 
@@ -169,7 +179,11 @@ test("each part keeps its place, word and cause line whatever its status", () =>
       "Not working",
       "Files and pictures cannot be uploaded or opened until it works again.",
     ],
-    ["Email", "Set up", "Slate Operations cannot yet confirm delivery."],
+    [
+      "Email",
+      "Set up",
+      "No email was sent recently, so Slate Operations cannot confirm that it works.",
+    ],
   ]);
   // D4 answer 8: each part's Not set up line.
   expect(
@@ -183,7 +197,7 @@ test("each part keeps its place, word and cause line whatever its status", () =>
     null,
   ]);
   expect(partRows(parts(W, W, W, X))[3].cause).toBe(
-    "Messages that need email, such as invitations, wait until email works.",
+    "Invitations and password emails may not arrive until email works.",
   );
 });
 
@@ -379,6 +393,7 @@ const organization: OrganizationStatus = {
   failed_jobs: 0,
   failed_sign_ins: 0,
   lockouts: 0,
+  storage_used_bytes: 0,
 };
 const backupNow = new Date("2026-11-02T15:00:00Z");
 
@@ -541,4 +556,400 @@ test("S3-C5: a changed organization value is a changed result, never No change",
   ).toBe(
     "No change. Slate Operations is working normally. Checked at 9:44 AM.",
   );
+});
+
+// S5: Slow (S5-C4, D14), Email from real sends (S5-C5, D16), the 30-day
+// timeline (S5-C3, D15), file storage (S5-C7, D17) and the installation block
+// (S5-C6, D18).
+
+const S = "slow";
+
+for (const [name, input, headline, tone] of [
+  [
+    "one part is slow",
+    parts(W, S, W, "set_up"),
+    "Signing in is slow. Everything else works.",
+    "slow",
+  ],
+  [
+    "Files and pictures are slow",
+    parts(W, W, S, W),
+    "Files and pictures are slow. Everything else works.",
+    "slow",
+  ],
+  [
+    "two parts are slow",
+    parts(W, S, S, "set_up"),
+    "Some parts are slow: Signing in, Files and pictures. Everything else works.",
+    "slow",
+  ],
+  [
+    "one part is down and another is slow",
+    parts(W, W, S, X),
+    "Email is not working. Files and pictures are slow.",
+    "not_working",
+  ],
+  [
+    "a part is down, another slow, and Email not set up",
+    parts(W, S, X, "not_set_up"),
+    "Files and pictures are not working. Signing in is slow. Email is not set up.",
+    "not_working",
+  ],
+  [
+    "a part is slow and Email is not set up",
+    parts(S, W, W, "not_set_up"),
+    "Saving and loading your data is slow. Email is not set up.",
+    "slow",
+  ],
+  // A slow part does not count as working.
+  [
+    "every part that is not down is slow",
+    parts(S, X, X, X),
+    "Some parts are not working: Signing in, Files and pictures, Email. Saving and loading your data is slow.",
+    "not_working",
+  ],
+  [
+    "three parts are slow and Email is unknown",
+    parts(S, S, S, "unknown"),
+    "Some parts are slow: Saving and loading your data, Signing in, Files and pictures.",
+    "slow",
+  ],
+  [
+    "Email works after a real send",
+    parts(W, W, W, W),
+    "Slate Operations is working normally.",
+    "working",
+  ],
+] as const) {
+  test(`S5-C4: the headline when ${name}`, () => {
+    expect(systemHeadline(input)).toEqual({ sentence: headline, tone });
+  });
+}
+
+test("S5-C4, S5-C5: Slow and the Email words have their own cause lines", () => {
+  expect(
+    partRows(parts(S, S, S, S)).map((row) => [row.word, row.cause]),
+  ).toEqual([
+    ["Slow", "Pages may load and save more slowly than usual."],
+    ["Slow", "Signing in may take longer than usual."],
+    ["Slow", "Files and pictures may upload and open more slowly than usual."],
+    ["Slow", "Email may take longer than usual."],
+  ]);
+  // D16: Working after a real send has no line.
+  expect(partRows(parts(W, W, W, W))[3]).toMatchObject({
+    word: "Working",
+    cause: null,
+  });
+});
+
+const ny = { locale: "en-US", timezone: "America/New_York" };
+// Monday, Nov 2, 2026, 10:00 in New York.
+const monday = new Date("2026-11-02T15:00:00Z");
+const period = (
+  part: HealthPeriod["part"],
+  kind: HealthPeriod["kind"],
+  started_at: string,
+  ended_at: string | null,
+): HealthPeriod => ({ part, kind, started_at, ended_at });
+
+test("S5-C3: each period reads as one sentence with its day and length", () => {
+  const rows = [
+    period("email", "not_working", "2026-11-02T14:42:00Z", null),
+    period("data", "slow", "2026-11-02T13:00:00Z", null),
+    period("files", "not_working", "2026-11-01T12:00:00Z", null),
+    period("files", "slow", "2026-11-02T14:00:00Z", null),
+    period(
+      "signing_in",
+      "slow",
+      "2026-11-01T15:00:00Z",
+      "2026-11-01T15:04:00Z",
+    ),
+    period(
+      "email",
+      "not_working",
+      "2026-10-27T15:00:00Z",
+      "2026-10-27T15:12:00Z",
+    ),
+    period(
+      "files",
+      "not_working",
+      "2026-10-26T13:00:00Z",
+      "2026-10-26T14:30:00Z",
+    ),
+    period("files", "slow", "2026-10-31T15:00:00Z", "2026-10-31T15:03:00Z"),
+    period(
+      "data",
+      "not_working",
+      "2026-10-30T10:00:00Z",
+      "2026-11-01T13:00:00Z",
+    ),
+  ].map((item) => periodRow(item, monday, ny).sentence);
+  expect(rows).toEqual([
+    "Email has not worked since 9:42 AM today.",
+    "Saving and loading your data has been slow since 8:00 AM today.",
+    "Files and pictures have not worked since 7:00 AM yesterday.",
+    "Files and pictures have been slow since 9:00 AM today.",
+    "Signing in was slow for 4 minutes yesterday.",
+    "Email did not work for 12 minutes on Tuesday.",
+    "Files and pictures did not work for 1 hour 30 minutes on Oct 26.",
+    "Files and pictures were slow for 3 minutes on Saturday.",
+    "Saving and loading your data did not work for 2 days 3 hours on Friday.",
+  ]);
+});
+
+test("S5-C3: a period's meta line gives its times, or says it is still going", () => {
+  expect(
+    periodRow(
+      period(
+        "email",
+        "not_working",
+        "2026-11-02T14:42:00Z",
+        "2026-11-02T14:54:00Z",
+      ),
+      monday,
+      ny,
+    ),
+  ).toEqual({
+    key: "email:not_working:2026-11-02T14:42:00Z",
+    kind: "not_working",
+    sentence: "Email did not work for 12 minutes today.",
+    meta: { from: "9:42 AM", to: "9:54 AM" },
+  });
+  // Across midnight both ends carry their day.
+  expect(
+    periodRow(
+      period("files", "slow", "2026-11-01T03:50:00Z", "2026-11-01T06:10:00Z"),
+      monday,
+      ny,
+    ).meta,
+  ).toEqual({ from: "Oct 31 at 11:50 PM", to: "Nov 1 at 1:10 AM" });
+  expect(
+    periodRow(period("data", "slow", "2026-11-02T13:00:00Z", null), monday, ny)
+      .meta,
+  ).toBeNull();
+});
+
+test("S5-C3: a length reads in minutes, hours and minutes, or days and hours", () => {
+  for (const [minutes, words] of [
+    [0, "1 minute"],
+    [1, "1 minute"],
+    [12, "12 minutes"],
+    [60, "1 hour"],
+    [90, "1 hour 30 minutes"],
+    [301, "5 hours 1 minute"],
+    [1440, "1 day"],
+    [1441, "1 day"],
+    [3060, "2 days 3 hours"],
+  ] as const)
+    expect(periodLength(minutes, ny), words).toBe(words);
+});
+
+test("S5-C3: with no period the timeline says how far back it looked", () => {
+  // The oldest kept sample is about 30 days old (retention runs hourly).
+  expect(timelineEmptyText("2026-10-03T16:00:00Z", monday, ny)).toBe(
+    "No problems in the last 30 days.",
+  );
+  // D15.6: a younger history claims only the days it checked.
+  expect(
+    timelineEmptyText(
+      "2026-11-03T04:00:00Z",
+      new Date("2026-11-05T15:00:00Z"),
+      ny,
+    ),
+  ).toBe("No problems since Nov 2.");
+  expect(timelineEmptyText(null, monday, ny)).toBe(
+    "No history is recorded yet.",
+  );
+});
+
+test("S5-C3: older pages join the first without repeating a period, the fresh page winning", () => {
+  const ongoing = period("email", "not_working", "2026-11-02T14:42:00Z", null);
+  const ended = { ...ongoing, ended_at: "2026-11-02T14:50:00Z" };
+  const older = period(
+    "files",
+    "slow",
+    "2026-10-31T15:00:00Z",
+    "2026-10-31T15:03:00Z",
+  );
+  // The ongoing period ended and moved; the fresh first page holds it once.
+  expect(mergePeriods([ended], [ongoing, older])).toEqual([ended, older]);
+  expect(healthPeriodKey(ongoing)).toBe(
+    "email:not_working:2026-11-02T14:42:00Z",
+  );
+});
+
+test("S5-C7: file storage reads in decimal units with no trailing zero", () => {
+  for (const [bytes, words] of [
+    [null, "File storage cannot be read now."],
+    [0, "No files are stored yet"],
+    [999, "Files use less than 1 KB"],
+    [1000, "Files use 1 KB"],
+    [1_234_000_000, "Files use 1.2 GB"],
+    [12_400_000_000, "Files use 12 GB"],
+    [340_000_000, "Files use 340 MB"],
+    [9_960_000, "Files use 10 MB"],
+    [999_600, "Files use 1 MB"],
+    [3_000_000_000_000, "Files use 3 TB"],
+  ] as const)
+    expect(storageText(bytes, ny), String(bytes)).toBe(words);
+  expect(storageText(1_234_000_000, { ...ny, locale: "de-DE" })).toBe(
+    "Files use 1,2 GB",
+  );
+});
+
+const installation: InstallationStatus = {
+  database_bytes: 1_400_000_000,
+  database_measured_at: "2026-11-02T14:59:00Z",
+  workers: [
+    {
+      key: "backup_runner",
+      state: "running",
+      last_seen_at: "2026-11-02T14:58:00Z",
+    },
+    {
+      key: "record_triggers",
+      state: "running",
+      last_seen_at: "2026-11-02T14:59:30Z",
+    },
+    {
+      key: "report_scheduling",
+      state: "not_seen",
+      last_seen_at: "2026-11-02T14:42:00Z",
+    },
+    {
+      key: "comms_jobs",
+      state: "not_seen",
+      last_seen_at: "2026-11-01T03:58:00Z",
+    },
+    { key: "provider_signout", state: "never_seen", last_seen_at: null },
+  ],
+};
+
+test("S5-C6: block 4 gives the database size and each worker in a fixed order", () => {
+  expect(installationRows(installation, monday, ny)).toEqual({
+    database: "1.4 GB",
+    workers: [
+      {
+        key: "record_triggers",
+        label: "Record triggers",
+        state: "running",
+        word: "Running",
+        detail: null,
+      },
+      {
+        key: "report_scheduling",
+        label: "Scheduled reports",
+        state: "not_seen",
+        word: "Not seen since 9:42 AM",
+        detail: "Its work waits until it runs again.",
+      },
+      {
+        key: "comms_jobs",
+        label: "OpenComms jobs",
+        state: "not_seen",
+        word: "Not seen since Oct 31 at 11:58 PM",
+        detail: "Its work waits until it runs again.",
+      },
+      {
+        key: "provider_signout",
+        label: "Sign-out cleanup",
+        state: "never_seen",
+        word: "Not seen yet",
+        detail: "Check that it runs on your server.",
+      },
+      {
+        key: "backup_runner",
+        label: "Backup runner",
+        state: "running",
+        word: "Running",
+        detail: null,
+      },
+    ],
+  });
+  expect(
+    installationRows(
+      { ...installation, database_bytes: null, workers: [] },
+      monday,
+      ny,
+    ),
+  ).toMatchObject({
+    database: "Cannot be read now.",
+    workers: [
+      { key: "record_triggers", word: "—", detail: null },
+      { key: "report_scheduling", word: "—" },
+      { key: "comms_jobs", word: "—" },
+      { key: "provider_signout", word: "—" },
+      { key: "backup_runner", word: "—" },
+    ],
+  });
+});
+
+test("S5-C6, S5-C7: No change ignores the database size and a running worker's last-seen time", () => {
+  const admin = { ...organization, storage_used_bytes: 1000 };
+  const before = { ...laterSame, organization: admin, installation };
+  const next = (changes: object) => ({
+    ...before,
+    checked_at: "2026-11-02T14:44:10Z",
+    ...changes,
+  });
+  const suffix = (after: StatusCheck) =>
+    nextCheckSuffix({
+      previous: before,
+      next: after,
+      trigger: "person",
+      suffix: null,
+    });
+  // Values that move every minute are not a change.
+  expect(
+    suffix(
+      next({
+        installation: {
+          ...installation,
+          database_bytes: 1_400_100_000,
+          database_measured_at: "2026-11-02T15:00:00Z",
+          workers: installation.workers.map((worker) =>
+            worker.state === "running"
+              ? { ...worker, last_seen_at: "2026-11-02T15:00:00Z" }
+              : worker,
+          ),
+        },
+      }),
+    ),
+  ).toBe("no-change");
+  // Storage, a worker's state and a stopped worker's time are.
+  expect(
+    suffix(next({ organization: { ...admin, storage_used_bytes: 2000 } })),
+  ).toBeNull();
+  expect(
+    suffix(
+      next({
+        installation: {
+          ...installation,
+          workers: installation.workers.map((worker) =>
+            worker.key === "provider_signout"
+              ? {
+                  ...worker,
+                  state: "running",
+                  last_seen_at: "2026-11-02T15:00:00Z",
+                }
+              : worker,
+          ),
+        },
+      }),
+    ),
+  ).toBeNull();
+  expect(
+    suffix(
+      next({
+        installation: {
+          ...installation,
+          workers: installation.workers.map((worker) =>
+            worker.key === "comms_jobs"
+              ? { ...worker, last_seen_at: "2026-11-02T14:43:00Z" }
+              : worker,
+          ),
+        },
+      }),
+    ),
+  ).toBeNull();
 });

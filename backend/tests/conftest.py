@@ -218,6 +218,33 @@ def _bound_test_organizations(request):
 
 
 @pytest.fixture(autouse=True)
+def _no_health_writes_without_a_database(request):
+    """Health signals and server errors go nowhere unless a test needs them.
+
+    Production writes them in their own sessions (S5, S6). A stack-free test has no
+    database, so neither writer runs there; integration tests keep the real signal writer.
+    Server errors stay off in integration tests too: many provoke a 5xx on purpose, and a
+    committed row would keep their organization (RESTRICT key) after teardown. A test of the
+    server-error writer requests ``real_server_error_writes``; a unit test of either writer
+    patches it itself. A private patch context leaves the order of the shared
+    ``monkeypatch`` fixture unchanged.
+    """
+    from app.systems.manage.health import errors, signals
+
+    with pytest.MonkeyPatch.context() as patch:
+        if request.node.get_closest_marker("integration") is None:
+            patch.setattr(signals, "_write_signal", lambda key, now: None)
+        if "real_server_error_writes" not in request.fixturenames:
+            patch.setattr(errors, "_write", lambda *values: None)
+        yield
+
+
+@pytest.fixture
+def real_server_error_writes():
+    """Store server errors for real; the test deletes its rows before its organizations."""
+
+
+@pytest.fixture(autouse=True)
 def _isolated_provider_user_cache():
     clear_provider_users()
     yield

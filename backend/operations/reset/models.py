@@ -103,6 +103,9 @@ APPLICATION_TABLES = (
     "saved_views",
     "scheduled_work",
     "security_events",
+    "server_errors",
+    "system_health_samples",
+    "system_health_signals",
     "update_statuses",
     "users",
 )
@@ -116,6 +119,9 @@ NON_PRESERVED_TABLES = tuple(
         "backup_runs",
         "platform_operators",
         "platform_settings",
+        # Installation health history and worker signals survive an application reset.
+        "system_health_samples",
+        "system_health_signals",
         "update_statuses",
         "users",
     }
@@ -206,6 +212,7 @@ DELETE_ORDER = (
     "relationship_edges",
     "audit_logs",
     "security_events",
+    "server_errors",
     "records",
     "fields",
     "modules",
@@ -295,7 +302,8 @@ LOCK TABLE public.alembic_version, public.audit_logs,
  public.sandbox_bindings, public.sandbox_documents, public.sandbox_publications,
  public.sandbox_test_runs, public.sandbox_versions,
  public.saved_views, public.scheduled_work,
-  public.security_events, public.users
+  public.security_events, public.server_errors, public.system_health_samples,
+  public.system_health_signals, public.users
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 

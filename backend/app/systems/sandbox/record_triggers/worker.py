@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
 from app.core.observability import log_event
+from app.systems.manage.health import signals
 from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.sandbox.record_triggers.execution import (
     MAX_CLAIM_BATCH,
@@ -127,6 +128,9 @@ class TriggerWorker:
                 with self._wake:
                     seen = self._work_generation
                 processed = self.run_once(lane)
+                if lane == 0:
+                    # One lane speaks for the worker; outside any organization binding.
+                    signals.beat("record_triggers")
                 self._report_metrics()
                 with self._wake:
                     if processed:
