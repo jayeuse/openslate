@@ -77,7 +77,7 @@ class Field(BaseModel):
             "module_id",
             "name",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index("ix_fields_relationship_target_module_id", "relationship_target_module_id"),
         Index(
@@ -85,7 +85,7 @@ class Field(BaseModel):
             "module_id",
             "position",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 

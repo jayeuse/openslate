@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import monotonic, sleep
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import Connection, text
 from sqlalchemy.pool import NullPool
 
 from app.core.config import instance
@@ -190,13 +193,27 @@ def test_migration_advisory_lock_is_held_for_the_entire_migration_block() -> Non
 
     calls = [str(call.args[0]) for call in connection.exec_driver_sql.call_args_list]
     assert len(calls) == 2
-    assert "pg_advisory_lock(" in calls[0] and "pg_advisory_unlock(" in calls[1]
+    assert "pg_try_advisory_lock(" in calls[0] and "pg_advisory_unlock(" in calls[1]
+
+
+def test_migration_advisory_lock_ends_each_refused_try_before_it_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    connection = MagicMock()
+    connection.exec_driver_sql.return_value.scalar_one.side_effect = [False, False, True]
+    connection.rollback.side_effect = lambda: events.append("rollback")
+    connection.commit.side_effect = lambda: events.append("commit")
+    monkeypatch.setattr(instance, "sleep", lambda _seconds: events.append("wait"))
+
+    with migration_advisory_lock(connection):
+        assert events == ["rollback", "wait", "rollback", "wait", "commit"]
 
 
 def test_migration_advisory_lock_preserves_migration_failure() -> None:
     connection = MagicMock()
     failure = RuntimeError("migration failed")
-    connection.exec_driver_sql.side_effect = [None, RuntimeError("connection lost")]
+    connection.exec_driver_sql.side_effect = [MagicMock(), RuntimeError("connection lost")]
 
     with pytest.raises(RuntimeError) as raised:
         with migration_advisory_lock(connection):
@@ -230,6 +247,56 @@ def test_migration_lock_survives_commits_until_the_block_ends() -> None:
             assert acquired is True
             second.rollback()
     finally:
+        engine.dispose()
+
+
+def _take_the_lock(connection: Connection) -> bool:
+    with migration_advisory_lock(connection):
+        return True
+
+
+def _wait_until_refused(observer: Connection, pid: int) -> None:
+    """A 60 s hang guard, never a timing assertion."""
+    deadline = monotonic() + 60
+    refused = text(
+        "SELECT count(*) FROM pg_stat_activity WHERE pid = :pid "
+        "AND (wait_event = 'advisory' OR query = 'ROLLBACK')"
+    )
+    while not observer.scalar(refused, {"pid": pid}):
+        assert monotonic() < deadline, "the second session never tried the lock"
+        sleep(0.05)
+
+
+@pytest.mark.integration
+def test_a_session_that_waits_for_the_lock_does_not_deadlock_a_concurrent_index_build() -> None:
+    # A concurrent build waits for every older snapshot in the database. A session blocked
+    # inside SELECT pg_advisory_lock holds one, and the build's own session holds the lock
+    # that it waits for, so PostgreSQL kills one of them.
+    engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with (
+            engine.connect().execution_options(isolation_level="AUTOCOMMIT") as holder,
+            engine.connect() as waiter,
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            holder.execute(text("SET lock_timeout = '30s'"))
+            holder.execute(text("CREATE TABLE public.migration_lock_probe (id integer)"))
+            pid = waiter.scalar(text("SELECT pg_backend_pid()"))
+            assert pid is not None
+            waiter.commit()
+            with migration_advisory_lock(holder):
+                second = pool.submit(_take_the_lock, waiter)
+                _wait_until_refused(holder, pid)
+                holder.execute(
+                    text(
+                        "CREATE INDEX CONCURRENTLY ix_migration_lock_probe "
+                        "ON public.migration_lock_probe (id)"
+                    )
+                )
+            assert second.result(timeout=60) is True
+    finally:
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DROP TABLE IF EXISTS public.migration_lock_probe"))
         engine.dispose()
 
 

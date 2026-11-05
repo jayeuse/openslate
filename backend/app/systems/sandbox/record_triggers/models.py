@@ -274,7 +274,7 @@ class RecordTriggerCondition(BaseModel):
             "trigger_id",
             "position",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"literal_value"})
@@ -322,7 +322,7 @@ class RecordTriggerAction(BaseModel):
             "trigger_id",
             "position",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"literal_value"})

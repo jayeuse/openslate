@@ -13,6 +13,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -29,6 +30,7 @@ from app.core.config.settings import DOTENV_PATH, get_instance_settings
 _IDENTITY = re.compile(r"[a-z][a-z0-9-]{2,62}\Z")
 _DOCKER_ID = re.compile(r"[a-f0-9]{12,64}\Z")
 _MIGRATION_LOCK_NAME = "slateops:alembic"
+_MIGRATION_LOCK_POLL_SECONDS = 0.5
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -410,9 +412,17 @@ def migration_advisory_lock(connection: Connection) -> Iterator[None]:
     which would end a transaction lock and let a second run read the old
     ``alembic_version``. Call it outside a transaction and begin the migration
     transaction inside it; it leaves no transaction open on entry or exit.
+
+    A second run polls and has no time limit. A session blocked in ``pg_advisory_lock``
+    holds a snapshot, and ``CREATE INDEX CONCURRENTLY`` in the run that owns the lock waits
+    for every older snapshot, so a blocking wait deadlocks the two runs.
     """
 
-    connection.exec_driver_sql("SELECT pg_advisory_lock(hashtext(%s))", (_MIGRATION_LOCK_NAME,))
+    while not connection.exec_driver_sql(
+        "SELECT pg_try_advisory_lock(hashtext(%s))", (_MIGRATION_LOCK_NAME,)
+    ).scalar_one():
+        connection.rollback()
+        sleep(_MIGRATION_LOCK_POLL_SECONDS)
     connection.commit()
     failed = True
     try:

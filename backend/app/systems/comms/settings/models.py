@@ -49,7 +49,7 @@ class CommsSettings(BaseModel):
         Index(
             "uq_comms_settings_active", "org_id", "scope", "category_id", "conversation_id",
             unique=True, postgresql_nulls_not_distinct=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index("ix_comms_settings_category", "org_id", "category_id"),
         Index("ix_comms_settings_conversation", "org_id", "conversation_id"),
@@ -98,7 +98,7 @@ class CommsSettingLock(BaseModel):
         ),
         Index(
             "uq_comms_setting_locks_active", "org_id", "namespace", "key", unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 
@@ -145,7 +145,7 @@ class CommsCapabilityGrant(BaseModel):
         Index(
             "uq_comms_capability_grants_active", "org_id", "scope", "category_id",
             "conversation_id", "capability", "subject", "group_id", unique=True,
-            postgresql_nulls_not_distinct=True, postgresql_where=text("is_deleted = false"),
+            postgresql_nulls_not_distinct=True, postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index("ix_comms_capability_grants_category", "org_id", "category_id"),
         Index("ix_comms_capability_grants_conversation", "org_id", "conversation_id"),

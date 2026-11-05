@@ -3,7 +3,9 @@
 import os
 import subprocess
 import sys
+from collections import defaultdict
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -18,10 +20,13 @@ from tests.operations.migration_support import guarded_migration_environment, ru
 pytestmark = pytest.mark.integration
 BACKEND = Path(__file__).resolve().parents[2]
 LOCK = "slateops:alembic"
-_QUEUED = text(
-    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
-    "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+# A waiting run makes no lock wait to observe: it tries, rolls back, and sleeps. env.py rolls
+# back once before its first try, so three rollbacks in one session are two refused tries.
+_IDLE_AFTER_ROLLBACK = text(
+    "SELECT pid, state_change FROM pg_stat_activity WHERE datname = current_database() "
+    "AND usename = current_user AND state = 'idle' AND query = 'ROLLBACK'"
 )
+_ROLLBACKS_OF_A_WAITING_RUN = 3
 
 
 def _start(environment: dict[str, str]) -> subprocess.Popen[str]:
@@ -47,6 +52,17 @@ def _until(
     return result
 
 
+def _both_runs_were_refused_the_lock() -> Callable[[Connection], bool]:
+    rollbacks: dict[int, set[datetime]] = defaultdict(set)
+
+    def ready(observer: Connection) -> bool:
+        for pid, changed in observer.execute(_IDLE_AFTER_ROLLBACK):
+            rollbacks[pid].add(changed)
+        return sum(len(times) >= _ROLLBACKS_OF_A_WAITING_RUN for times in rollbacks.values()) == 2
+
+    return ready
+
+
 def test_a_second_upgrade_waits_for_the_first_and_then_finds_nothing_to_run() -> None:
     # Both runs queue on the migration lock. The run that gets it second must read the
     # alembic_version that the first run committed and run no revision again.
@@ -64,7 +80,7 @@ def test_a_second_upgrade_waits_for_the_first_and_then_finds_nothing_to_run() ->
             holder.execute(text("SELECT pg_advisory_lock(hashtext(:lock))"), {"lock": LOCK})
             holder.commit()
             runs = [_start(environment), _start(environment)]
-            _until(observer, runs, lambda o: o.scalar(_QUEUED) == 2)
+            _until(observer, runs, _both_runs_were_refused_the_lock())
             holder.execute(text("SELECT pg_advisory_unlock(hashtext(:lock))"), {"lock": LOCK})
             holder.commit()
         outputs = [run.communicate(timeout=120)[0] for run in runs]

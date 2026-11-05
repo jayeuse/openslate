@@ -227,7 +227,7 @@ PACK = OrganizationPack(
         supporting_counts={
             "identities": 44,
             "built_in_account_roles_preserved": 3,
-            "groups": 9,
+            "groups": 11,
             "boards": 12,
             "posts": 96,
             "events": 144,

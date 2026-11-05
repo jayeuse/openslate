@@ -45,7 +45,7 @@ class Dashboard(BaseModel):
             "org_id",
             "department_id",
             unique=True,
-            postgresql_where=text("is_home AND NOT is_deleted"),
+            postgresql_where=text("is_home IS TRUE AND is_deleted IS FALSE"),
         ),
     )
 
@@ -118,7 +118,7 @@ class DashboardWidget(BaseModel):
             "dashboard_id",
             "position",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 

@@ -30,7 +30,7 @@ from app.core.base_model import BaseModel
 
 COLORS = ("chart-1", "chart-2", "chart-3", "chart-4", "chart-5")
 _COLOR_LIST = ", ".join(f"'{color}'" for color in COLORS)
-ACTIVE = "archived_at IS NULL AND NOT is_deleted"
+ACTIVE = "archived_at IS NULL AND is_deleted IS FALSE"
 
 
 def _board_key(table: str) -> ForeignKeyConstraint:

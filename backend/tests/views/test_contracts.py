@@ -132,7 +132,9 @@ def test_one_active_default_view_per_module_is_a_partial_unique_index() -> None:
 
     assert index.unique is True
     assert [column.name for column in index.columns] == ["module_id"]
-    assert str(index.dialect_options["postgresql"]["where"]) == "is_default AND NOT is_deleted"
+    assert str(index.dialect_options["postgresql"]["where"]) == (
+        "is_default IS TRUE AND is_deleted IS FALSE"
+    )
     assert {"owner_id", "visibility", "audience_kind", "audience_user_id"}.isdisjoint(
         SavedView.__table__.c.keys()
     )

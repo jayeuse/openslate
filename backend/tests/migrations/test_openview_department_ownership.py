@@ -109,7 +109,7 @@ def _assert_catalog(connection: Connection) -> None:
     definition = default_index.lower()
     assert "create unique index" in definition
     assert "(module_id)" in definition
-    assert "is_default" in definition and "not is_deleted" in definition
+    assert "is_default is true" in definition and "is_deleted is false" in definition
 
 
 def _insert_view(

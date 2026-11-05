@@ -36,7 +36,7 @@ class Group(BaseModel):
             "org_id",
             text("lower(name)"),
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 
@@ -98,13 +98,13 @@ class GroupAccess(BaseModel):
             "module_id",
             unique=True,
             postgresql_nulls_not_distinct=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index(
             "ix_group_access_department_module_active",
             "department_id",
             "module_id",
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
         Index("ix_group_access_module_id", "module_id"),
     )

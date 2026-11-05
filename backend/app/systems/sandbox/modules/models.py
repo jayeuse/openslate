@@ -41,7 +41,7 @@ class Module(BaseModel):
             "department_id",
             "module_name",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted IS FALSE"),
         ),
     )
 
