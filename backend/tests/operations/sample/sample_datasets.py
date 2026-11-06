@@ -52,7 +52,11 @@ def mutation_aware_cache(builder):
             return builder(*args, **kwargs)
         return cached(*args, **kwargs)
 
-    wrapped.cache_clear = cached.cache_clear
+    def cache_clear() -> None:
+        cached.cache_clear()
+        _digests.clear()
+
+    wrapped.cache_clear = cache_clear
     return wrapped
 
 
