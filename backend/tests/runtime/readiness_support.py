@@ -24,7 +24,8 @@ def readiness_settings(**overrides: object) -> Settings:
     values = settings_values(
         supabase_url="http://supabase.test",
         supabase_publishable_key=READINESS_PUBLISHABLE_KEY,
-        readiness_caller_timeout_seconds=0.5,
+        # A hang guard, not a latency claim: a test of the deadline sets its own value.
+        readiness_caller_timeout_seconds=30,
         smtp_host="mailpit",
         smtp_port=1025,
         smtp_admin_email="admin@slateops.test",

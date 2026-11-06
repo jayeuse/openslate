@@ -12,10 +12,11 @@ import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import Event
-from time import monotonic
+from time import monotonic, perf_counter
 from typing import IO, Any
 
 from app.core.config.disposable_instance import (
@@ -47,6 +48,13 @@ TEMPLATE_PORT_BASE = 29000
 # required" on 2026-10-23) is retried within that budget; nothing else is retried.
 IMAGE_PULL_SECONDS = 300.0
 IMAGE_PULL_RETRY_DELAYS = (5.0, 15.0)
+# Docker runs a service's first health check one interval after it starts, and Compose
+# starts a dependent only after that check, so the 5 s and 10 s intervals cost a test
+# stack up to 17 s of waiting. It probes each service every second until it turns healthy,
+# then returns to the base interval. Deployed stacks keep compose.yaml as it is.
+FAST_START_PROBES = frozenset(
+    {"api-gw", "auth", "db", "imgproxy", "meta", "realtime", "storage", "studio"}
+)
 
 
 def _wait(seconds: float) -> None:
@@ -236,6 +244,10 @@ class DisposablePostgres:
         overlay = ["services:"]
         for service in PROVIDER_IMAGES:
             overlay.extend([f"  {service}:", "    labels:", label_lines])
+            if service in FAST_START_PROBES:
+                overlay.extend(
+                    ["    healthcheck:", "      start_period: 60s", "      start_interval: 1s"]
+                )
             if service == "db":
                 # A disposable test cluster needs no crash durability. Parallel shards
                 # otherwise serialize on fsync through Docker Desktop's virtual disk.
@@ -385,8 +397,39 @@ class DisposablePostgres:
         for pull in pulls:
             pull.result()
 
+    def _report_start(
+        self, seconds: dict[str, float], up_began: datetime, service_ids: dict[str, str]
+    ) -> None:
+        """Keep and print where the stack start went; a failed reading loses only service times."""
+        self.start_seconds = seconds
+        print(
+            "Stack start: " + ", ".join(f"{name} {value:.1f} s" for name, value in seconds.items()),
+            flush=True,
+        )
+        try:
+            started = {
+                container["Config"]["Labels"]["com.docker.compose.service"]: (
+                    datetime.fromisoformat(container["State"]["StartedAt"]) - up_began
+                ).total_seconds()
+                for container in self._inspect_json(["inspect", *service_ids.values()])
+                if "State" in container and "Config" in container
+            }
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError):
+            return
+        # The gap to a dependent's start is the health wait of the service it needs.
+        print(
+            "Stack services started after up began: "
+            + ", ".join(
+                f"{name} {value:.1f} s"
+                for name, value in sorted(started.items(), key=lambda item: item[1])
+            ),
+            flush=True,
+        )
+
     def start(self) -> None:
+        began = perf_counter()
         self._pull_images()
+        pulled = perf_counter()
         self.port, self.api_port, self.mail_port, self.publisher_port = (
             _available_port(),
             _available_port(),
@@ -415,6 +458,8 @@ class DisposablePostgres:
             self._write_inputs()
             self._compose(["config", "--quiet"], timeout=30)
             self._compose(["create"], timeout=120)
+        created = perf_counter()
+        up_began = datetime.now(UTC)
         deadline = monotonic() + 180
         try:
             try:
@@ -431,6 +476,7 @@ class DisposablePostgres:
                 except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
                     pass
             raise
+        running = perf_counter()
         for service, internal, expected in (
             ("db", DB_PORT, self.port),
             ("api-gw", 8000, self.api_port),
@@ -445,6 +491,16 @@ class DisposablePostgres:
             "Name"
         ].removeprefix("/")
         self.assert_cluster_identity()
+        self._report_start(
+            {
+                "pulls": pulled - began,
+                "create": created - pulled,
+                "up and health": running - created,
+                "checks": perf_counter() - running,
+            },
+            up_began,
+            ownership["service_ids"],
+        )
 
     def urls(self) -> dict[str, str]:
         if self.port is None:

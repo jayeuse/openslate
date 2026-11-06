@@ -46,7 +46,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: backend
@@ -89,7 +89,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
@@ -136,7 +136,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 13
     strategy:
       fail-fast: false
       matrix:
@@ -204,7 +204,7 @@ jobs:
     needs: [changes, unit, coverage]
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: backend
@@ -255,7 +255,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Stays above the 5-minute image pull budget of the test stack.
+    timeout-minutes: 7
     defaults:
       run:
         working-directory: backend

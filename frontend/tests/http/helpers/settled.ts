@@ -25,10 +25,11 @@ export async function openedSheet(sheet: Locator): Promise<Locator> {
 }
 
 /**
- * Waits for the panel that `trigger` opened to reach its full height. Before
- * a click Playwright scrolls its target into view, and an overflow-hidden
- * panel scrolls too: a row clipped by the opening panel then rides down with
- * the growing panel, away from the pointer.
+ * Waits for the panel that `trigger` opened to reach its full height. Until
+ * then the rows below it move down, so a press and its release can land on
+ * different rows. Rows inside a sidebar panel stay still: `overflow-clip`
+ * keeps the panel from scrolling, which app-shell.spec.ts proves without this
+ * helper.
  */
 export async function openedPanel(trigger: Locator): Promise<void> {
   await expect(trigger).toHaveAttribute("aria-controls", /.+/);

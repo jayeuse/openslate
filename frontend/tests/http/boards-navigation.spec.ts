@@ -601,37 +601,19 @@ function streamOpened(page: Page) {
   });
 }
 
-test("a cold /boards reads the board list and the open board once each, within 34 requests", async ({
-  page,
-}) => {
-  // A live stream, so its connection is part of the cold load.
-  await installOpenViewEventSource(page, { autoResync: true });
-  await installBoardApi(page, () => true);
-  const directory = await installBoardDirectory(page);
-  // The list answers once the stream is live. A stream that connects after the
-  // read has finished reads it again, which the next test owns.
-  await page.route(
-    (url) => url.pathname === "/api/boards",
-    async (route) => {
-      await streamOpened(page);
-      await settleReact(page);
-      await route.fallback();
-    },
-  );
+/** Records the API requests a page sends. */
+function recordApiRequests(page: Page) {
   const requests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/api/"))
       requests.push(`${request.method()} ${url.pathname}${url.search}`);
   });
-  await page.goto("/boards");
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Company announcements" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "New post", exact: true }).first(),
-  ).toBeVisible();
-  // Count once the page stops reading: two polls in a row see no new request.
+  return requests;
+}
+
+/** Waits until the page stops reading: two polls in a row see no new request. */
+async function requestsSettled(requests: string[]) {
   let previous = -1;
   await expect
     .poll(
@@ -643,8 +625,53 @@ test("a cold /boards reads the board list and the open board once each, within 3
       { intervals: [500] },
     )
     .toBe(true);
-  expect(directory.listQueries, requests.join("\n")).toHaveLength(1);
+}
+
+// A real cold load: the stream goes live 35 to 289 ms after the list answers,
+// in every one of 95 measured loads, so the list and the board are read twice
+// (docs/plans/ci-speed.md, R6). The export sent 28 requests in this order. A
+// stream that lands after the posts have subscribed rereads those too, 35 in
+// the export; that later order is known and stays out of this budget.
+test("a cold /boards reads the board list and the open board twice each, within 34 requests", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let open = () => {};
+    const held = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    Reflect.set(window, "__onWorkspaceStreamRequest", () => held);
+    Reflect.set(window, "openHeldStream", () => open());
+  });
+  // A live stream, so its connection is part of the cold load.
+  await installOpenViewEventSource(page, { autoResync: true });
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  // The board's read starts once the list has answered. The stream goes live
+  // while that read waits, before the posts can subscribe.
+  await page.route(
+    (url) => url.pathname === `/api/boards/${directoryIds.company}`,
+    async (route) => {
+      await page.evaluate(() =>
+        (Reflect.get(window, "openHeldStream") as () => void)(),
+      );
+      await streamOpened(page);
+      await settleReact(page);
+      await route.fallback();
+    },
+  );
+  const requests = recordApiRequests(page);
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }).first(),
+  ).toBeVisible();
+  await requestsSettled(requests);
+  expect(directory.listQueries, requests.join("\n")).toHaveLength(2);
   expect(directory.detailReads, requests.join("\n")).toEqual([
+    directoryIds.company,
     directoryIds.company,
   ]);
   await test.info().attach("cold /boards API requests", {
@@ -652,6 +679,32 @@ test("a cold /boards reads the board list and the open board once each, within 3
     contentType: "text/plain",
   });
   expect(requests.length, requests.join("\n")).toBeLessThanOrEqual(34);
+});
+
+test("a stream already live when the board list answers reads the list and the board once", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page, { autoResync: true });
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.route(
+    (url) => url.pathname === "/api/boards",
+    async (route) => {
+      await streamOpened(page);
+      await settleReact(page);
+      await route.fallback();
+    },
+  );
+  const requests = recordApiRequests(page);
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }).first(),
+  ).toBeVisible();
+  await requestsSettled(requests);
+  expect(directory.listQueries, requests.join("\n")).toHaveLength(1);
+  expect(directory.detailReads, requests.join("\n")).toEqual([
+    directoryIds.company,
+  ]);
 });
 
 test("a stream that connects after the board list read reads the list again", async ({

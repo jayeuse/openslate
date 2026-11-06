@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
-from functools import cache
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -14,15 +13,14 @@ from operations.sample.blueprint import SampleDataset, SampleRecord
 from operations.sample.history import status_label
 from operations.sample.packs.manufacturer import PACK
 from operations.sample.population.board_entries import validate_board_scenarios
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ANCHOR = date(2026, 9, 30)
 _HELD_BATCHES = {"QA hold", "Reprocess", "Destroyed"}
 
 
-@cache
 def _dataset(profile: str = "standard") -> SampleDataset:
-    return build_dataset(profile, 42, ANCHOR, organization=PACK)
+    return sample_dataset(profile, 42, ANCHOR, PACK.identity.key)
 
 
 def _records(dataset: SampleDataset) -> dict[str, SampleRecord]:

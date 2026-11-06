@@ -6109,6 +6109,7 @@
     "operations/sample/text.py",
     "operations/sample/verification/__init__.py",
     "operations/sample/verification/history.py",
-    "operations/sample/vocabulary.py"
+    "operations/sample/vocabulary.py",
+    "tests/operations/sample/sample_datasets.py"
   ]
 }

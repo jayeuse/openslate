@@ -80,6 +80,30 @@ def test_a_stack_beside_the_runner_api_keeps_its_template_port(
     assert url == "http://host.docker.internal:8008/api/auth/email-templates"
 
 
+def test_every_health_checked_service_is_probed_each_second_only_while_it_starts(
+    tmp_path: Path,
+) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        runtime.port, runtime.api_port, runtime.mail_port = 49152, 49153, 49154
+        runtime.template_port, runtime.network_block = 29007, 7
+        runtime._write_inputs()
+
+    base = yaml.safe_load(BASE_COMPOSE.read_text(encoding="utf-8"))["services"]
+    services = yaml.safe_load(runtime.overlay_file.read_text(encoding="utf-8"))["services"]
+    probes = {
+        name: service["healthcheck"]
+        for name, service in services.items()
+        if "healthcheck" in service
+    }
+
+    assert set(probes) == {name for name, service in base.items() if "healthcheck" in service}
+    # Only the start changes: each service keeps the base test and interval once it is healthy.
+    assert all(
+        probe == {"start_period": "60s", "start_interval": "1s"} for probe in probes.values()
+    )
+
+
 def _interpolations_without_defaults(arguments: list[str]) -> list[str]:
     # The base file requires the instance ID (`${NAME:?message}`); the overlay names it.
     return [re.sub(r"\$\{(\w+)(?::?[-?+][^}]*)?\}", r"${\1}", value) for value in arguments]

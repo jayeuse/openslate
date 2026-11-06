@@ -7,16 +7,16 @@ from datetime import date, timedelta
 import pytest
 
 from operations.sample.blueprint import _option_id
-from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.packs.registry import pack_keys
 from operations.sample.realism import DateCluster, DateShape, weighted_label
-from operations.sample.scenario import build_dataset
 from operations.sample.verification.realism import is_round, pack_realism, realism_report
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ANCHOR = date(2026, 9, 30)
 
 
 def _dataset(pack: str):
-    return build_dataset("standard", 42, ANCHOR, organization=get_pack(pack))
+    return sample_dataset("standard", 42, ANCHOR, pack)
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,7 @@ def test_round_numbers_are_the_ones_people_type(value: float, expected: bool) ->
 @pytest.mark.parametrize("criterion", [1, 2, 3, 4, 5])
 @pytest.mark.parametrize("profile", ["standard", "large"])
 def test_pack_plan_has_a_real_organizations_shape(pack: str, criterion: int, profile: str) -> None:
-    dataset = build_dataset(profile, 42, ANCHOR, organization=get_pack(pack))
+    dataset = sample_dataset(profile, 42, ANCHOR, pack)
     assert realism_report(dataset, **pack_realism(dataset)).failed(criterion) == []
 
 

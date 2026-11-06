@@ -39,7 +39,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend
@@ -62,7 +62,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend
@@ -161,8 +161,8 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The test step keeps its own 10-minute hang limit.
-    timeout-minutes: 12
+    # The test step keeps its own 9-minute hang limit.
+    timeout-minutes: 11
     strategy:
       fail-fast: false
       matrix:
@@ -241,7 +241,7 @@ jobs:
             --shard ${{ matrix.duration-shard }} --shards 8 \
             --test-list test-results/ci/selected.txt --receipt test-results/ci/assignment.json
       - name: Run browser tests against the static export
-        timeout-minutes: 10
+        timeout-minutes: 9
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
         run: npm test -- --project=http --workers=2 --test-list=test-results/ci/selected.txt --reporter=line,json

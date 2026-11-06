@@ -215,6 +215,14 @@ export function SecurityView({
       operation.current = null;
     };
   }, []);
+  // A refused address list moves focus after the commit that ends the save:
+  // only then is the field enabled, and its Advanced block open around it.
+  const focusAddress = useRef(false);
+  useEffect(() => {
+    if (!focusAddress.current || livePending) return;
+    focusAddress.current = false;
+    document.getElementById("ip-entry")?.focus();
+  }, [livePending]);
   useEffect(() => {
     if (!active || !admitted) return;
     const previous = observedMfa.current;
@@ -693,9 +701,7 @@ export function SecurityView({
             ...errors,
             ips: "This list blocks your current address. Add your address, then save.",
           }));
-          requestAnimationFrame(() =>
-            document.getElementById("ip-entry")?.focus(),
-          );
+          focusAddress.current = true;
         }
       }
     } finally {

@@ -39,7 +39,7 @@ jobs:
         working-directory: .
         run: |
           python3 scripts/stress_selection.py \
-            --weights frontend/tests/http/.test-durations.json --budget-seconds 240 \
+            --weights frontend/tests/http/.test-durations.json --budget-minutes 75 \
             > stress-specs.txt
           cat stress-specs.txt
           if [ -s stress-specs.txt ]; then

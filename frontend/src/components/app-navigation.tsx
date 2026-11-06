@@ -446,7 +446,7 @@ export function AppNavigation({
             )}
           />
         </CollapsibleTrigger>
-        <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
+        <CollapsibleContent className="h-(--collapsible-panel-height) overflow-clip transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
           <SidebarMenuSub
             className="mr-0 gap-0.5 pr-0"
             aria-label={group.listLabel}

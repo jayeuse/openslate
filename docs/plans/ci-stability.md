@@ -172,7 +172,7 @@ Three read-only triage passes read the saved traces and logs (2026-10-30). Nine 
 | Risk | Solution |
 |---|---|
 | The retry hides a new race | Nightly stress job (S7) and the `flaky.json` expiry |
-| The weights go stale again | Refresh when the medians of each http shard's test step time over 3 full runs spread more than 20%, because one run mixes in runner speed. |
-| The backend durations go stale | When the medians of each coverage shard's and unit part's test step time over 3 full runs spread more than 20%, commit `test-durations.json` as `backend/tests/.test_durations` and `unit-durations.json` as `backend/tests/.test_durations_unit`, both from the `backend-coverage` artifact of the last of those runs |
+| The weights go stale again | When the medians of each http shard's test step time over 3 full runs spread more than 20%, refresh each file's weight with its median over those runs, because one run mixes in runner speed. |
+| The backend durations go stale | When the medians of each coverage shard's and unit part's test step time over 3 full runs spread more than 20%, commit each test's median time over those runs, taken from `test-durations.json` into `backend/tests/.test_durations` and from `unit-durations.json` into `backend/tests/.test_durations_unit`, in each run's `backend-coverage` artifact |
 | `--workers=1` makes shards slower | Measure first (S6). Change it only if the flake rate falls. |
 | A Playwright or Next update changes timing | Dependabot pull requests run the full suite; a red Dependabot run is a real break (class D) |

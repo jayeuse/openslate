@@ -191,3 +191,36 @@ The Software Architect collected these sources on 2026-11-02.
 | Agent pull requests get the same required checks as human ones. The agent runs the smallest useful check before it pushes. Rerun only failed jobs, cancel old runs, stop an agent after 3 to 5 failed attempts, and shard by measured time. | [Depot guide](https://depot.dev/resources/guides/how-do-i-test-ai-generated-pull-requests-in-ci) (undated) | Done: fast checks before push, `cancel-in-progress`, measured shards. Missing: up-to-date durations (S2, S3). |
 | False agent claims that the whole suite passed fell from 8.7% to 0.3% over 644 pull requests. The remaining gap is scope: a claim about one part while another part failed. | [testreceipt, Jun–Sep 2026](https://github.com/amos689/testreceipt) | Supports the current rule: focused tests before the push, and the full suite in CI. |
 | Selective CI on pull requests, with full runs at night or in a merge queue. | No sourced field report found. | Not in scope (§2). Merge queue needs an organization. |
+
+## 8. Root-cause work
+
+Status: requested by the owner on 2026-11-06, after PR #92. It replaces workarounds in that PR with fixes. It runs on its own branch, because PR #92 is reviewed and green, and this work is larger and riskier. Each fix is one commit, so each gives its own CI measurement.
+
+| Item | Outcome | Removes | Preserved |
+|---|---|---|---|
+| R1 Sample datasets | Each duplicate dataset in the realism, consistency and core tests builds once per test process | The repeated builds, about 712 s of summed time (estimate) | The same tests and assertions. Every cached dataset goes through `private_copy` and the `MUTANT_UNDER_TEST` bypass, so a test cannot hide its own change to shared data. Two consistency tests skip both today, and R1 closes that gap |
+| R2 Shard start-up | The fixed cost of about 170 s per coverage shard falls, from a measured split | Whichever cost the measurement names | All services that the ownership guard needs |
+| R3 Search check | A deterministic check blocks in CI, so a slowdown in database work fails a run again | Nothing. The 300 ms number stays as a report in CI and a limit in the local gate, because only it sees CPU time | The SELECT-count and row-bound assertions. A non-deterministic check is not acceptable, because it brings the flake back |
+| R4 Stress budget | The selection budget predicts real run time, from the finished run | The 2× to 4× underestimate, and the skip of specs above the old budget | The repeat count, the workers, and zero retries |
+| R5 Sidebar panel | The opening panel cannot scroll, so the click race ends for every spec | The scroll hazard in the app | The look, the motion, and keyboard reach. `openedPanel` stays unless it is proven dead. It hides this fix, so the proof is a new test without the helper |
+| R6 Boards late stream | A measured answer for a cold load where the stream connects late | The unknown cost of that order | The read after a late stream connects, because a change in that gap has no event |
+
+**Order.** Measure first, then build, then one retune. No slice changes limits or durations: after all fixes land, 3 full runs set them once (TASK-0029). Push one commit at a time, because `cancel-in-progress` drops a run in flight.
+
+**Owner decisions, 2026-11-06.** The owner approved all three:
+1. R3: add the `EXPLAIN` check. It replays the search SQL and fails on too many pages read or a lost search index. The 300 ms number stays as a report in CI and a limit in the local gate.
+2. R1: build it for correctness, with the guard, the one `zero_hit_excluded` row and the adjacency commit. Backend wall time is not expected to change.
+3. R6: correct the Boards test to measure the real order. A real cold load read the list twice in 95 of 95 normal loads, so the hold from PR #92 measures an order that does not occur by itself. The 34-request budget stays, and the app does not change.
+
+The work starts after PR #92 merges.
+
+**R3 finding, 2026-11-06.** Production search cannot use its GIN index under row-level security: the runtime role reads 4,083 pages where the owner reads 4, because the `@@` function is not leakproof. So the index half of the approved check cannot pass today. R3 lands the page ceilings only, which are deterministic and catch per-row work. The index assertion waits for the product fix (REQ-0005).
+
+**Not in this work:**
+- Sheet clicks: the app needs no fix.
+- Runner speed: free runners cannot change it.
+- The CI retry: it stays until first-try green reaches the goal. Removal is an owner decision.
+- REQ-0004: a separate defect, with its own card.
+
+**Risk of R1.** It changes the structure of 92% of unit time. The speed gain is secondary, and the risk is that a shared dataset hides a failure. So the proof is the same tests and the same assertions, with a count that shows each dataset built once. A faster job alone is not proof.
+

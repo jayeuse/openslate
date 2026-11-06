@@ -9,6 +9,7 @@ import {
   type Locator,
   type Page,
 } from "./helpers/test";
+import { addTestStylesheet } from "./helpers/test-styles";
 
 // The slim shell (docs/specs/profile-sidebar-relayout.md, PD1–PD8): 32px
 // one-line rows and 32px header controls from 1280px, the 44px floor below,
@@ -169,6 +170,58 @@ test("from 1280px the sidebar is 240px with 32px one-line rows, the full organiz
         .evaluate((el) => el.getBoundingClientRect().width),
     )
     .toBe(240);
+});
+
+test("an opening sidebar group keeps its height transition and cannot scroll", async ({
+  page,
+}) => {
+  await signInAsHarborAdmin(page);
+  await page.goto("/platform");
+  const navigation = mainNavigation(sidebar(page));
+  const access = navigation.getByRole("button", {
+    name: "Access",
+    exact: true,
+  });
+  await expect(access).toBeVisible();
+  // A slow panel, so the test can read it while it opens. Only the duration
+  // and curve change; the panel measures its own height as usual.
+  await addTestStylesheet(
+    page,
+    "slow-sidebar-panel",
+    '[data-slot="collapsible-content"] { transition-duration: 4s !important; transition-timing-function: linear !important; }',
+  );
+  await access.click();
+  await expect(access).toHaveAttribute("aria-controls", /.+/);
+  const panel = page.locator(
+    `[id="${await access.getAttribute("aria-controls")}"]`,
+  );
+  const opening = () =>
+    panel.evaluate((node) => ({
+      measured: Number.parseFloat(
+        getComputedStyle(node).getPropertyValue("--collapsible-panel-height"),
+      ),
+      height: node.getBoundingClientRect().height,
+      fullHeight: node.scrollHeight,
+      heightTransitions: node
+        .getAnimations()
+        .filter(
+          (item) =>
+            item instanceof CSSTransition &&
+            item.transitionProperty === "height",
+        ).length,
+      scrollTop: node.scrollTop,
+    }));
+  await expect.poll(async () => (await opening()).height).toBeGreaterThan(0);
+  const started = await opening();
+  expect(started.measured).toBeGreaterThan(0);
+  expect(started.heightTransitions).toBe(1);
+  expect(started.height).toBeLessThan(started.fullHeight);
+  // The same call a click makes before it presses. The last row is clipped
+  // here, and a panel that can scroll would scroll to it.
+  await navigation
+    .getByRole("link", { name: "Security", exact: true })
+    .scrollIntoViewIfNeeded();
+  expect((await opening()).scrollTop).toBe(0);
 });
 
 test("the account row is current on the person's own profile", async ({
