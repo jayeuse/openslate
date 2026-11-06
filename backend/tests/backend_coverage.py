@@ -7,12 +7,60 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 COUNT_KEYS = ("tests", "failures", "errors", "skipped")
 # A local parallel run gives each shard its own folder; CI and single runs use the default.
 OUTPUT_OVERRIDE = "SLATEOPS_COVERAGE_OUTPUT"
+# A stack shard loads this file as a pytest plugin (`-p tests.backend_coverage`) and writes
+# its hook times here. Its stdout is private, so the runner process prints the line.
+SESSION_TIMING = "SLATEOPS_SESSION_TIMING"
+_session_marks = {}
+
+
+def pytest_sessionstart():
+    _session_marks["session"] = time.time()
+
+
+def pytest_collection_finish():
+    _session_marks["collected"] = time.time()
+
+
+def pytest_runtest_logstart():
+    _session_marks.setdefault("first_test", time.time())
+
+
+def pytest_runtest_logfinish():
+    _session_marks["last_test"] = time.time()
+
+
+def pytest_sessionfinish():
+    _session_marks["finished"] = time.time()
+
+
+def pytest_unconfigure():
+    if os.getenv(SESSION_TIMING):
+        Path(os.environ[SESSION_TIMING]).write_text(json.dumps(_session_marks))
+
+
+def print_session_timing(path, launched, exited):
+    """Print where a shard's pytest process spent its time; a missing reading prints nothing."""
+    try:
+        marks = {"launched": launched, **json.loads(path.read_text()), "exited": exited}
+        steps = (
+            ("start", "launched", "session"),
+            ("collection", "session", "collected"),
+            ("first test wait", "collected", "first_test"),
+            ("tests", "first_test", "last_test"),
+            ("coverage save and report", "last_test", "finished"),
+            ("summary and exit", "finished", "exited"),
+        )
+        parts = [f"{name} {marks[end] - marks[begin]:.1f} s" for name, begin, end in steps]
+    except (KeyError, OSError, ValueError):
+        return
+    print("Pytest session: " + ", ".join(parts), flush=True)
 
 
 def coverage_output(backend):
@@ -161,11 +209,14 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
         # A shard measures part of the suite; the combine step owns the 90% gate.
         group, total = shard
         durations = output / "test-durations.json"
+        env[SESSION_TIMING] = str(private / "session-timing.json")
         source = newest_durations(backend)
         if source is not None:
             shutil.copyfile(source, durations)
         # Tests that need no stack run in the unit lane (run_unit_lane).
         reports = [
+            "-p",
+            "tests.backend_coverage",
             "-m",
             "integration",
             f"--splits={total}",
@@ -183,6 +234,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
             f"--cov-report=html:{private / 'html'}",
         ]
     gate_exit = 1
+    launched = time.time()
     try:
         run(
             [
@@ -198,6 +250,8 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
             env,
         )
     finally:
+        if shard:
+            print_session_timing(private / "session-timing.json", launched, time.time())
         counts = {}
         if (private / "pytest.xml").exists():
             counts = junit_counts(private / "pytest.xml")
