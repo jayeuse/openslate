@@ -15,7 +15,6 @@ from unittest import mock
 from scripts import stress_selection
 
 SUNDAY = date(2026, 11, 8)
-NEXT_SUNDAY = date(2026, 11, 15)
 SATURDAY = date(2026, 11, 7)
 
 
@@ -42,66 +41,59 @@ class StressSelectionTests(unittest.TestCase):
         )
 
     def test_the_budget_fills_75_wall_minutes_on_a_slow_runner(self):
-        self.assertEqual(stress_selection.budget_ms(75), 236842)
+        self.assertEqual(stress_selection.budget_ms(75), 310345)
 
-    def test_a_spec_above_the_budget_takes_its_turn_on_sundays_only(self):
+    @staticmethod
+    def selected(today: date, specs: list[str], weights: dict[str, int]) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "weights.json"
+            path.write_text(json.dumps({"files": weights}))
+            output = io.StringIO()
+            with (
+                mock.patch.object(stress_selection, "changed_specs", return_value=specs),
+                contextlib.redirect_stdout(output),
+            ):
+                stress_selection.main(
+                    ["--weights", str(path), "--budget-minutes", "75", "--today", today.isoformat()]
+                )
+        return output.getvalue().splitlines()
+
+    def test_a_spec_above_the_budget_runs_alone_on_sundays_and_never_on_other_nights(self):
         small, big = "frontend/tests/http/small.spec.ts", "frontend/tests/http/big.spec.ts"
-        weights = {"http/small.spec.ts": 100, "http/big.spec.ts": 900}
+        weights = {"http/small.spec.ts": 1000, "http/big.spec.ts": 400000}
 
-        for today, expected in ((SUNDAY, big), (SATURDAY, None)):
-            with self.subTest(today=today):
+        # The order matters: a large spec listed first must not use up the other nights.
+        for specs in ([small, big], [big, small]):
+            with self.subTest(specs=specs):
                 self.assertEqual(
-                    stress_selection.large_spec_turn([small, big], weights, 500, today), expected
+                    self.selected(SUNDAY, specs, weights),
+                    ["tests/http/big.spec.ts"],
+                )
+                self.assertEqual(
+                    self.selected(SATURDAY, specs, weights),
+                    ["tests/http/small.spec.ts"],
                 )
 
-    def test_no_spec_takes_a_turn_when_every_spec_fits_the_budget(self):
-        path = "frontend/tests/http/small.spec.ts"
-
-        self.assertIsNone(
-            stress_selection.large_spec_turn([path], {"http/small.spec.ts": 100}, 500, SUNDAY)
+    def test_sundays_reach_a_heavy_spec_that_newer_specs_crowd_out_on_other_nights(self):
+        newer, new, heavy, light = (
+            f"frontend/tests/http/{name}.spec.ts" for name in ("newer", "new", "heavy", "light")
         )
-
-    def test_several_large_specs_take_turns_week_by_week(self):
-        first, second = "frontend/tests/http/a.spec.ts", "frontend/tests/http/b.spec.ts"
-        weights = {"http/a.spec.ts": 900, "http/b.spec.ts": 900}
-        turns = {
-            stress_selection.large_spec_turn([first, second], weights, 500, today)
-            for today in (SUNDAY, NEXT_SUNDAY)
+        weights = {
+            "http/newer.spec.ts": 160000,
+            "http/new.spec.ts": 160000,
+            "http/heavy.spec.ts": 250000,
+            "http/light.spec.ts": 50000,
         }
+        specs = [newer, new, heavy, light]
 
-        self.assertEqual(turns, {first, second})
-
-    def test_a_large_spec_runs_alone_on_its_night_and_others_run_on_the_rest(self):
-        small, big = "frontend/tests/http/small.spec.ts", "frontend/tests/http/big.spec.ts"
-        with tempfile.TemporaryDirectory() as directory:
-            weights = Path(directory) / "weights.json"
-            weights.write_text(
-                json.dumps({"files": {"http/small.spec.ts": 1000, "http/big.spec.ts": 300000}})
-            )
-
-            def selected(today: date, specs: list[str]) -> list[str]:
-                output = io.StringIO()
-                with (
-                    mock.patch.object(stress_selection, "changed_specs", return_value=specs),
-                    contextlib.redirect_stdout(output),
-                ):
-                    stress_selection.main(
-                        [
-                            "--weights",
-                            str(weights),
-                            "--budget-minutes",
-                            "75",
-                            "--today",
-                            today.isoformat(),
-                        ]
-                    )
-                return output.getvalue().splitlines()
-
-            # The order matters: a large spec listed first must not use up the other nights.
-            for specs in ([small, big], [big, small]):
-                with self.subTest(specs=specs):
-                    self.assertEqual(selected(SUNDAY, specs), ["tests/http/big.spec.ts"])
-                    self.assertEqual(selected(SATURDAY, specs), ["tests/http/small.spec.ts"])
+        self.assertEqual(
+            self.selected(SUNDAY, specs, weights),
+            ["tests/http/heavy.spec.ts", "tests/http/light.spec.ts"],
+        )
+        self.assertEqual(
+            self.selected(SATURDAY, specs, weights),
+            ["tests/http/newer.spec.ts", "tests/http/light.spec.ts"],
+        )
 
     def test_changed_specs_are_newest_first_existing_and_never_the_measurement(self):
         with tempfile.TemporaryDirectory() as directory:

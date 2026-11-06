@@ -2,8 +2,8 @@
 
 The job repeats each selected spec 20 times with zero retries, so a race shows before it
 reaches a pull request (docs/plans/ci-stability.md S7). Specs changed most recently come
-first; the selection stops at a wall-time budget, predicted from the shard weights. A spec
-too large for the budget runs alone one night a week, so the 7-day window cannot skip it.
+first; the selection stops at a wall-time budget, predicted from the shard weights. On
+Sundays the heaviest specs come first, so the 7-day window cannot skip the heaviest spec.
 """
 
 from __future__ import annotations
@@ -21,9 +21,10 @@ HTTP_PREFIX = "frontend/tests/http/"
 EXCLUDED = frozenset({"frontend/tests/http/comms-timeline-performance.spec.ts"})
 REPEATS = 20
 WORKERS = 4
-# Wall time over (weight x REPEATS / WORKERS), slowest of 8 measured nights. Fast runners
-# measured 1.9 to 2.25; sizing for those would time out on a slow runner, 3 nights in 8.
-WALL_MULTIPLIER = 3.8
+# Wall time over (weight x REPEATS / WORKERS), slowest of 8 measured nights, against the
+# current weights. Fast runners measured 1.5 to 1.8; sizing for those would time out on a
+# slow runner, 3 nights in 8. Derive it again whenever the weights are refreshed.
+WALL_MULTIPLIER = 2.9
 
 
 def changed_specs(since_days: int, root: Path = ROOT) -> list[str]:
@@ -68,16 +69,15 @@ def spec_weight(path: str, weights: dict[str, int]) -> float:
     return weights.get(path.removeprefix("frontend/tests/"), fallback)
 
 
-def large_spec_turn(
-    specs: list[str], weights: dict[str, int], budget: int, today: date
-) -> str | None:
-    """On Sundays, name the spec too large for the budget; several take turns by week."""
+def night_order(specs: list[str], weights: dict[str, int], budget: int, today: date) -> list[str]:
+    """Put the heaviest first on Sundays; other nights leave out a spec above the budget.
 
-    large = [path for path in specs if spec_weight(path, weights) > budget]
-    ordinal = today.toordinal()
-    if not large or ordinal % 7:
-        return None
-    return large[ordinal // 7 % len(large)]
+    A spec above the budget listed first would otherwise use up every night.
+    """
+
+    if today.weekday() == 6:
+        return sorted(specs, key=lambda path: spec_weight(path, weights), reverse=True)
+    return [path for path in specs if spec_weight(path, weights) <= budget]
 
 
 def select(specs: list[str], weights: dict[str, int], budget_ms: int) -> list[str]:
@@ -102,12 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--today", type=date.fromisoformat, default=datetime.now(UTC).date())
     args = parser.parse_args(argv)
     weights = json.loads(args.weights.read_text(encoding="utf-8"))["files"]
-    specs = changed_specs(args.since_days)
     budget = budget_ms(args.budget_minutes)
-    large = large_spec_turn(specs, weights, budget, args.today)
-    # On other nights a large spec stays out; if it came first, it would use up the budget.
-    fitting = [path for path in specs if spec_weight(path, weights) <= budget]
-    for path in [large] if large else select(fitting, weights, budget):
+    specs = night_order(changed_specs(args.since_days), weights, budget, args.today)
+    for path in select(specs, weights, budget):
         print(path.removeprefix("frontend/"))
     return 0
 
