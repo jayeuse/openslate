@@ -41,6 +41,7 @@ const numberFieldId = "00000000-0000-4000-8000-000000000028";
 const integerFieldId = "00000000-0000-4000-8000-000000000029";
 const viewId = "00000000-0000-4000-8000-000000000014";
 const secondViewId = "00000000-0000-4000-8000-000000000019";
+const thirdViewId = "00000000-0000-4000-8000-000000000031";
 const duplicateViewId = "00000000-0000-4000-8000-000000000030";
 const recordOneId = "00000000-0000-4000-8000-000000000015";
 const recordTwoId = "00000000-0000-4000-8000-000000000016";
@@ -3705,6 +3706,72 @@ test("Back and Forward give each view its own draft, also when a read lands duri
     );
   });
   await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
+});
+
+test("a held Back cannot put one entry's draft on a view that becomes the default", async ({
+  page,
+}) => {
+  const entryView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Entry register",
+    definition: { ...baseView().definition, search: "entry" },
+  };
+  const nextDefault = {
+    ...baseView(),
+    id: thirdViewId,
+    name: "Next default",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [entryView, nextDefault],
+  });
+  // Registered before Next's listener, so it can hold a traversal back.
+  await page.addInitScript(() => {
+    window.addEventListener("popstate", (event) => {
+      if (document.documentElement.dataset.holdTraversal)
+        event.stopImmediatePropagation();
+    });
+  });
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${secondViewId}`,
+  );
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("entry");
+  await search.fill("alpha");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const firstEntry = page.url();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Equipment", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Discard and continue" }).click();
+  await expect(page).not.toHaveURL(/[?&]view=/);
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("pump");
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.holdTraversal = "true";
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(firstEntry);
+  api.changeDefaultElsewhere(thirdViewId);
+  await api.triggerInvalidation("saved_views");
+  await expect(selected).toHaveValue(thirdViewId);
+  await expect(search).toHaveValue("panel");
+  await expect(page).toHaveURL(firstEntry);
+
+  await page.evaluate(() => {
+    delete document.documentElement.dataset.holdTraversal;
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: window.history.state }),
+    );
+  });
+  await expect(selected).toHaveValue(secondViewId);
   await expect(search).toHaveValue("alpha");
   await expect(page).toHaveURL(firstEntry);
 });

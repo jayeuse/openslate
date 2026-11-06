@@ -707,12 +707,18 @@ export default function ServerBackedViewsWorkspace({
   const mirroredChanges = useRef<string | null>(null);
   useEffect(() => {
     if (!draftBaseReady || navigationPending) return;
+    const address = new URLSearchParams(window.location.search);
+    // Back and Forward move the address before the page commits that entry.
+    // Until the page shows the entry the address names, decide nothing.
+    if (
+      address.get("module") !== requestedModule ||
+      address.get("view") !== requestedView
+    )
+      return;
     // Read the address itself. Next updates the search params after a
     // replaceState, in a transition, so they can still show a value this page
     // has already replaced; that value must not land on the next View.
-    const addressChanges = new URLSearchParams(window.location.search).get(
-      TEMPORARY_VIEW_PARAM,
-    );
+    const addressChanges = address.get(TEMPORARY_VIEW_PARAM);
     if (restoredDraftKey.current !== draftKey) {
       restoredDraftKey.current = draftKey;
       const arrived =
@@ -738,8 +744,10 @@ export default function ServerBackedViewsWorkspace({
     draftState,
     fields,
     navigationPending,
+    requestedModule,
     // Back and Forward on the same View rerun the mirror through this value.
     requestedChanges,
+    requestedView,
     temporaryChanges,
   ]);
   const activeFields = useMemo(
