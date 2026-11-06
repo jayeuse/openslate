@@ -1,6 +1,6 @@
 # CI speed plan
 
-Status: proposed on 2026-11-02, updated on 2026-11-06, waiting for the owner. Base revision: `ec8fcede` on `main`. This plan follows `docs/plans/ci-stability.md`. All rules of that plan stay: one retry in CI, the flaky ledger, the nightly stress job.
+Status: approved by the owner on 2026-11-06; steps 1 to 3 are built in PR #92. Base revision: `ec8fcede` on `main`. This plan follows `docs/plans/ci-stability.md`. All rules of that plan stay: one retry in CI, the flaky ledger, the nightly stress job.
 
 ## 1. Evidence
 
@@ -19,7 +19,7 @@ All numbers come from the GitHub Actions job data and artifacts of 2026-11-02 to
 - In 5 of 16 runs the `unit` job took 9.8 to 10.4 min. In the other 11 it took 13.1 to 15.3 min.
 - The same tests ran in both groups. Run 41949745200 summed 2,185 s for 4,950 unit tests. Run 42061255580 summed 2,965 s for 4,961 unit tests, 1.36× slower.
 - Integration tests change less: 1,780 s against 1,944 s, 1.09× slower.
-- The likely cause is runner hardware. This is not confirmed.
+- The cause is runner hardware. Unit parts of equal size took 5.9 to 6.05 min on an EPYC 7763 and 3.3 min on an EPYC 9V45.
 
 This plan sizes every job for the slow runner.
 
@@ -119,6 +119,7 @@ All slices go on one branch and in one pull request. Each push gives one CI meas
 | 1 | F3 | Upload the trace folder when a test passes only on its retry, not only on failure. | Infrastructure Engineer | `.github/workflows/frontend.yml`, `tests/tooling/test_ci_workflows.py` | Evidence for every flake |
 | 1 | F4 | Remove `--with-deps` from every Chromium install, so CI never uses `apt-get`. If the runner image ever loses a library, Chromium fails at launch with a clear error. | Infrastructure Engineer | `frontend.yml`, `stress.yml`, `tests/tooling/test_ci_workflows.py` | No install stall |
 | 1 | F5 | Raise the stress step limit so that a run finishes. The worst run did 40% in 30 min, so a full run takes about 75 min. The step limit becomes 110 min and the job limit 120 min, which keeps the run under 70% of its limit. Keep the 240 s selection budget, because a lower budget stresses fewer specs. The job is not on a critical path. | Infrastructure Engineer | `stress.yml`, `tests/tooling/test_ci_workflows.py` | Every nightly run gives a result |
+| 1 | F6 | Fix the OpenView race that the ledger gate found on this branch: a discarded draft landed on the next view. Add a failing-first test. | Frontend Engineer | `server-backed-views-workspace.tsx`, `openview-views-api.spec.ts` | One app defect removed |
 | 1 | B1 | Apply owner decision 2 to the search test. `fullstack_runner.py` gives the tests a clean environment with no `CI` value, so the runner must pass one on. | Backend Engineer | `backend/tests/comms/routes/search/test_search_performance.py`, `backend/tests/fullstack_runner.py` | One timing failure removed |
 | 2 | S1 | Split the unit lane into 3 jobs with pytest-split, `-n 4` in each job. Keep the unit durations in their own compact file, taken from the unit lane's `pytest.xml`, because the shards keep integration tests only. Let `combine` take the expected number of unit parts (default 1, for the local gate), so a lost part still fails. Give each job a unique artifact name. Print the runner's CPU model in the job, to confirm §1.1. | Infrastructure Engineer | `backend.yml`, `backend/tests/backend_coverage.py`, `backend/tests/parallel_coverage.py`, `test_backend_coverage_shards.py`, `tests/tooling/` | `unit` 14.9 → about 5.5 min |
 | 2 | S2 | Commit the integration durations from the `test-durations.json` in a CI run's `backend-coverage` artifact. Raise the coverage shards from 5 to 10. Add a refresh rule: refresh the durations file when the shard test times spread more than 20%, as `ci-stability.md` §5 does for the http shards. | Infrastructure Engineer | `backend.yml`, `backend/tests/.test_durations`, `tests/tooling/` | Coverage 11.0 → 6.2 to 6.9 min |
@@ -150,7 +151,8 @@ These models reproduce the measured jobs within 0.1 min. All inputs are slow-run
 | Layout | Backend | Frontend | Peak jobs |
 |---|---|---|---|
 | Today (median) | 15.1 min | 8.3 min | 17 |
-| After steps 1 to 3 | 7.0 to 7.7 min | about 6.8 min | 26 |
+| After steps 1 to 3 (model) | 7.0 to 7.7 min | about 6.8 min | 26 |
+| After steps 1 to 3 (3 measured runs) | 7.1 to 7.6 min | 6.6 to 6.8 min | not measured |
 
 The coverage shards set the Backend time. More shards help little, because 170 s of each shard is fixed cost.
 

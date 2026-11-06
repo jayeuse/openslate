@@ -89,7 +89,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -136,7 +136,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 14
     strategy:
       fail-fast: false
       matrix:

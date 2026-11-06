@@ -329,25 +329,40 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(workflow=workflow.name):
                 self.assertNotIn("--with-deps", workflow.read_text())
 
-    def test_frontend_browser_install_cannot_use_up_the_test_hang_limit(self):
+    def test_lane_limits_stay_hang_guards_with_each_step_below_its_job(self):
         source = self.source("frontend.yml")
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        measure = source.split("\n  measure:\n", 1)[1]
+        backend = self.source("backend.yml")
+        unit = backend.split("\n  unit:\n", 1)[1].split("\n  coverage:\n", 1)[0]
+        coverage = backend.split("\n  coverage:\n", 1)[1].split("\n  coverage-gate:\n", 1)[0]
 
-        # A slow apt mirror during `playwright install --with-deps` once cancelled the
-        # isolated job at its old 10-minute job limit before any test ran.
-        for job, step in (
-            (isolated, "- name: Run isolated frontend tests\n        timeout-minutes: 10\n"),
+        # docs/plans/ci-speed.md S4: a job limit is about twice the slowest measured job, on
+        # the slow runner, with a floor of 5 minutes for setup on a cold cache. A step limit
+        # stays below its job limit, because a cancelled job skips the evidence uploads.
+        for job, limit, step in (
+            (isolated, 5, "- name: Run isolated frontend tests\n        timeout-minutes: 3\n"),
             (
                 http,
+                12,
                 "- name: Run browser tests against the static export\n"
-                "        timeout-minutes: 15\n",
+                "        timeout-minutes: 10\n",
+            ),
+            (
+                measure,
+                5,
+                "- name: Run the measurements alone against the static export\n"
+                "        id: measurements\n"
+                "        timeout-minutes: 3\n",
             ),
         ):
             with self.subTest(step=step.split("\n", 1)[0]):
                 self.assertIn("playwright install chromium", job)
-                self.assertIn("\n    timeout-minutes: 30\n", job)
+                self.assertIn(f"\n    timeout-minutes: {limit}\n", job)
                 self.assertIn(step, job)
+        self.assertIn("\n    timeout-minutes: 12\n", unit)
+        self.assertIn("\n    timeout-minutes: 14\n", coverage)
 
     def test_frontend_uploads_the_export_reports_and_the_context_of_any_failed_attempt(self):
         source = self.source("frontend.yml")

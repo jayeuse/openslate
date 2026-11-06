@@ -47,7 +47,7 @@ guards live in [`backend_coverage.py`](../../backend/tests/backend_coverage.py).
 `backend/tests/.test_durations` and the unit parts with
 `backend/tests/.test_durations_unit`. Each CI run uploads fresh durations in the
 `backend-coverage` artifact (`test-durations.json` and `unit-durations.json`); commit
-them again when the test times of the shards or parts spread more than 20%. Locally, a shard uses the last combined run's durations
+them again when the median test times of the shards or parts, over 3 full runs, spread more than 20%. Locally, a shard uses the last combined run's durations
 (`backend/test-results/coverage/test-durations.json`) when they are newer than the
 committed file, so new tests stop falling back to the average. Local `prepush.py`
 runs [`tests.parallel_coverage`](../../backend/tests/parallel_coverage.py): first
