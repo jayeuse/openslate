@@ -214,6 +214,8 @@ Status: requested by the owner on 2026-11-06, after PR #92. It replaces workarou
 
 The work starts after PR #92 merges.
 
+**R3 finding, 2026-11-06.** Production search cannot use its GIN index under row-level security: the runtime role reads 4,083 pages where the owner reads 4, because the `@@` function is not leakproof. So the index half of the approved check cannot pass today. R3 lands the page ceilings only, which are deterministic and catch per-row work. The index assertion waits for the product fix (REQ-0005).
+
 **Not in this work:**
 - Sheet clicks: the app needs no fix.
 - Runner speed: free runners cannot change it.
