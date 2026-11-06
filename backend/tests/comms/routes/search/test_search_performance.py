@@ -20,12 +20,11 @@ SEARCH_INDEX = "ix_comms_messages_body_search"
 # A word only the rows below hold. "history" must stay out of them: the seeded total is exact.
 SELECTIVE_TERM = "quillwort"
 SELECTIVE_ROWS = 50
-# Measured 4,002 pages, and 4,719 beside 120,000 rows of another organization. 8,166 is the
-# approved ceiling, about twice the plain count. It is this high because row security keeps
-# `@@` from using the search index, so even a rare word reads every row of the organization
-# (REQ-0005). When that fix lands, this ceiling falls and an assertion that the plan uses the
-# index returns.
-SELECTIVE_PAGE_CEILING = 8_166
+# 2 x 4,003, the pages read in CI on 5 runs (4,002 locally, and 4,719 beside 120,000 rows of
+# another organization). It is this high because row security keeps `@@` from using the search
+# index, so even a rare word reads every row of the organization (REQ-0005). When that fix
+# lands, this ceiling falls and an assertion that the plan uses the index returns.
+SELECTIVE_PAGE_CEILING = 8_006
 BROAD_PAGE_FACTOR = 3
 
 
