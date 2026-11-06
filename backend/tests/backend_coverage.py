@@ -1,6 +1,7 @@
 """Fresh coverage artifacts for the disposable backend suite (no credentials)."""
 
 import argparse
+import faulthandler
 import hashlib
 import json
 import os
@@ -17,6 +18,8 @@ OUTPUT_OVERRIDE = "SLATEOPS_COVERAGE_OUTPUT"
 # A stack shard loads this file as a pytest plugin (`-p tests.backend_coverage`) and writes
 # its hook times here. Its stdout is private, so the runner process prints the line.
 SESSION_TIMING = "SLATEOPS_SESSION_TIMING"
+# Every shard takes 12 s or more to exit after pytest ends; this dump shows what holds it.
+EXIT_DUMP_SECONDS = 8
 _session_marks = {}
 
 
@@ -43,7 +46,10 @@ def pytest_sessionfinish():
 def pytest_unconfigure():
     _session_marks["unconfigured"] = time.time()
     if os.getenv(SESSION_TIMING):
-        Path(os.environ[SESSION_TIMING]).write_text(json.dumps(_session_marks))
+        path = Path(os.environ[SESSION_TIMING])
+        path.write_text(json.dumps(_session_marks))
+        stack = os.open(path.with_suffix(".stack"), os.O_WRONLY | os.O_CREAT, 0o600)
+        faulthandler.dump_traceback_later(EXIT_DUMP_SECONDS, file=stack)
 
 
 def print_session_timing(path, launched, exited):
@@ -63,6 +69,19 @@ def print_session_timing(path, launched, exited):
     except (KeyError, OSError, ValueError):
         return
     print("Pytest session: " + ", ".join(parts), flush=True)
+
+
+def print_exit_stack(path):
+    """Print the stack that held the exit; faulthandler lists the main thread last."""
+    try:
+        stack = path.with_suffix(".stack").read_text(errors="replace")
+    except OSError:
+        return
+    blocks = [block for block in stack.split("\n\n") if block.strip()]
+    found = "stack below" if blocks else "no stack, the process had gone"
+    print(f"Pytest {EXIT_DUMP_SECONDS} s after unconfigure: {found}", flush=True)
+    for block in blocks[::-1][:10]:
+        print("\n".join(block.splitlines()[:6]), flush=True)
 
 
 def coverage_output(backend):
@@ -254,6 +273,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
     finally:
         if shard:
             print_session_timing(private / "session-timing.json", launched, time.time())
+            print_exit_stack(private / "session-timing.json")
         counts = {}
         if (private / "pytest.xml").exists():
             counts = junit_counts(private / "pytest.xml")
