@@ -260,7 +260,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("pull_request", source)
         self.assertIn("github.event.repository.default_branch", source)
         self.assertIn("python3 scripts/stress_selection.py", source)
-        self.assertIn("--budget-seconds 240", source)
+        self.assertIn("--budget-minutes 75", source)
         self.assertIn(
             'npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"',
             source,
