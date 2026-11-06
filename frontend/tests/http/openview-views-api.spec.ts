@@ -18,6 +18,7 @@ import { hideDevOverlay } from "./helpers/test-styles";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -326,7 +327,9 @@ async function openRecordFiles(page: Page, parent = recordOneId) {
   await page.goto(
     `/openview?section=views&module=${moduleId}&view=${viewId}&record=${parent}`,
   );
-  const dialog = page.getByRole("dialog", { name: "Record details" });
+  const dialog = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
   await dialog.getByRole("tab", { name: "Files", exact: true }).click();
   return dialog.getByRole("tabpanel", { name: "Files", exact: true });
 }

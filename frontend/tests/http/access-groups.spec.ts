@@ -23,6 +23,7 @@ import {
   person,
   type AccessEntry,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 // The Groups tab against the mocked Access API (see helpers/access-api.ts):
 // Inventory clerks (Ana, Ben; Inventory write) and Finance readers (Ben;
@@ -42,6 +43,7 @@ async function openGroup(page: Page, name: string) {
     .getByRole("button", { name })
     .click();
   await expect(panel(page, name)).toBeVisible();
+  await openedSheet(panel(page, name));
 }
 
 const byKey = (entries: AccessEntry[]) =>
@@ -168,7 +170,7 @@ test("a rename that meets a newer save asks which name to keep", async ({
     await route.fulfill({ status: 412, json: { detail: "Resource changed" } });
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
-  const sheet = panel(page, "Inventory clerks");
+  const sheet = await openedSheet(panel(page, "Inventory clerks"));
   await sheet.getByLabel("Name").fill("Stock clerks");
   await sheet.getByRole("button", { name: "Save details" }).click();
 
@@ -195,7 +197,7 @@ test("an administrator replaces members from the directory, merged onto newer me
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=groups&group=${ids.readers}`);
-  const sheet = panel(page, "Finance readers");
+  const sheet = await openedSheet(panel(page, "Finance readers"));
   await sheet.getByRole("tab", { name: "Members" }).click();
   const members = sheet.getByRole("list", { name: "Members" });
   await expect(members).toContainText("Ben Cruz");
@@ -310,7 +312,7 @@ test("the access editor sends every department and module level as one replaceme
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=groups&group=${ids.readers}`);
-  const sheet = panel(page, "Finance readers");
+  const sheet = await openedSheet(panel(page, "Finance readers"));
   await sheet.getByRole("tab", { name: "Access" }).click();
 
   await sheet.getByLabel("Inventory level").selectOption("write");
@@ -354,7 +356,7 @@ test("a group with members cannot be deleted; an empty one can", async ({
     return "next" as const;
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
-  let sheet = panel(page, "Inventory clerks");
+  let sheet = await openedSheet(panel(page, "Inventory clerks"));
   // Delete waits in Advanced and says why it cannot act; the way to empty
   // the group sits beside it.
   await openAdvanced(sheet);
@@ -411,7 +413,7 @@ test("an unsaved group draft survives a reload and asks before it is discarded",
     .getByLabel("Description")
     .fill("Counts and prices");
   await page.reload();
-  const sheet = panel(page, "Inventory clerks");
+  const sheet = await openedSheet(panel(page, "Inventory clerks"));
   await expect(sheet.getByLabel("Description")).toHaveValue(
     "Counts and prices",
   );
@@ -430,7 +432,7 @@ test("an unsaved group draft survives a reload and asks before it is discarded",
   // An access draft survives too, although group responses carry enriched
   // department and module names that the draft does not.
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
-  const access = panel(page, "Finance readers");
+  const access = await openedSheet(panel(page, "Finance readers"));
   await access
     .getByLabel("Inventory level", { exact: true })
     .selectOption("write");
@@ -452,7 +454,7 @@ test("a member save that got no answer is held for review, and the other drafts 
     route.abort(),
   );
   await page.goto(`/access?view=groups&group=${ids.readers}`);
-  let sheet = panel(page, "Finance readers");
+  let sheet = await openedSheet(panel(page, "Finance readers"));
   await sheet.getByLabel("Description").fill("Month-end close");
   await sheet.getByRole("tab", { name: "Members" }).click();
   await sheet.getByRole("button", { name: "Add Ana Santos" }).click();
@@ -468,7 +470,7 @@ test("a member save that got no answer is held for review, and the other drafts 
   ).toBeVisible();
 
   await page.reload();
-  sheet = panel(page, "Finance readers");
+  sheet = await openedSheet(panel(page, "Finance readers"));
   await expect(
     sheet.getByRole("region", { name: "Saved group draft" }),
   ).toContainText("Ana Santos");
@@ -527,7 +529,7 @@ for (const width of [1440, 390])
       .getByRole("button", { name: /^Manage Inventory clerks/ })
       .filter({ visible: true })
       .click();
-    const sheet = panel(page, "Inventory clerks");
+    const sheet = await openedSheet(panel(page, "Inventory clerks"));
     await sheet.getByRole("tab", { name: "Access" }).click();
     await expect(
       sheet.getByRole("searchbox", {

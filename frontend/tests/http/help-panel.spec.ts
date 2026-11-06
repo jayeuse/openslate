@@ -13,6 +13,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { wireWorkspace } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -161,6 +162,7 @@ async function openHelp(page: Page) {
   await expect(trigger).toBeVisible();
   await trigger.click();
   await expect(sheet(page)).toBeVisible();
+  await openedSheet(sheet(page));
 }
 async function visitPlatform(page: Page) {
   await page.goto("/platform");

@@ -19,6 +19,7 @@ import {
   openAdvanced,
   person,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 // People shows the Departments column from 1440px (DESIGN.md, Access rows).
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -99,7 +100,9 @@ async function openGroups(page: Page, name = "Ben Cruz") {
   await page
     .getByRole("button", { name: `Manage ${name}`, exact: true })
     .click();
-  const sheet = page.getByRole("dialog", { name, exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name, exact: true }),
+  );
   await expect(sheet).toBeVisible();
   return sheet.getByRole("region", { name: "Groups", exact: true });
 }
@@ -382,7 +385,9 @@ test("the offpage selected person shares membership continuation with their dire
     );
   }
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await expect(sheet).toBeVisible();
   await expect(sheet).toContainText("25 of 27 groups");
   await expect(sheet).not.toContainText("Not in any group yet");
@@ -423,7 +428,9 @@ for (const target of ["complete panel", "partial directory"] as const)
       return "next";
     });
     await page.goto(`/access?view=people&user=${ids.ben}`);
-    const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+    const sheet = await openedSheet(
+      page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+    );
     await expect(
       sheet.getByRole("link", { name: "Z membership 00", exact: true }),
     ).toBeVisible();
@@ -571,7 +578,9 @@ test("membership loading discards a held extension after an accepted action repl
     }
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await expect(sheet).toContainText("25 of 27 groups");
   await sheet
     .getByRole("button", { name: "Load more groups", exact: true })
@@ -782,7 +791,9 @@ for (const mode of ["light", "dark"] as const) {
         );
       }
       await page.goto(`/access?view=people&user=${ids.ben}`);
-      const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+      const sheet = await openedSheet(
+        page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+      );
       await expect(sheet).toBeVisible();
       await expect(sheet).toContainText("25 of 27 groups");
       await expect(sheet).not.toContainText("Not in any group yet");

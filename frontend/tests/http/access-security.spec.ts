@@ -17,6 +17,7 @@ import {
 } from "./helpers/mfa";
 import type { Locator, Page } from "./helpers/test";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
+import { openedPanel } from "./helpers/settled";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test.afterEach(async ({ page }) => {
@@ -179,6 +180,7 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
   const manageGroup = page.getByRole("button", { name: "Access", exact: true });
   if ((await manageGroup.getAttribute("aria-expanded")) !== "true")
     await manageGroup.click();
+  await openedPanel(manageGroup);
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: "Security", exact: true })
@@ -209,6 +211,7 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
   });
   if ((await manageReturn.getAttribute("aria-expanded")) !== "true")
     await manageReturn.click();
+  await openedPanel(manageReturn);
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: "Security", exact: true })
@@ -631,7 +634,9 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await page
     .getByLabel("Organization name", { exact: true })
     .fill("Unfinished organization edit");
-  await page.getByRole("button", { name: "Access", exact: true }).click();
+  const accessGroup = page.getByRole("button", { name: "Access", exact: true });
+  await accessGroup.click();
+  await openedPanel(accessGroup);
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: "Security", exact: true })
@@ -1402,6 +1407,7 @@ test("Security reads show recovery and denial without sample sessions", async ({
   const manageGroup = page.getByRole("button", { name: "Access", exact: true });
   if ((await manageGroup.getAttribute("aria-expanded")) !== "true")
     await manageGroup.click();
+  await openedPanel(manageGroup);
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: "Security", exact: true })

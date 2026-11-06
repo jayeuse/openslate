@@ -8,6 +8,7 @@ import {
   mockAccessApi,
   openAdvanced,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 // The person and group sheets (docs/specs/access-ui-ux-pass.md, Phase 3):
 // lifecycle actions wait in a closed Advanced block, an action names what it
@@ -31,7 +32,7 @@ test("lifecycle actions wait in a closed Advanced block, last in Details, and op
   const cy = api.users.get(ids.cy)!;
   api.users.set(ids.cy, { ...cy, invitation_sent_at: created });
   await page.goto(`/access?view=people&user=${ids.cy}`);
-  const pending = sheet(page, "cy");
+  const pending = await openedSheet(sheet(page, "cy"));
   // A sent invitation keeps its next step in view; revoking it is Advanced.
   await expect(
     pending.getByRole("button", { name: "Resend invitation", exact: true }),
@@ -42,7 +43,7 @@ test("lifecycle actions wait in a closed Advanced block, last in Details, and op
   await pending.getByRole("button", { name: "Close", exact: true }).click();
 
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await expect(ben.getByLabel("Job title")).toBeVisible();
   // Nothing to save at rest, so there is no Save or Discard.
   await expect(
@@ -89,7 +90,7 @@ test("deleting a person closes the sheet and Undo restores them", async ({
     return "next" as const;
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await openAdvanced(ben);
   await ben.getByRole("button", { name: "Delete", exact: true }).click();
   const confirm = page.getByRole("alertdialog", { name: "Delete Ben Cruz?" });
@@ -126,7 +127,7 @@ test("Discard in the person and group editors can be undone", async ({
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await ben
     .getByRole("button", { name: "Discard changes", exact: true })
@@ -168,7 +169,7 @@ test("Discard in the person and group editors can be undone", async ({
     ],
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
-  const clerks = sheet(page, "Inventory clerks");
+  const clerks = await openedSheet(sheet(page, "Inventory clerks"));
   await clerks
     .getByRole("searchbox", { name: "Search people to add", exact: true })
     .fill("cy");
@@ -191,7 +192,7 @@ test("Discard in the person and group editors can be undone", async ({
   await expect(clerks.getByRole("tab", { name: "Members" })).toBeFocused();
 
   await page.goto(`/access?view=groups&group=${ids.readers}`);
-  const readers = sheet(page, "Finance readers");
+  const readers = await openedSheet(sheet(page, "Finance readers"));
   await readers.getByLabel("Description").fill("Month-end close");
   await readers
     .getByRole("button", { name: "Discard changes", exact: true })
@@ -212,10 +213,9 @@ test("invitation settings Discard offers Undo", async ({ page }) => {
   await page
     .getByRole("button", { name: "Invitation settings", exact: true })
     .click();
-  const settings = page.getByRole("dialog", {
-    name: "Invitation settings",
-    exact: true,
-  });
+  const settings = await openedSheet(
+    page.getByRole("dialog", { name: "Invitation settings", exact: true }),
+  );
   const guest = settings.getByLabel("Guest access length (days)");
   await expect(guest).toHaveValue("45");
   await guest.fill("60");
@@ -271,7 +271,7 @@ test("departments carry their marks and levels use the level chip", async ({
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByRole("tab", { name: "Access", exact: true }).click();
   const entry = ben
     .getByRole("list", { name: "Access by department" })
@@ -295,6 +295,7 @@ test("departments carry their marks and levels use the level chip", async ({
   expect(api.sent("GET", "/api/departments").length - catalogReads).toBe(1);
 
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
+  await openedSheet(sheet(page, "Finance readers"));
   const departments = sheet(page, "Finance readers").getByRole("list", {
     name: "Departments",
   });
@@ -319,7 +320,7 @@ test("an administrator adds a person to a group and removes them from the person
     return "next" as const;
   });
   await page.goto(`/access?view=people&user=${ids.ana}`);
-  const ana = sheet(page, "Ana Santos");
+  const ana = await openedSheet(sheet(page, "Ana Santos"));
   const groups = ana.getByRole("list", { name: "Groups", exact: true });
   await expect(groups).toContainText("Inventory clerks");
   await expect(ana).not.toContainText("Open a group to change who is in it.");
@@ -381,14 +382,14 @@ test("an add from the person sheet and a Members tab draft both survive", async 
 
   // This tab first starts a Members draft for the same group.
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=members`);
-  const readers = sheet(page, "Finance readers");
+  const readers = await openedSheet(sheet(page, "Finance readers"));
   await readers.getByRole("button", { name: "Add cy" }).click();
   await expect(
     readers.getByRole("list", { name: "Members", exact: true }),
   ).toContainText("cy");
 
   await page.goto(`/access?view=people&user=${ids.ana}`);
-  const ana = sheet(page, "Ana Santos");
+  const ana = await openedSheet(sheet(page, "Ana Santos"));
   await ana.getByRole("button", { name: "Add to group", exact: true }).click();
   const panel = ana.getByRole("group", { name: "Add to group", exact: true });
   await panel.getByRole("combobox", { name: "Group" }).click();
@@ -403,6 +404,7 @@ test("an add from the person sheet and a Members tab draft both survive", async 
 
   // The kept Members draft merges onto the group that now has Ana.
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=members`);
+  await openedSheet(sheet(page, "Finance readers"));
   await sheet(page, "Finance readers")
     .getByRole("button", { name: "Save members", exact: true })
     .click();

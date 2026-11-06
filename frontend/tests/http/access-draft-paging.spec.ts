@@ -6,6 +6,7 @@ import {
   mockAccessApi,
   person,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 test("an uncertain replacement resolves all current and draft member labels in bounded ID batches", async ({
   page,
@@ -71,10 +72,9 @@ test("an uncertain replacement resolves all current and draft member labels in b
     return route.abort();
   });
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=members`);
-  const sheet = page.getByRole("dialog", {
-    name: "Finance readers",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Finance readers", exact: true }),
+  );
   await sheet
     .getByRole("button", { name: "Remove Before member 0", exact: true })
     .click();

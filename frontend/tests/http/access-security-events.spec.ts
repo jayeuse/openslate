@@ -19,6 +19,7 @@ import {
   securityEvent,
   unsafeEventCanary,
 } from "./helpers/security-events";
+import { openedPanel } from "./helpers/settled";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -1256,10 +1257,10 @@ async function visitAccessSecurity(page: Page) {
   if ((await access.getAttribute("aria-expanded")) !== "true")
     await access.click();
   await expect(access).toHaveAttribute("aria-expanded", "true");
+  // Clicking while the group opens lost the click in CI and left the page on
+  // Manage › Audit (run 40205657704, nightly stress 41139462254).
+  await openedPanel(access);
   await navigation.getByRole("link", { name: "Security", exact: true }).click();
-  // CI once stayed on Manage › Audit after this click (run 40205657704). The
-  // URL check tells a navigation that never committed from a page that did
-  // not render, if it happens again.
   await expect(page).toHaveURL(/\/access\?view=security$/);
   await expect(
     page.getByRole("heading", { name: "Security", exact: true }),

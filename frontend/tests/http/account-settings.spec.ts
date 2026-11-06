@@ -586,10 +586,17 @@ test("on a phone Account settings is one column, and the pinned footer never cov
   // Pinned to the bottom of the viewport while the panel scrolls past.
   const pinned = (await bar.boundingBox())!;
   expect(Math.round(pinned.y + pinned.height)).toBe(844);
-  const [panel, preview] = await Promise.all([
-    settingsPanel(page).boundingBox(),
-    page.getByRole("complementary", { name: "Preview" }).boundingBox(),
-  ]);
+  // Measure both in one frame. Two boundingBox() calls are two round trips; a
+  // layout shift between them put the Preview above the panel's bottom in the
+  // nightly stress job (run 41357027340).
+  const [panel, preview] = await settingsPanel(page)
+    .or(page.getByRole("complementary", { name: "Preview" }))
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const { x, y, height } = element.getBoundingClientRect();
+        return { x, y, height };
+      }),
+    );
   expect(preview!.x).toBe(panel!.x);
   expect(preview!.y).toBeGreaterThanOrEqual(panel!.y + panel!.height);
   // Focus moves to the last row of the panel; the footer leaves it in view.

@@ -15,6 +15,7 @@ import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client"
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { openedSheet } from "./helpers/settled";
 
 // The rectangle regression below runs normally. Visual capture tasks alone are
 // opt-in and refuse existing directories so they cannot overwrite reviewed images.
@@ -437,10 +438,16 @@ for (const width of widths)
               "Open the owned conversation; real local memory client, not a live transport",
             );
 
-            if (width === 390)
+            if (width === 390) {
               await page
                 .getByRole("button", { name: "Open navigation", exact: true })
                 .click();
+              await openedSheet(
+                page.getByRole("dialog", {
+                  name: "Slate Operations navigation",
+                }),
+              );
+            }
             const organization = page.getByRole("button", {
               name: "Organization: Slate Operations",
               exact: true,

@@ -756,6 +756,9 @@ test("Library files: an upload waits out busy file capacity and then shows the f
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.clock.install();
   await openLibrary(page);
+  // The query cache hands a read to the page through a timer, so a read that
+  // lands after the pause never reaches it and Upload stays disabled.
+  await expect(page.getByLabel("Upload file", { exact: true })).toBeEnabled();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await chooseLibraryFile(page);
   const waiting = page

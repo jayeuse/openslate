@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { authMeBody, isEventStream, isSidebarDepartmentRead } from "./test";
+import { openedSheet } from "./settled";
 import { pageOf } from "../../helpers/pagination";
 import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
 import type { AccessAdminSession } from "../../../src/components/systems/access/adapters/security-api";
@@ -1051,6 +1052,7 @@ export function expectNoWrites(api: Api): void {
  * wait. It stays open for this viewer, so a later sheet may already show it.
  */
 export async function openAdvanced(sheet: Locator): Promise<void> {
+  await openedSheet(sheet);
   const trigger = sheet.getByRole("button", { name: /^Advanced/ });
   await expect(trigger).toBeVisible();
   if ((await trigger.getAttribute("aria-expanded")) !== "true")

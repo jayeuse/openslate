@@ -16,6 +16,7 @@ import {
   installBoardApi,
   installBoardDirectory,
 } from "./helpers/boards-api";
+import { openedPanel } from "./helpers/settled";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
@@ -284,6 +285,7 @@ test("the Boards group lists My calendar, Company, the active project boards by 
     nav.getByRole("button", { name: "Boards", exact: true }),
   ).toBeVisible();
   await nav.getByRole("button", { name: "Boards", exact: true }).click();
+  await openedPanel(nav.getByRole("button", { name: "Boards", exact: true }));
   const rows = nav.getByRole("list", { name: "Boards" });
   await expect(rows.getByRole("link")).toHaveText([
     "My calendar",
