@@ -48,6 +48,13 @@ TEMPLATE_PORT_BASE = 29000
 # required" on 2026-10-23) is retried within that budget; nothing else is retried.
 IMAGE_PULL_SECONDS = 300.0
 IMAGE_PULL_RETRY_DELAYS = (5.0, 15.0)
+# Docker runs a service's first health check one interval after it starts, and Compose
+# starts a dependent only after that check, so the 5 s and 10 s intervals cost a test
+# stack up to 17 s of waiting. It probes each service every second until it turns healthy,
+# then returns to the base interval. Deployed stacks keep compose.yaml as it is.
+FAST_START_PROBES = frozenset(
+    {"api-gw", "auth", "db", "imgproxy", "meta", "realtime", "storage", "studio"}
+)
 
 
 def _wait(seconds: float) -> None:
@@ -237,6 +244,10 @@ class DisposablePostgres:
         overlay = ["services:"]
         for service in PROVIDER_IMAGES:
             overlay.extend([f"  {service}:", "    labels:", label_lines])
+            if service in FAST_START_PROBES:
+                overlay.extend(
+                    ["    healthcheck:", "      start_period: 60s", "      start_interval: 1s"]
+                )
             if service == "db":
                 # A disposable test cluster needs no crash durability. Parallel shards
                 # otherwise serialize on fsync through Docker Desktop's virtual disk.

@@ -41,6 +41,7 @@ def pytest_sessionfinish():
 
 
 def pytest_unconfigure():
+    _session_marks["unconfigured"] = time.time()
     if os.getenv(SESSION_TIMING):
         Path(os.environ[SESSION_TIMING]).write_text(json.dumps(_session_marks))
 
@@ -55,7 +56,8 @@ def print_session_timing(path, launched, exited):
             ("first test wait", "collected", "first_test"),
             ("tests", "first_test", "last_test"),
             ("coverage save and report", "last_test", "finished"),
-            ("summary and exit", "finished", "exited"),
+            ("summary", "finished", "unconfigured"),
+            ("exit", "unconfigured", "exited"),
         )
         parts = [f"{name} {marks[end] - marks[begin]:.1f} s" for name, begin, end in steps]
     except (KeyError, OSError, ValueError):
