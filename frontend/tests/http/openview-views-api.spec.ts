@@ -1483,6 +1483,16 @@ async function installViewsApi(
       body: "{}",
     });
   });
+  // Every records read needs records.read, so a denied account loses them all.
+  await page.route("**/api/records/aggregate-query", (route: Route) =>
+    denyRecordQueries
+      ? route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Forbidden" }),
+        })
+      : route.fallback(),
+  );
   await page.route("**/api/records/query", async (route: Route) => {
     const body = route.request().postDataJSON() as {
       definition: QueryDefinition;
@@ -5802,6 +5812,31 @@ test.describe("export journeys", () => {
       ).toHaveCount(0);
     });
   }
+
+  test("a refused record read hides the register when the count answers first", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await expect(
+      page.getByRole("combobox", { name: "Saved view" }),
+    ).toHaveValue(viewId);
+    const register = page.getByText("Equipment register", { exact: true });
+    await expect(register).toHaveCount(1);
+    api.views.denyRecordQueries();
+    const counted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/records/aggregate-query",
+    );
+    await page.route("**/api/records/query", async (route) => {
+      await counted;
+      await route.fallback();
+    });
+    await api.views.triggerInvalidation("records");
+    await expect(register).toHaveCount(0);
+  });
 
   for (const theme of ["light", "dark"] as const) {
     test(`${theme} keyboard, mobile and pending/error controls remain usable`, async ({
