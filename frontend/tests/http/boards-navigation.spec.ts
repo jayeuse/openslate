@@ -1,6 +1,7 @@
 import {
   authMeBody,
   expect,
+  settleReact,
   signedInSession,
   test,
   type Page,
@@ -591,6 +592,15 @@ for (const viewport of [
   });
 }
 
+/** Waits until the page has opened its event stream. */
+function streamOpened(page: Page) {
+  return page.waitForFunction(() => {
+    const state = Reflect.get(window, "__openViewStreamState") as
+      (() => { constructed: number }) | undefined;
+    return (state?.().constructed ?? 0) > 0;
+  });
+}
+
 test("a cold /boards reads the board list and the open board once each, within 34 requests", async ({
   page,
 }) => {
@@ -598,6 +608,16 @@ test("a cold /boards reads the board list and the open board once each, within 3
   await installOpenViewEventSource(page, { autoResync: true });
   await installBoardApi(page, () => true);
   const directory = await installBoardDirectory(page);
+  // The list answers once the stream is live. A stream that connects after the
+  // read has finished reads it again, which the next test owns.
+  await page.route(
+    (url) => url.pathname === "/api/boards",
+    async (route) => {
+      await streamOpened(page);
+      await settleReact(page);
+      await route.fallback();
+    },
+  );
   const requests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -632,6 +652,23 @@ test("a cold /boards reads the board list and the open board once each, within 3
     contentType: "text/plain",
   });
   expect(requests.length, requests.join("\n")).toBeLessThanOrEqual(34);
+});
+
+test("a stream that connects after the board list read reads the list again", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await streamOpened(page);
+  expect(directory.listQueries).toHaveLength(1);
+  // A change between that read and the stream going live has no event.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => directory.listQueries.length).toBe(2);
 });
 
 test("a refused board offers only the Company board; a failed read offers Retry", async ({
