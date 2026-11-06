@@ -126,8 +126,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
+      # outlives the bound: it would keep the apt lock and fail the retry.
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: |
+          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
+            sudo pkill -x apt-get || true
+            sudo dpkg --configure -a || true
+            timeout 720 npm exec --no -- playwright install --with-deps chromium
+          }
       - name: Run isolated frontend tests
         timeout-minutes: 10
         env:
@@ -225,8 +232,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
+      # outlives the bound: it would keep the apt lock and fail the retry.
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: |
+          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
+            sudo pkill -x apt-get || true
+            sudo dpkg --configure -a || true
+            timeout 720 npm exec --no -- playwright install --with-deps chromium
+          }
       - name: Plan whole-file duration shards from current native collection
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/collection.json
@@ -245,8 +259,11 @@ jobs:
       - name: Check retried tests against the flaky ledger
         if: ${{ always() }}
         run: python3 ../scripts/playwright_flaky.py test-results/ci/http-${{ strategy.job-index }}.json --ledger tests/flaky.json
+      # A failed attempt leaves its evidence even when the retry passes: a trace,
+      # or an error context in a spec that sets trace off. A clean shard keeps
+      # nothing. Do not match every file: .last-run.json is always in this folder.
       - name: Keep failure context and traces
-        if: failure()
+        if: ${{ failure() || hashFiles('frontend/test-results/playwright/**/trace.zip', 'frontend/test-results/playwright/**/error-context.md') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-test-results-${{ strategy.job-index }}
@@ -357,8 +374,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
+      # outlives the bound: it would keep the apt lock and fail the retry.
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: |
+          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
+            sudo pkill -x apt-get || true
+            sudo dpkg --configure -a || true
+            timeout 720 npm exec --no -- playwright install --with-deps chromium
+          }
       - name: Run the measurements alone against the static export
         id: measurements
         timeout-minutes: 10

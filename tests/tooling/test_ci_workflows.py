@@ -22,13 +22,16 @@ class CiWorkflowContractTests(unittest.TestCase):
     def jobs(self, source: str) -> list[str]:
         return re.findall(r"(?m)^  ([a-z][a-z0-9-]*):\n", source.split("jobs:\n", 1)[1])
 
+    @staticmethod
+    def step_command(step: str) -> str:
+        run = step.split("        run: ", 1)[1]
+        return textwrap.dedent(run[2:]) if run.startswith("|\n") else run.strip()
+
     def backend_comparison_step(self, script: str) -> tuple[str, str]:
         changes = self.source("backend.yml").split("\n  changes:\n", 1)[1]
         changes = changes.split("\n  quality:\n", 1)[0]
         step = next(step for step in re.split(r"(?m)^      - ", changes) if script in step)
-        run = step.split("        run: ", 1)[1]
-        command = textwrap.dedent(run[2:]) if run.startswith("|\n") else run.strip()
-        return step, command
+        return step, self.step_command(step)
 
     def run_backend_comparison_step(
         self, root: Path, script: str, event: str, base: str, outputs: dict[str, str] | None = None
@@ -265,7 +268,13 @@ class CiWorkflowContractTests(unittest.TestCase):
             'npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"',
             source,
         )
-        self.assertIn("timeout-minutes: 30", source)
+        # docs/plans/ci-speed.md F5: the slowest run reached 40% in 30 minutes. The job
+        # limit stays above the step limit, because a cancelled job skips the trace upload.
+        self.assertIn(
+            "name: Repeat the selected specs with zero retries\n        timeout-minutes: 110\n",
+            source,
+        )
+        self.assertIn("\n    timeout-minutes: 120\n", source)
         self.assertIn("run: npm run build", source)
         # Not a required check: no verify job, and frontend-verify never needs it.
         self.assertEqual(self.jobs(source), ["stress"])
@@ -312,6 +321,73 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
+    def browser_install_steps(self) -> list[tuple[str, str]]:
+        return [
+            (workflow, self.step_command(step))
+            for workflow in ("frontend.yml", "stress.yml")
+            for step in re.split(r"(?m)^      - ", self.source(workflow))[1:]
+            if "name: Install pinned Playwright Chromium\n" in step
+        ]
+
+    @staticmethod
+    def run_browser_install(script: str, exit_codes: list[int]) -> tuple[int, list[str], list[str]]:
+        """Run a workflow's install script; the stub `timeout` returns these codes in order."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            stubs = Path(directory)
+            (stubs / "codes").write_text("".join(f"{code}\n" for code in exit_codes))
+            (stubs / "attempts").touch()
+            (stubs / "stops").touch()
+            for name, body in (
+                (
+                    "timeout",
+                    'echo "$*" >> "$STUBS/attempts"\n'
+                    'exit "$(sed -n "$(($(wc -l < "$STUBS/attempts")))p" "$STUBS/codes")"\n',
+                ),
+                # pkill exits 1 when no apt-get is left to stop.
+                ("sudo", 'echo "$*" >> "$STUBS/stops"\nexit 1\n'),
+                # An unbounded install must fail here, never start the real one.
+                ("npm", "exit 127\n"),
+            ):
+                stub = stubs / name
+                stub.write_text(f"#!/bin/sh\n{body}")
+                stub.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-e", "-c", script],
+                env={"PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}", "STUBS": str(stubs)},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return (
+                result.returncode,
+                (stubs / "attempts").read_text().splitlines(),
+                (stubs / "stops").read_text().splitlines(),
+            )
+
+    def test_every_browser_install_is_bounded_and_retried_once(self):
+        # docs/plans/ci-speed.md F4: a slow apt mirror held one install for 619 s. The first
+        # attempt gives up early; the retry outlasts that mirror, so a slow job stays green.
+        install = "npm exec --no -- playwright install --with-deps chromium"
+        first, retry = f"90 {install}", f"720 {install}"
+        repair = ["pkill -x apt-get", "dpkg --configure -a"]
+        steps = self.browser_install_steps()
+
+        self.assertEqual(
+            [workflow for workflow, _ in steps],
+            ["frontend.yml", "frontend.yml", "frontend.yml", "stress.yml"],
+        )
+        for workflow, script in steps:
+            for exit_codes, status, attempts, stops in (
+                ([0], 0, [first], []),
+                ([124, 0], 0, [first, retry], repair),
+                ([124, 124], 124, [first, retry], repair),
+            ):
+                with self.subTest(workflow=workflow, exit_codes=exit_codes):
+                    self.assertEqual(
+                        self.run_browser_install(script, exit_codes), (status, attempts, stops)
+                    )
+
     def test_frontend_browser_install_cannot_use_up_the_test_hang_limit(self):
         source = self.source("frontend.yml")
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
@@ -332,16 +408,28 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn("\n    timeout-minutes: 30\n", job)
                 self.assertIn(step, job)
 
-    def test_frontend_uploads_the_export_reports_and_only_failed_test_context(self):
+    def test_frontend_uploads_the_export_reports_and_the_context_of_any_failed_attempt(self):
         source = self.source("frontend.yml")
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
         upload = test.split("uses: actions/upload-artifact@", 1)
+        config = (ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
 
         # The export, the client build manifests, two native reports and the
         # measurement failure context supplement the existing failure context.
         self.assertEqual(source.count("upload-artifact"), 6)
         self.assertEqual(test.count("upload-artifact"), 2)
-        self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
+        # docs/plans/ci-speed.md F3: a failed job, or a test that passed only on its
+        # retry, keeps its context: a trace under retain-on-failure, or an error
+        # context in a spec that sets trace off. Matching every file would upload
+        # each clean shard, because .last-run.json is always in this folder.
+        self.assertIn(
+            "if: ${{ failure() || hashFiles("
+            "'frontend/test-results/playwright/**/trace.zip', "
+            "'frontend/test-results/playwright/**/error-context.md') != '' }}",
+            upload[0].rsplit("- name:", 1)[1],
+        )
+        self.assertIn('outputDir: "test-results/playwright"', config)
+        self.assertIn('trace: "retain-on-failure"', config)
         self.assertIn("path: frontend/test-results/playwright/", upload[1])
 
     def test_frontend_retains_native_reports_even_on_failure_and_requires_the_report(self):
