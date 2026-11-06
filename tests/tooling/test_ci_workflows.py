@@ -22,16 +22,13 @@ class CiWorkflowContractTests(unittest.TestCase):
     def jobs(self, source: str) -> list[str]:
         return re.findall(r"(?m)^  ([a-z][a-z0-9-]*):\n", source.split("jobs:\n", 1)[1])
 
-    @staticmethod
-    def step_command(step: str) -> str:
-        run = step.split("        run: ", 1)[1]
-        return textwrap.dedent(run[2:]) if run.startswith("|\n") else run.strip()
-
     def backend_comparison_step(self, script: str) -> tuple[str, str]:
         changes = self.source("backend.yml").split("\n  changes:\n", 1)[1]
         changes = changes.split("\n  quality:\n", 1)[0]
         step = next(step for step in re.split(r"(?m)^      - ", changes) if script in step)
-        return step, self.step_command(step)
+        run = step.split("        run: ", 1)[1]
+        command = textwrap.dedent(run[2:]) if run.startswith("|\n") else run.strip()
+        return step, command
 
     def run_backend_comparison_step(
         self, root: Path, script: str, event: str, base: str, outputs: dict[str, str] | None = None
@@ -181,13 +178,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         self.assertIn("run: npm test -- --project=isolated", isolated)
         # One isolated test drives next dev in Chromium.
-        self.assertIn("playwright install --with-deps chromium", isolated)
+        self.assertIn("playwright install chromium", isolated)
         self.assertNotIn("download-artifact", isolated)
-        for shard in range(1, 7):
+        for shard in range(1, 9):
             with self.subTest(shard=shard):
                 self.assertIn(f"duration-shard: {shard}", source)
         self.assertNotIn("--shard=", source)
-        self.assertIn("--shard ${{ matrix.duration-shard }} --shards 6", source)
+        self.assertIn("--shard ${{ matrix.duration-shard }} --shards 8", source)
         self.assertIn("--weights tests/http/.test-durations.json", source)
         self.assertIn("--project=http --list --reporter=json", source)
         self.assertIn("python3 ../scripts/playwright_shards.py plan", source)
@@ -308,7 +305,7 @@ class CiWorkflowContractTests(unittest.TestCase):
     def test_frontend_installs_the_locked_playwright_chromium_browser(self):
         source = self.source("frontend.yml")
 
-        self.assertIn("npm exec --no -- playwright install --with-deps chromium", source)
+        self.assertIn("npm exec --no -- playwright install chromium", source)
         self.assertIn("path: ~/.cache/ms-playwright", source)
         for forbidden in (
             "test:e2e",
@@ -321,72 +318,16 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
-    def browser_install_steps(self) -> list[tuple[str, str]]:
-        return [
-            (workflow, self.step_command(step))
-            for workflow in ("frontend.yml", "stress.yml")
-            for step in re.split(r"(?m)^      - ", self.source(workflow))[1:]
-            if "name: Install pinned Playwright Chromium\n" in step
-        ]
+    def test_every_browser_install_stays_off_apt(self):
+        # docs/plans/ci-speed.md F4: apt added only 9 font packages, and a slow mirror held
+        # that download for up to 619 s. Each job installs Chromium alone.
+        install = "run: npm exec --no -- playwright install chromium\n"
 
-    @staticmethod
-    def run_browser_install(script: str, exit_codes: list[int]) -> tuple[int, list[str], list[str]]:
-        """Run a workflow's install script; the stub `timeout` returns these codes in order."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            stubs = Path(directory)
-            (stubs / "codes").write_text("".join(f"{code}\n" for code in exit_codes))
-            (stubs / "attempts").touch()
-            (stubs / "stops").touch()
-            for name, body in (
-                (
-                    "timeout",
-                    'echo "$*" >> "$STUBS/attempts"\n'
-                    'exit "$(sed -n "$(($(wc -l < "$STUBS/attempts")))p" "$STUBS/codes")"\n',
-                ),
-                # pkill exits 1 when no apt-get is left to stop.
-                ("sudo", 'echo "$*" >> "$STUBS/stops"\nexit 1\n'),
-                # An unbounded install must fail here, never start the real one.
-                ("npm", "exit 127\n"),
-            ):
-                stub = stubs / name
-                stub.write_text(f"#!/bin/sh\n{body}")
-                stub.chmod(0o755)
-            result = subprocess.run(
-                ["bash", "--noprofile", "--norc", "-e", "-c", script],
-                env={"PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}", "STUBS": str(stubs)},
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            return (
-                result.returncode,
-                (stubs / "attempts").read_text().splitlines(),
-                (stubs / "stops").read_text().splitlines(),
-            )
-
-    def test_every_browser_install_is_bounded_and_retried_once(self):
-        # docs/plans/ci-speed.md F4: a slow apt mirror held one install for 619 s. The first
-        # attempt gives up early; the retry outlasts that mirror, so a slow job stays green.
-        install = "npm exec --no -- playwright install --with-deps chromium"
-        first, retry = f"90 {install}", f"720 {install}"
-        repair = ["pkill -x apt-get", "dpkg --configure -a"]
-        steps = self.browser_install_steps()
-
-        self.assertEqual(
-            [workflow for workflow, _ in steps],
-            ["frontend.yml", "frontend.yml", "frontend.yml", "stress.yml"],
-        )
-        for workflow, script in steps:
-            for exit_codes, status, attempts, stops in (
-                ([0], 0, [first], []),
-                ([124, 0], 0, [first, retry], repair),
-                ([124, 124], 124, [first, retry], repair),
-            ):
-                with self.subTest(workflow=workflow, exit_codes=exit_codes):
-                    self.assertEqual(
-                        self.run_browser_install(script, exit_codes), (status, attempts, stops)
-                    )
+        self.assertEqual(self.source("frontend.yml").count(install), 3)
+        self.assertEqual(self.source("stress.yml").count(install), 1)
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            with self.subTest(workflow=workflow.name):
+                self.assertNotIn("--with-deps", workflow.read_text())
 
     def test_frontend_browser_install_cannot_use_up_the_test_hang_limit(self):
         source = self.source("frontend.yml")
@@ -404,7 +345,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             ),
         ):
             with self.subTest(step=step.split("\n", 1)[0]):
-                self.assertIn("playwright install --with-deps chromium", job)
+                self.assertIn("playwright install chromium", job)
                 self.assertIn("\n    timeout-minutes: 30\n", job)
                 self.assertIn(step, job)
 
@@ -460,7 +401,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn(f"frontend/{report}.metadata.txt", upload)
                 self.assertIn("retention-days: 14", upload)
                 self.assertIn("if-no-files-found: error", upload)
-        self.assertIn("duration-shard=%s/6", http)
+        self.assertIn("duration-shard=%s/8", http)
         self.assertIn("frontend/test-results/ci/assignment.json", http)
 
     def test_frontend_has_no_production_container_or_runtime_contract(self):
@@ -523,15 +464,20 @@ class CiWorkflowContractTests(unittest.TestCase):
         coverage = source.split("\n  coverage:\n", 1)[1].split("\n  coverage-gate:\n", 1)[0]
         gate = source.split("\n  coverage-gate:\n", 1)[1].split("\n  reset-acceptance:\n", 1)[0]
 
-        self.assertIn("shard: [1, 2, 3, 4, 5]", coverage)
+        self.assertIn("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]", coverage)
         self.assertIn("fail-fast: false", coverage)
         self.assertIn(
-            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5", coverage
+            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/10", coverage
         )
         self.assertIn("name: backend-coverage-shard-${{ matrix.shard }}", coverage)
         unit = source.split("\n  unit:\n", 1)[1].split("\n  coverage:\n", 1)[0]
-        self.assertIn("tests/backend_coverage.py unit --workers 4", unit)
-        self.assertIn("name: backend-coverage-unit", unit)
+        # docs/plans/ci-speed.md S1: each part has its own evidence, and combine needs all.
+        self.assertIn("part: [1, 2, 3]", unit)
+        self.assertIn("fail-fast: false", unit)
+        self.assertIn(
+            "tests/backend_coverage.py unit --workers 4 --part ${{ matrix.part }}/3", unit
+        )
+        self.assertIn("name: backend-coverage-unit-${{ matrix.part }}", unit)
         self.assertNotIn("fullstack_runner", unit)
         for job in (unit, coverage):
             self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", job)
@@ -542,7 +488,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", gate)
         self.assertIn("pattern: backend-coverage-*", gate)
         self.assertIn("tests/backend_coverage.py combine", gate)
-        self.assertIn("--shards 5", gate)
+        self.assertIn("--shards 10 --unit-parts 3", gate)
+        self.assertIn("backend/test-results/coverage/unit-durations.json", gate)
         self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", gate)
 
     def test_backend_requires_a_separate_destructive_reset_acceptance_run(self):

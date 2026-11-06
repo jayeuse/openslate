@@ -102,8 +102,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the test step keeps its own 10-minute hang limit.
+    # The test step keeps its own 10-minute hang limit.
     timeout-minutes: 30
     defaults:
       run:
@@ -126,15 +125,9 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
-      # outlives the bound: it would keep the apt lock and fail the retry.
+      # Chromium's libraries are on the runner image; a missing one fails at launch, loudly.
       - name: Install pinned Playwright Chromium
-        run: |
-          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
-            sudo pkill -x apt-get || true
-            sudo dpkg --configure -a || true
-            timeout 720 npm exec --no -- playwright install --with-deps chromium
-          }
+        run: npm exec --no -- playwright install chromium
       - name: Run isolated frontend tests
         timeout-minutes: 10
         env:
@@ -168,8 +161,7 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the test step keeps its own 15-minute hang limit.
+    # The test step keeps its own 15-minute hang limit.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -178,18 +170,22 @@ jobs:
         # static-site code (frontend/playwright.config.ts). Whole-file shards use
         # verified CI duration weights; current native collection owns membership.
         include:
-          - suite: http 1/6
+          - suite: http 1/8
             duration-shard: 1
-          - suite: http 2/6
+          - suite: http 2/8
             duration-shard: 2
-          - suite: http 3/6
+          - suite: http 3/8
             duration-shard: 3
-          - suite: http 4/6
+          - suite: http 4/8
             duration-shard: 4
-          - suite: http 5/6
+          - suite: http 5/8
             duration-shard: 5
-          - suite: http 6/6
+          - suite: http 6/8
             duration-shard: 6
+          - suite: http 7/8
+            duration-shard: 7
+          - suite: http 8/8
+            duration-shard: 8
     defaults:
       run:
         working-directory: frontend
@@ -232,15 +228,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
-      # outlives the bound: it would keep the apt lock and fail the retry.
       - name: Install pinned Playwright Chromium
-        run: |
-          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
-            sudo pkill -x apt-get || true
-            sudo dpkg --configure -a || true
-            timeout 720 npm exec --no -- playwright install --with-deps chromium
-          }
+        run: npm exec --no -- playwright install chromium
       - name: Plan whole-file duration shards from current native collection
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/collection.json
@@ -249,7 +238,7 @@ jobs:
           npm test -- --project=http --list --reporter=json
           python3 ../scripts/playwright_shards.py plan \
             --collection test-results/ci/collection.json --weights tests/http/.test-durations.json \
-            --shard ${{ matrix.duration-shard }} --shards 6 \
+            --shard ${{ matrix.duration-shard }} --shards 8 \
             --test-list test-results/ci/selected.txt --receipt test-results/ci/assignment.json
       - name: Run browser tests against the static export
         timeout-minutes: 15
@@ -277,7 +266,7 @@ jobs:
           REPORT_DURATION_SHARD: ${{ matrix.duration-shard }}
         run: |
           mkdir -p test-results/ci
-          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/6\n' \
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/8\n' \
             "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
             "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" "$REPORT_DURATION_SHARD" \
             > test-results/ci/http-${{ strategy.job-index }}.metadata.txt
@@ -334,8 +323,7 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the measurement step keeps its own 10-minute hang limit.
+    # The measurement step keeps its own 10-minute hang limit.
     timeout-minutes: 30
     defaults:
       run:
@@ -374,15 +362,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
-      # outlives the bound: it would keep the apt lock and fail the retry.
       - name: Install pinned Playwright Chromium
-        run: |
-          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
-            sudo pkill -x apt-get || true
-            sudo dpkg --configure -a || true
-            timeout 720 npm exec --no -- playwright install --with-deps chromium
-          }
+        run: npm exec --no -- playwright install chromium
       - name: Run the measurements alone against the static export
         id: measurements
         timeout-minutes: 10

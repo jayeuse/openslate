@@ -34,18 +34,20 @@ are configured to extract the executable from the pinned test Caddy image and ad
 it to `PATH`; configuration does not establish hosted CI execution or native
 deployment acceptance.
 
-CI runs the stack-free tests (`not integration`) in a separate unit job with four
-workers. Five integration-only jobs each run `--backend-coverage-shard N/5` on their
-own disposable stack. Neither the unit lane nor an individual shard applies the
-coverage thresholds. The `coverage-gate` job combines the unit lane and all five
-shards, sums their test counts, and applies the 90% overall and changed-line gates
-to the complete report. A missing or duplicate lane/shard, a skipped test, or
-evidence from a different source tree fails the gate. The commands and combine
+CI runs the stack-free tests (`not integration`) in three unit jobs, each with four
+workers and `--part N/3`. Ten integration-only jobs each run
+`--backend-coverage-shard N/10` on their own disposable stack. Neither a unit part
+nor an individual shard applies the coverage thresholds. The `coverage-gate` job
+combines the three unit parts and all ten shards, sums their test counts, and applies
+the 90% overall and changed-line gates to the complete report. A missing or duplicate
+unit part or shard, a skipped test, or evidence from a different source tree fails
+the gate. The local gate runs the unit lane as one part. The commands and combine
 guards live in [`backend_coverage.py`](../../backend/tests/backend_coverage.py).
 `pytest-split` balances the integration shards with
-`backend/tests/.test_durations`. Each CI run uploads fresh durations in the
-`backend-coverage` artifact; commit that file again when a shard takes much longer than
-the others. Locally, a shard uses the last combined run's durations
+`backend/tests/.test_durations` and the unit parts with
+`backend/tests/.test_durations_unit`. Each CI run uploads fresh durations in the
+`backend-coverage` artifact (`test-durations.json` and `unit-durations.json`); commit
+them again when the test times of the shards or parts spread more than 20%. Locally, a shard uses the last combined run's durations
 (`backend/test-results/coverage/test-durations.json`) when they are newer than the
 committed file, so new tests stop falling back to the average. Local `prepush.py`
 runs [`tests.parallel_coverage`](../../backend/tests/parallel_coverage.py): first
@@ -116,7 +118,7 @@ a separate project or the daily development workflow. Daily `npm run dev` remain
 the Next origin proxying `/api` to the local FastAPI process.
 
 The frontend CI workflow ([`frontend.yml`](../../.github/workflows/frontend.yml))
-runs `npm run check`, `npm run build`, and the isolated job independently. Six
+runs `npm run check`, `npm run build`, and the isolated job independently. Eight
 duration-balanced, whole-file HTTP shards wait for and download that one static
 export. [`playwright_shards.py`](../../scripts/playwright_shards.py) uses current
 native collection for membership and committed duration weights for assignment;

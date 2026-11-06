@@ -47,8 +47,8 @@ def _shard(backend: Path, shards: Path, group: int, total: int, lines, *, skippe
     )
 
 
-def _unit_lane(backend: Path, shards: Path, lines, *, skipped: int = 0):
-    folder = shards / "backend-coverage-unit"
+def _unit_lane(backend: Path, shards: Path, lines, *, skipped: int = 0, part=(1, 1), name="unit"):
+    folder = shards / f"backend-coverage-{name}"
     folder.mkdir(parents=True)
     data = CoverageData(basename=str(folder / "coverage.data"))
     data.add_lines({str(backend / name): numbers for name, numbers in lines.items()})
@@ -59,6 +59,7 @@ def _unit_lane(backend: Path, shards: Path, lines, *, skipped: int = 0):
             {
                 "revision": "head",
                 "lane": "unit",
+                "part": list(part),
                 "source_hashes": backend_coverage.source_inventory(backend),
                 "source_stable": True,
             }
@@ -111,6 +112,85 @@ def test_a_missing_unit_lane_fails_closed(combine) -> None:
 
     with pytest.raises(SystemExit, match="Expected one unit lane"):
         backend_coverage.combine_backend_coverage(backend, shards, 2)
+
+
+def test_every_unit_part_joins_the_combined_report(combine) -> None:
+    backend, shards = combine
+    _shard(backend, shards, 1, 2, {"app/one.py": [1, 2]})
+    _shard(backend, shards, 2, 2, {"app/two.py": [1]})
+    for group in (1, 2, 3):
+        _unit_lane(backend, shards, {"app/two.py": [2]}, part=(group, 3), name=f"unit-{group}")
+
+    assert backend_coverage.combine_backend_coverage(backend, shards, 2, unit_parts=3) == 0
+
+    metadata = json.loads((backend / "test-results/coverage/metadata.json").read_text())
+    assert metadata["test_counts"] == {"tests": 18, "failures": 0, "errors": 0, "skipped": 0}
+
+
+def test_a_lost_unit_part_fails_closed(combine) -> None:
+    backend, shards = combine
+    _shard(backend, shards, 1, 2, {"app/one.py": [1]})
+    _shard(backend, shards, 2, 2, {"app/two.py": [1]})
+    for group in (1, 3):
+        _unit_lane(backend, shards, {"app/two.py": [2]}, part=(group, 3), name=f"unit-{group}")
+
+    with pytest.raises(SystemExit, match=r"found \[\(1, 3\), \(3, 3\)\]"):
+        backend_coverage.combine_backend_coverage(backend, shards, 2, unit_parts=3)
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        pytest.param([(1, 3), (2, 3), (2, 3)], id="the same part twice"),
+        pytest.param([(1, 3), (2, 3), (3, 4)], id="a part of another layout"),
+        pytest.param([(1, 1), (2, 3), (3, 3)], id="the local single part"),
+    ],
+)
+def test_unit_evidence_from_another_part_fails_closed(combine, parts) -> None:
+    backend, shards = combine
+    _shard(backend, shards, 1, 2, {"app/one.py": [1]})
+    _shard(backend, shards, 2, 2, {"app/two.py": [1]})
+    for index, part in enumerate(parts):
+        _unit_lane(backend, shards, {"app/two.py": [2]}, part=part, name=f"unit-{index}")
+
+    with pytest.raises(SystemExit, match="Unexpected or duplicate unit lane evidence"):
+        backend_coverage.combine_backend_coverage(backend, shards, 2, unit_parts=3)
+
+
+def test_combine_writes_unit_durations_from_the_junit_reports_of_every_part(combine) -> None:
+    backend, shards = combine
+    (backend / "tests/area").mkdir(parents=True)
+    (backend / "tests/area/test_rules.py").write_text("")
+    _shard(backend, shards, 1, 2, {"app/one.py": [1]})
+    _shard(backend, shards, 2, 2, {"app/two.py": [1]})
+    for group, report in (
+        (
+            1,
+            '<testcase classname="tests.area.test_rules" name="test_plain" time="1.2345"/>'
+            '<testcase classname="tests.area.test_rules" name="test_id[a.b/c::d]" time="2"/>',
+        ),
+        (
+            2,
+            '<testcase classname="tests.area.test_rules.TestGroup" name="test_case" time="3"/>'
+            f'<testcase classname="tests.area.test_rules" name="test_id[{"x" * 600}]" time="4"/>'
+            '<testcase classname="tests.gone" name="test_moved" time="5"/>',
+        ),
+    ):
+        _unit_lane(backend, shards, {"app/two.py": [2]}, part=(group, 2), name=f"unit-{group}")
+        (shards / f"backend-coverage-unit-{group}/pytest.xml").write_text(
+            f'<testsuites><testsuite tests="4" failures="0" errors="0" skipped="0">{report}'
+            "</testsuite></testsuites>"
+        )
+
+    assert backend_coverage.combine_backend_coverage(backend, shards, 2, unit_parts=2) == 0
+
+    written = (backend / "test-results/coverage/unit-durations.json").read_text()
+    assert written.count("\n") == 1
+    assert json.loads(written) == {
+        "tests/area/test_rules.py::TestGroup::test_case": 3.0,
+        "tests/area/test_rules.py::test_id[a.b/c::d]": 2.0,
+        "tests/area/test_rules.py::test_plain": 1.234,
+    }
 
 
 def test_a_skipped_test_in_the_unit_lane_fails_the_gate(combine) -> None:
@@ -216,6 +296,53 @@ def test_stack_shards_run_only_integration_tests(
         pytest_command[index + 1] for index, part in enumerate(pytest_command) if part == "-m"
     ]
     assert options == ["pytest", "integration"]
+
+
+@pytest.mark.parametrize(
+    ("part", "split"),
+    [
+        pytest.param((1, 1), [], id="the local gate runs one whole lane"),
+        pytest.param(
+            (2, 3),
+            [
+                "--splits=3",
+                "--group=2",
+                "--splitting-algorithm=least_duration",
+                "--durations-path=tests/.test_durations_unit",
+            ],
+            id="a CI part runs its group",
+        ),
+    ],
+)
+def test_unit_lane_runs_its_part_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part, split
+) -> None:
+    commands: list[list[str]] = []
+    backend = _backend(tmp_path)
+    output = tmp_path / "out"
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    monkeypatch.delenv("MIGRATION_DATABASE_URL", raising=False)
+    monkeypatch.setattr(backend_coverage.subprocess, "check_output", lambda *_a, **_k: "head\n")
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        (output / "pytest.xml").write_text(JUNIT.format(tests=2, skipped=0))
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(backend_coverage.subprocess, "run", run)
+
+    assert backend_coverage.run_unit_lane(backend, output, 4, part=part) == 0
+
+    command = commands[0]
+    assert [command[command.index("-m", 3) + 1], command[command.index("-n") + 1]] == [
+        "not integration",
+        "4",
+    ]
+    assert command[command.index("--dist") + 1] == "worksteal"
+    assert [option for option in command if option.startswith(("--split", "--group", "--dur"))] == (
+        split
+    )
+    assert json.loads((output / "metadata.json").read_text())["part"] == list(part)
 
 
 def test_unit_lane_refuses_stack_database_urls(tmp_path: Path, monkeypatch) -> None:

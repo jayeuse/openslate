@@ -1,7 +1,7 @@
 """Generate whole-file HTTP shards from trusted native collection and CI weights.
 
 Current collection owns membership; duration history supplies weights only.
-Refresh the seed with the `weights` command from the six HTTP reports of one complete,
+Refresh the seed with the `weights` command from the eight HTTP reports of one complete,
 green CI run (the `frontend-playwright-http-*` artifacts). Predicted weight balance is
 not measured wall time. Run each generated native --test-list without
 also passing --shard or positional file filters.

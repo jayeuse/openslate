@@ -81,16 +81,9 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      # A slow apt mirror can hold this step for minutes. Stop any apt-get that
-      # outlives the bound: it would keep the apt lock and fail the retry.
       - if: steps.select.outputs.run == 'true'
         name: Install pinned Playwright Chromium
-        run: |
-          timeout 90 npm exec --no -- playwright install --with-deps chromium || {
-            sudo pkill -x apt-get || true
-            sudo dpkg --configure -a || true
-            timeout 720 npm exec --no -- playwright install --with-deps chromium
-          }
+        run: npm exec --no -- playwright install chromium
       - if: steps.select.outputs.run == 'true'
         # The slowest run reached 40% in 30 minutes, so a full run takes about 75
         # minutes, under 70% of this limit.

@@ -83,11 +83,17 @@ jobs:
 
   unit:
     # Tests not marked `integration` need no stack; they run here in parallel and the
-    # stack shards below run only the integration tests.
+    # stack shards below run only the integration tests. pytest-split divides them by
+    # tests/.test_durations_unit; coverage-gate fails unless every part reports.
+    name: unit (${{ matrix.part }}/3)
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
     defaults:
       run:
         working-directory: backend
@@ -106,15 +112,18 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
+      # Runners come in two speeds (docs/plans/ci-speed.md 1.1); this confirms the cause.
+      - name: Report the runner CPU
+        run: grep -m1 'model name' /proc/cpuinfo | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run the unit lane without a stack
         env:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
-        run: uv run python tests/backend_coverage.py unit --workers 4
+        run: uv run python tests/backend_coverage.py unit --workers 4 --part ${{ matrix.part }}/3
       - name: Upload unit lane coverage data
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: backend-coverage-unit
+          name: backend-coverage-unit-${{ matrix.part }}
           path: |
             backend/test-results/coverage/coverage.data
             backend/test-results/coverage/pytest.xml
@@ -123,7 +132,7 @@ jobs:
           retention-days: 14
 
   coverage:
-    name: coverage (${{ matrix.shard }}/5)
+    name: coverage (${{ matrix.shard }}/10)
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
@@ -131,7 +140,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     defaults:
       run:
         working-directory: backend
@@ -175,7 +184,7 @@ jobs:
       - name: Run one disposable Supabase test shard
         env:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
-        run: uv run python -m tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5
+        run: uv run python -m tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/10
       - name: Upload shard coverage data
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -225,7 +234,7 @@ jobs:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
         run: >-
           uv run python tests/backend_coverage.py combine
-          "$RUNNER_TEMP/coverage-shards" --shards 5
+          "$RUNNER_TEMP/coverage-shards" --shards 10 --unit-parts 3
       - name: Upload compact backend coverage evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -238,6 +247,7 @@ jobs:
             backend/test-results/coverage/gate.json
             backend/test-results/coverage/operational-coverage.json
             backend/test-results/coverage/test-durations.json
+            backend/test-results/coverage/unit-durations.json
           if-no-files-found: ignore
           retention-days: 14
 
