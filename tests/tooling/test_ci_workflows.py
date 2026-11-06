@@ -345,9 +345,9 @@ class CiWorkflowContractTests(unittest.TestCase):
             (isolated, 5, "- name: Run isolated frontend tests\n        timeout-minutes: 3\n"),
             (
                 http,
-                12,
+                11,
                 "- name: Run browser tests against the static export\n"
-                "        timeout-minutes: 10\n",
+                "        timeout-minutes: 9\n",
             ),
             (
                 measure,
@@ -361,8 +361,8 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn("playwright install chromium", job)
                 self.assertIn(f"\n    timeout-minutes: {limit}\n", job)
                 self.assertIn(step, job)
-        self.assertIn("\n    timeout-minutes: 12\n", unit)
-        self.assertIn("\n    timeout-minutes: 14\n", coverage)
+        self.assertIn("\n    timeout-minutes: 11\n", unit)
+        self.assertIn("\n    timeout-minutes: 13\n", coverage)
 
     def test_frontend_uploads_the_export_reports_and_the_context_of_any_failed_attempt(self):
         source = self.source("frontend.yml")
