@@ -2,6 +2,7 @@ import {
   authMeBody,
   defaultOrganization,
   expect,
+  settleReact,
   test,
   type Locator,
   type Page,
@@ -18,6 +19,7 @@ import { hideDevOverlay } from "./helpers/test-styles";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -39,6 +41,7 @@ const numberFieldId = "00000000-0000-4000-8000-000000000028";
 const integerFieldId = "00000000-0000-4000-8000-000000000029";
 const viewId = "00000000-0000-4000-8000-000000000014";
 const secondViewId = "00000000-0000-4000-8000-000000000019";
+const thirdViewId = "00000000-0000-4000-8000-000000000031";
 const duplicateViewId = "00000000-0000-4000-8000-000000000030";
 const recordOneId = "00000000-0000-4000-8000-000000000015";
 const recordTwoId = "00000000-0000-4000-8000-000000000016";
@@ -326,7 +329,9 @@ async function openRecordFiles(page: Page, parent = recordOneId) {
   await page.goto(
     `/openview?section=views&module=${moduleId}&view=${viewId}&record=${parent}`,
   );
-  const dialog = page.getByRole("dialog", { name: "Record details" });
+  const dialog = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
   await dialog.getByRole("tab", { name: "Files", exact: true }).click();
   return dialog.getByRole("tabpanel", { name: "Files", exact: true });
 }
@@ -3590,6 +3595,185 @@ test("default invalidation follows the new default after an implicit draft is re
   ).toContainText("default");
   await expect(selected).toHaveValue(secondViewId);
   await expect(search).toHaveValue("panel");
+});
+
+test("a draft the address no longer holds never follows the default to another view", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [otherView],
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(selected).toHaveValue(viewId);
+  await search.fill("compressor");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await settleReact(page);
+  // Next updates useSearchParams after a replaceState, in a transition. The
+  // native call holds that update back, so the page's search params still
+  // show "compressor" when the view changes, as they can on a loaded machine.
+  expect(
+    await page.evaluate(
+      () => window.history.replaceState !== History.prototype.replaceState,
+    ),
+  ).toBe(true);
+  await page.evaluate(() => {
+    window.history.replaceState = History.prototype.replaceState.bind(
+      window.history,
+    );
+  });
+  await search.fill("pump");
+  await expect(page).not.toHaveURL(/[?&]changes=/);
+
+  api.changeDefaultElsewhere(secondViewId);
+  await api.triggerInvalidation("saved_views");
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("panel");
+});
+
+test("Back and Forward give each view its own draft, also when a read lands during the traversal", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, { additionalViews: [otherView] });
+  // Registered before Next's listener, so it can hold a traversal back.
+  await page.addInitScript(() => {
+    window.addEventListener("popstate", (event) => {
+      if (document.documentElement.dataset.holdTraversal)
+        event.stopImmediatePropagation();
+    });
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+  await search.fill("alpha");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const firstEntry = page.url();
+  await selected.selectOption(secondViewId);
+  await page.getByRole("button", { name: "Discard and continue" }).click();
+  await expect(page).toHaveURL(new RegExp(`[?&]view=${secondViewId}`));
+  await expect(search).toHaveValue("panel");
+  await search.fill("beta");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const secondEntry = page.url();
+
+  await page.goBack();
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
+  await page.goForward();
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("beta");
+  await expect(page).toHaveURL(secondEntry);
+
+  // The address moves at popstate, but the page keeps the old view until the
+  // traversal commits. Holding Next's popstate listener keeps that window open.
+  await page.evaluate(() => {
+    document.documentElement.dataset.holdTraversal = "true";
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(firstEntry);
+  await expect(search).toHaveValue("beta");
+  // A read that changes only the open view's record reruns the address mirror.
+  otherView.updated_at = "2026-10-02T09:00:00Z";
+  const reread = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/views" &&
+      response.request().method() === "GET",
+  );
+  await api.triggerInvalidation("saved_views");
+  await reread;
+  await settleReact(page);
+  await expect(page).toHaveURL(firstEntry);
+  await page.evaluate(() => {
+    delete document.documentElement.dataset.holdTraversal;
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: window.history.state }),
+    );
+  });
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
+});
+
+test("a held Back cannot put one entry's draft on a view that becomes the default", async ({
+  page,
+}) => {
+  const entryView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Entry register",
+    definition: { ...baseView().definition, search: "entry" },
+  };
+  const nextDefault = {
+    ...baseView(),
+    id: thirdViewId,
+    name: "Next default",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [entryView, nextDefault],
+  });
+  // Registered before Next's listener, so it can hold a traversal back.
+  await page.addInitScript(() => {
+    window.addEventListener("popstate", (event) => {
+      if (document.documentElement.dataset.holdTraversal)
+        event.stopImmediatePropagation();
+    });
+  });
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${secondViewId}`,
+  );
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("entry");
+  await search.fill("alpha");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const firstEntry = page.url();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Equipment", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Discard and continue" }).click();
+  await expect(page).not.toHaveURL(/[?&]view=/);
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("pump");
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.holdTraversal = "true";
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(firstEntry);
+  api.changeDefaultElsewhere(thirdViewId);
+  await api.triggerInvalidation("saved_views");
+  await expect(selected).toHaveValue(thirdViewId);
+  await expect(search).toHaveValue("panel");
+  await expect(page).toHaveURL(firstEntry);
+
+  await page.evaluate(() => {
+    delete document.documentElement.dataset.holdTraversal;
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: window.history.state }),
+    );
+  });
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
 });
 
 for (const localAction of ["revert", "save"] as const) {

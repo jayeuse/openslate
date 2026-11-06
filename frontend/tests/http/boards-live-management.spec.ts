@@ -12,6 +12,7 @@ import { group as accessGroupFixture } from "../isolated/access/fixtures";
 import { authMeBody, defaultOrganization, isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -58,7 +59,7 @@ async function openBoardSettings(page: Page): Promise<Locator> {
   await page
     .getByRole("button", { name: "Board settings", exact: true })
     .click();
-  return settingsSheet(page);
+  return openedSheet(settingsSheet(page));
 }
 
 /** Opens the closed Advanced block of Details, which holds files and lifecycle. */

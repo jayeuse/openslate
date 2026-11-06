@@ -9,6 +9,7 @@ import {
   person,
   type AccessEntry,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 test("Groups pages and server search preserve enriched reach without catalog crawling", async ({
   page,
@@ -100,7 +101,9 @@ test("selected sponsor reload and username server search keep labels and write n
   const ana = api.users.get(ids.ana)!;
   api.users.set(ids.ana, { ...ana, sponsor_user_id: remote });
   await page.goto(`/access?view=people&user=${ids.ana}`);
-  const sheet = page.getByRole("dialog", { name: "Ana Santos", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ana Santos", exact: true }),
+  );
   const sponsor = sheet.getByRole("combobox", { name: "Sponsor", exact: true });
   await expect(sponsor).toContainText("Remote display");
   await sponsor.click();
@@ -141,7 +144,9 @@ test("session pages expose later devices and retain global revocation", async ({
       user_agent: `Later device ${index}`,
     });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(
     sheet.getByText("13 active sessions", { exact: true }),
@@ -220,10 +225,9 @@ test("member search preserves off-page members and marks ended manager candidate
     return "next";
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
-  const sheet = page.getByRole("dialog", {
-    name: "Inventory clerks",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Inventory clerks", exact: true }),
+  );
   await expect(
     sheet.getByRole("list", { name: "Members", exact: true }),
   ).toContainText("Selected member");
@@ -265,10 +269,9 @@ test("a refused people continuation conceals selected names until an explicit fr
       : "next",
   );
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
-  const sheet = page.getByRole("dialog", {
-    name: "Inventory clerks",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Inventory clerks", exact: true }),
+  );
   const members = sheet.getByRole("list", { name: "Members", exact: true });
   await expect(members).toContainText("Ana Santos");
   await sheet
@@ -302,10 +305,9 @@ test("a people search refusal survives cached search and an older Retry", async 
     return "next";
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
-  const sheet = page.getByRole("dialog", {
-    name: "Inventory clerks",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Inventory clerks", exact: true }),
+  );
   const members = sheet.getByRole("list", { name: "Members", exact: true });
   const search = sheet.getByRole("searchbox", {
     name: "Search people to add",
@@ -348,10 +350,9 @@ test("a selected-person refusal survives reopening a cached group", async ({
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
-  let sheet = page.getByRole("dialog", {
-    name: "Inventory clerks",
-    exact: true,
-  });
+  let sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Inventory clerks", exact: true }),
+  );
   await expect(
     sheet.getByRole("list", { name: "Members", exact: true }),
   ).toContainText("Ana Santos");
@@ -367,7 +368,9 @@ test("a selected-person refusal survives reopening a cached group", async ({
     .getByRole("table", { name: "Groups", exact: true })
     .getByRole("button", { name: "Manage Finance readers", exact: true })
     .click();
-  sheet = page.getByRole("dialog", { name: "Finance readers", exact: true });
+  sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Finance readers", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Members", exact: true }).click();
   await expect(sheet.getByRole("alert")).toContainText(
     "People are unavailable",
@@ -377,7 +380,9 @@ test("a selected-person refusal survives reopening a cached group", async ({
     .getByRole("table", { name: "Groups", exact: true })
     .getByRole("button", { name: "Manage Inventory clerks", exact: true })
     .click();
-  sheet = page.getByRole("dialog", { name: "Inventory clerks", exact: true });
+  sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Inventory clerks", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Members", exact: true }).click();
   await expect(sheet.getByRole("alert")).toContainText(
     "People are unavailable",

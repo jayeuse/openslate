@@ -7,6 +7,7 @@ import {
 } from "./helpers/test";
 import { ids, mockAccessApi, openAdvanced } from "./helpers/access-api";
 import { deferredMfaResponse } from "./helpers/mfa";
+import { openedSheet } from "./helpers/settled";
 
 const operationId = "00000000-0000-4000-8000-000000000911";
 const status = (userId = ids.ben) => ({
@@ -72,7 +73,9 @@ async function setup(page: Page) {
 }
 async function open(page: Page, userId = ids.ben, name = "Ben Cruz") {
   await page.goto(`/access?view=people&user=${userId}`);
-  const sheet = page.getByRole("dialog", { name, exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name, exact: true }),
+  );
   await expect(sheet.getByLabel("Job title")).toBeVisible();
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   await expect(
@@ -111,7 +114,9 @@ test("person security is lazy, current and recovery acceptance never claims deli
 }) => {
   const api = await setup(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await expect(sheet.getByLabel("Job title")).toBeVisible();
   expect(api.sent("GET", `/api/users/${ids.ben}/security`)).toHaveLength(0);
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
@@ -162,7 +167,9 @@ test("a security read shows the newly recorded two-step status in Details and th
   });
   // Ben is not on the Disabled page, so the sheet reads him by id.
   await page.goto(`/access?view=people&status=disabled&user=${ids.ben}`);
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   const recorded = sheet
     .getByRole("region", { name: "Recorded activity", exact: true })
     .getByText("Two-step verification", { exact: true })
@@ -385,7 +392,9 @@ test("a pending security action keeps its dialog and pending label, then shows t
     .getByRole("table", { name: "People" })
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
-  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await sheet.getByLabel("Job title").fill("Retained draft");
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   await confirmRecovery(page);
@@ -612,6 +621,9 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
     .getByRole("table", { name: "People" })
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
+  await openedSheet(
+    page.getByRole("dialog", { name: "Ben Cruz", exact: true }),
+  );
   await page
     .getByRole("dialog", { name: "Ben Cruz", exact: true })
     .getByRole("tab", { name: "Security", exact: true })
@@ -635,6 +647,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
       .getByRole("table", { name: "People" })
       .getByRole("button", { name: "Manage Ben Cruz", exact: true })
       .click();
+    await openedSheet(sheet);
     await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   }
   await expect(

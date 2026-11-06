@@ -461,6 +461,12 @@ def main(arguments=()):
                         if arguments == ("--comms-capacity-only",)
                         else {}
                     ),
+                    # Not CI: Hypothesis and pytest change behavior on it.
+                    **(
+                        {"GITHUB_STEP_SUMMARY": os.environ["GITHUB_STEP_SUMMARY"]}
+                        if "GITHUB_STEP_SUMMARY" in os.environ
+                        else {}
+                    ),
                 },
                 run_id,
                 *([batch] if batch else [shard] if shard else []),

@@ -178,13 +178,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         self.assertIn("run: npm test -- --project=isolated", isolated)
         # One isolated test drives next dev in Chromium.
-        self.assertIn("playwright install --with-deps chromium", isolated)
+        self.assertIn("playwright install chromium", isolated)
         self.assertNotIn("download-artifact", isolated)
-        for shard in range(1, 7):
+        for shard in range(1, 9):
             with self.subTest(shard=shard):
                 self.assertIn(f"duration-shard: {shard}", source)
         self.assertNotIn("--shard=", source)
-        self.assertIn("--shard ${{ matrix.duration-shard }} --shards 6", source)
+        self.assertIn("--shard ${{ matrix.duration-shard }} --shards 8", source)
         self.assertIn("--weights tests/http/.test-durations.json", source)
         self.assertIn("--project=http --list --reporter=json", source)
         self.assertIn("python3 ../scripts/playwright_shards.py plan", source)
@@ -265,7 +265,13 @@ class CiWorkflowContractTests(unittest.TestCase):
             'npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"',
             source,
         )
-        self.assertIn("timeout-minutes: 30", source)
+        # docs/plans/ci-speed.md F5: the slowest run reached 40% in 30 minutes. The job
+        # limit stays above the step limit, because a cancelled job skips the trace upload.
+        self.assertIn(
+            "name: Repeat the selected specs with zero retries\n        timeout-minutes: 110\n",
+            source,
+        )
+        self.assertIn("\n    timeout-minutes: 120\n", source)
         self.assertIn("run: npm run build", source)
         # Not a required check: no verify job, and frontend-verify never needs it.
         self.assertEqual(self.jobs(source), ["stress"])
@@ -299,7 +305,7 @@ class CiWorkflowContractTests(unittest.TestCase):
     def test_frontend_installs_the_locked_playwright_chromium_browser(self):
         source = self.source("frontend.yml")
 
-        self.assertIn("npm exec --no -- playwright install --with-deps chromium", source)
+        self.assertIn("npm exec --no -- playwright install chromium", source)
         self.assertIn("path: ~/.cache/ms-playwright", source)
         for forbidden in (
             "test:e2e",
@@ -312,36 +318,74 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
-    def test_frontend_browser_install_cannot_use_up_the_test_hang_limit(self):
+    def test_every_browser_install_stays_off_apt(self):
+        # docs/plans/ci-speed.md F4: apt added only 9 font packages, and a slow mirror held
+        # that download for up to 619 s. Each job installs Chromium alone.
+        install = "run: npm exec --no -- playwright install chromium\n"
+
+        self.assertEqual(self.source("frontend.yml").count(install), 3)
+        self.assertEqual(self.source("stress.yml").count(install), 1)
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            with self.subTest(workflow=workflow.name):
+                self.assertNotIn("--with-deps", workflow.read_text())
+
+    def test_lane_limits_stay_hang_guards_with_each_step_below_its_job(self):
         source = self.source("frontend.yml")
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        measure = source.split("\n  measure:\n", 1)[1]
+        backend = self.source("backend.yml")
+        unit = backend.split("\n  unit:\n", 1)[1].split("\n  coverage:\n", 1)[0]
+        coverage = backend.split("\n  coverage:\n", 1)[1].split("\n  coverage-gate:\n", 1)[0]
 
-        # A slow apt mirror during `playwright install --with-deps` once cancelled the
-        # isolated job at its old 10-minute job limit before any test ran.
-        for job, step in (
-            (isolated, "- name: Run isolated frontend tests\n        timeout-minutes: 10\n"),
+        # docs/plans/ci-speed.md S4: a job limit is about twice the slowest measured job, on
+        # the slow runner, with a floor of 5 minutes for setup on a cold cache. A step limit
+        # stays below its job limit, because a cancelled job skips the evidence uploads.
+        for job, limit, step in (
+            (isolated, 5, "- name: Run isolated frontend tests\n        timeout-minutes: 3\n"),
             (
                 http,
+                12,
                 "- name: Run browser tests against the static export\n"
-                "        timeout-minutes: 15\n",
+                "        timeout-minutes: 10\n",
+            ),
+            (
+                measure,
+                5,
+                "- name: Run the measurements alone against the static export\n"
+                "        id: measurements\n"
+                "        timeout-minutes: 3\n",
             ),
         ):
             with self.subTest(step=step.split("\n", 1)[0]):
-                self.assertIn("playwright install --with-deps chromium", job)
-                self.assertIn("\n    timeout-minutes: 30\n", job)
+                self.assertIn("playwright install chromium", job)
+                self.assertIn(f"\n    timeout-minutes: {limit}\n", job)
                 self.assertIn(step, job)
+        self.assertIn("\n    timeout-minutes: 12\n", unit)
+        self.assertIn("\n    timeout-minutes: 14\n", coverage)
 
-    def test_frontend_uploads_the_export_reports_and_only_failed_test_context(self):
+    def test_frontend_uploads_the_export_reports_and_the_context_of_any_failed_attempt(self):
         source = self.source("frontend.yml")
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
         upload = test.split("uses: actions/upload-artifact@", 1)
+        config = (ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
 
         # The export, the client build manifests, two native reports and the
         # measurement failure context supplement the existing failure context.
         self.assertEqual(source.count("upload-artifact"), 6)
         self.assertEqual(test.count("upload-artifact"), 2)
-        self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
+        # docs/plans/ci-speed.md F3: a failed job, or a test that passed only on its
+        # retry, keeps its context: a trace under retain-on-failure, or an error
+        # context in a spec that sets trace off. Matching every file would upload
+        # each clean shard, because .last-run.json is always in this folder.
+        self.assertIn(
+            "if: ${{ failure() || hashFiles("
+            "'frontend/test-results/playwright/**/trace.zip', "
+            "'frontend/test-results/playwright/**/error-context.md') != '' }}",
+            upload[0].rsplit("- name:", 1)[1],
+        )
+        self.assertIn('outputDir: "test-results/playwright"', config)
+        self.assertIn('trace: "retain-on-failure"', config)
         self.assertIn("path: frontend/test-results/playwright/", upload[1])
 
     def test_frontend_retains_native_reports_even_on_failure_and_requires_the_report(self):
@@ -372,7 +416,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn(f"frontend/{report}.metadata.txt", upload)
                 self.assertIn("retention-days: 14", upload)
                 self.assertIn("if-no-files-found: error", upload)
-        self.assertIn("duration-shard=%s/6", http)
+        self.assertIn("duration-shard=%s/8", http)
         self.assertIn("frontend/test-results/ci/assignment.json", http)
 
     def test_frontend_has_no_production_container_or_runtime_contract(self):
@@ -435,15 +479,20 @@ class CiWorkflowContractTests(unittest.TestCase):
         coverage = source.split("\n  coverage:\n", 1)[1].split("\n  coverage-gate:\n", 1)[0]
         gate = source.split("\n  coverage-gate:\n", 1)[1].split("\n  reset-acceptance:\n", 1)[0]
 
-        self.assertIn("shard: [1, 2, 3, 4, 5]", coverage)
+        self.assertIn("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]", coverage)
         self.assertIn("fail-fast: false", coverage)
         self.assertIn(
-            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5", coverage
+            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/10", coverage
         )
         self.assertIn("name: backend-coverage-shard-${{ matrix.shard }}", coverage)
         unit = source.split("\n  unit:\n", 1)[1].split("\n  coverage:\n", 1)[0]
-        self.assertIn("tests/backend_coverage.py unit --workers 4", unit)
-        self.assertIn("name: backend-coverage-unit", unit)
+        # docs/plans/ci-speed.md S1: each part has its own evidence, and combine needs all.
+        self.assertIn("part: [1, 2, 3]", unit)
+        self.assertIn("fail-fast: false", unit)
+        self.assertIn(
+            "tests/backend_coverage.py unit --workers 4 --part ${{ matrix.part }}/3", unit
+        )
+        self.assertIn("name: backend-coverage-unit-${{ matrix.part }}", unit)
         self.assertNotIn("fullstack_runner", unit)
         for job in (unit, coverage):
             self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", job)
@@ -454,7 +503,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", gate)
         self.assertIn("pattern: backend-coverage-*", gate)
         self.assertIn("tests/backend_coverage.py combine", gate)
-        self.assertIn("--shards 5", gate)
+        self.assertIn("--shards 10 --unit-parts 3", gate)
+        self.assertIn("backend/test-results/coverage/unit-durations.json", gate)
         self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", gate)
 
     def test_backend_requires_a_separate_destructive_reset_acceptance_run(self):

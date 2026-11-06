@@ -19,6 +19,7 @@ import {
   openAdvanced,
   person,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 // The People tab against the mocked Access API (see helpers/access-api.ts).
 
@@ -32,6 +33,7 @@ async function openPerson(page: Page, name: string) {
     .getByRole("button", { name: `Manage ${name}`, exact: true })
     .click();
   await expect(panel(page, name)).toBeVisible();
+  await openedSheet(panel(page, name));
 }
 
 async function recordedTime(page: Page, value: string) {
@@ -56,7 +58,7 @@ async function expectRecordedFact(
   label: string,
   expected: string | RegExp,
 ) {
-  const sheet = panel(page, name);
+  const sheet = await openedSheet(panel(page, name));
   await sheet.getByRole("tab", { name: "Details", exact: true }).click();
   await expect(
     sheet
@@ -100,6 +102,7 @@ test("a person link opens their panel, and the old identities link still works",
   await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   await expect(panel(page, "Ben Cruz")).toBeVisible();
+  await openedSheet(panel(page, "Ben Cruz"));
   await page.getByRole("button", { name: "Close" }).click();
   await expect(panel(page, "Ben Cruz")).toBeHidden();
   await expect(page).toHaveURL(/\/access\?view=people$/);
@@ -146,6 +149,7 @@ test("the whole row opens a person, and the name reads as body text, not a link"
 test("a group chip opens that group's members", async ({ page }) => {
   await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
+  await openedSheet(panel(page, "Ben Cruz"));
   await panel(page, "Ben Cruz")
     .getByRole("list", { name: "Groups" })
     .getByRole("link", { name: "Finance readers" })
@@ -323,7 +327,7 @@ test("a role change that meets a newer save asks which value to keep", async ({
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = panel(page, "Ben Cruz");
+  const sheet = await openedSheet(panel(page, "Ben Cruz"));
 
   await sheet.getByLabel("Role").selectOption("admin");
   await sheet.getByLabel("Job title").fill("Lead");
@@ -367,7 +371,7 @@ test("a save refused as stale re-reads the person before asking again", async ({
     });
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = panel(page, "Ben Cruz");
+  const sheet = await openedSheet(panel(page, "Ben Cruz"));
   await sheet.getByLabel("Job title").fill("Lead");
   await sheet.getByRole("button", { name: "Save changes" }).click();
 
@@ -398,7 +402,7 @@ test("disabling sends the status and a refusal shows the server's reason", async
     return "next" as const;
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = panel(page, "Ben Cruz");
+  const sheet = await openedSheet(panel(page, "Ben Cruz"));
   await openAdvanced(sheet);
   await sheet.getByRole("button", { name: "Disable" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Disable Ben Cruz?" });
@@ -443,7 +447,7 @@ test("the access panel names the level and its groups, full access for administr
 }) => {
   await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  let sheet = panel(page, "Ben Cruz");
+  let sheet = await openedSheet(panel(page, "Ben Cruz"));
   await sheet.getByRole("tab", { name: "Access" }).click();
   const entries = sheet.getByRole("list", { name: "Access by department" });
   await expect(entries.getByRole("listitem")).toHaveCount(1);
@@ -474,7 +478,7 @@ test("a deleted person shows no access and offers a restore", async ({
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.eli}`);
-  const sheet = panel(page, "Eli Tan");
+  const sheet = await openedSheet(panel(page, "Eli Tan"));
   await expect(sheet.getByText("Deleted", { exact: true })).toBeVisible();
   await openAdvanced(sheet);
   await expect(sheet.getByRole("button", { name: "Restore" })).toBeVisible();
@@ -488,6 +492,7 @@ test("unsaved details warn before a reload, survive it, and ask before they are 
 }) => {
   await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
+  await openedSheet(panel(page, "Ben Cruz"));
   const details = panel(page, "Ben Cruz").getByRole("tab", {
     name: "Details",
   });
@@ -504,7 +509,7 @@ test("unsaved details warn before a reload, survive it, and ask before they are 
     });
   expect(await warns()).toBe(true);
   await page.reload();
-  const sheet = panel(page, "Ben Cruz");
+  const sheet = await openedSheet(panel(page, "Ben Cruz"));
   await expect(sheet.getByLabel("Job title")).toHaveValue("Team lead");
 
   // Closing the panel, by button or Escape, asks first.
@@ -532,7 +537,7 @@ test("a save that got no answer is held for review instead of being sent again",
   const api = await mockAccessApi(page);
   api.on("PATCH", `/api/users/${ids.ben}`, (route) => route.abort());
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  let sheet = panel(page, "Ben Cruz");
+  let sheet = await openedSheet(panel(page, "Ben Cruz"));
   await sheet.getByLabel("Job title").fill("Team lead");
   await sheet.getByRole("button", { name: "Save changes" }).click();
 
@@ -550,7 +555,7 @@ test("a save that got no answer is held for review instead of being sent again",
   ).toHaveCount(0);
 
   await page.reload();
-  sheet = panel(page, "Ben Cruz");
+  sheet = await openedSheet(panel(page, "Ben Cruz"));
   await expect(
     sheet.getByRole("region", { name: "Saved person draft" }),
   ).toContainText("Team lead");
@@ -636,7 +641,7 @@ for (const width of [1440, 390])
       .getByRole("button", { name: "Manage Ben Cruz", exact: true })
       .filter({ visible: true })
       .click();
-    const sheet = panel(page, "Ben Cruz");
+    const sheet = await openedSheet(panel(page, "Ben Cruz"));
     await expect(sheet).toBeVisible();
     const box = await sheet.boundingBox();
     if (width === 390) expect(box?.width).toBeCloseTo(390, 0);
@@ -999,10 +1004,9 @@ test("an invitation searches later-page sponsor choices without changing base in
   await page
     .getByRole("button", { name: "Invite person", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Invite a person",
-    exact: true,
-  });
+  const dialog = await openedSheet(
+    page.getByRole("dialog", { name: "Invite a person", exact: true }),
+  );
   await dialog
     .getByLabel("Email", { exact: true })
     .fill("newguest@example.com");
@@ -1086,7 +1090,7 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
     last_active_at: "2026-10-01T07:45:00Z",
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  let sheet = panel(page, "Ben Cruz");
+  let sheet = await openedSheet(panel(page, "Ben Cruz"));
   await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
   const sessions = sheet.getByRole("list", { name: "Sessions", exact: true });
   await expect(sessions).toContainText("Sign-in address: 198.51.100.101");
@@ -1239,7 +1243,7 @@ for (const failure of [0, 503]) {
       await route.fulfill({ json: sent });
     });
     await page.goto(`/access?view=people&user=${ids.cy}`);
-    const sheet = panel(page, "cy");
+    const sheet = await openedSheet(panel(page, "cy"));
     await expect(
       sheet.getByRole("button", {
         name: "Finish sending invitation",

@@ -102,9 +102,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the test step keeps its own 10-minute hang limit.
-    timeout-minutes: 30
+    # The test step keeps its own 3-minute hang limit.
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend
@@ -126,10 +125,11 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      # Chromium's libraries are on the runner image; a missing one fails at launch, loudly.
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: npm exec --no -- playwright install chromium
       - name: Run isolated frontend tests
-        timeout-minutes: 10
+        timeout-minutes: 3
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/isolated.json
         run: npm test -- --project=isolated --reporter=line,json
@@ -161,9 +161,8 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the test step keeps its own 15-minute hang limit.
-    timeout-minutes: 30
+    # The test step keeps its own 10-minute hang limit.
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -171,18 +170,22 @@ jobs:
         # static-site code (frontend/playwright.config.ts). Whole-file shards use
         # verified CI duration weights; current native collection owns membership.
         include:
-          - suite: http 1/6
+          - suite: http 1/8
             duration-shard: 1
-          - suite: http 2/6
+          - suite: http 2/8
             duration-shard: 2
-          - suite: http 3/6
+          - suite: http 3/8
             duration-shard: 3
-          - suite: http 4/6
+          - suite: http 4/8
             duration-shard: 4
-          - suite: http 5/6
+          - suite: http 5/8
             duration-shard: 5
-          - suite: http 6/6
+          - suite: http 6/8
             duration-shard: 6
+          - suite: http 7/8
+            duration-shard: 7
+          - suite: http 8/8
+            duration-shard: 8
     defaults:
       run:
         working-directory: frontend
@@ -226,7 +229,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: npm exec --no -- playwright install chromium
       - name: Plan whole-file duration shards from current native collection
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/collection.json
@@ -235,18 +238,22 @@ jobs:
           npm test -- --project=http --list --reporter=json
           python3 ../scripts/playwright_shards.py plan \
             --collection test-results/ci/collection.json --weights tests/http/.test-durations.json \
-            --shard ${{ matrix.duration-shard }} --shards 6 \
+            --shard ${{ matrix.duration-shard }} --shards 8 \
             --test-list test-results/ci/selected.txt --receipt test-results/ci/assignment.json
       - name: Run browser tests against the static export
-        timeout-minutes: 15
+        timeout-minutes: 10
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
         run: npm test -- --project=http --workers=2 --test-list=test-results/ci/selected.txt --reporter=line,json
       - name: Check retried tests against the flaky ledger
         if: ${{ always() }}
         run: python3 ../scripts/playwright_flaky.py test-results/ci/http-${{ strategy.job-index }}.json --ledger tests/flaky.json
+      # A failed attempt leaves its evidence even when the retry passes: a trace,
+      # or an error context in a spec that sets trace off. A shard with no failed
+      # attempt also uploads when a spec writes a trace itself. Do not match every
+      # file: .last-run.json is always in this folder.
       - name: Keep failure context and traces
-        if: failure()
+        if: ${{ failure() || hashFiles('frontend/test-results/playwright/**/trace.zip', 'frontend/test-results/playwright/**/error-context.md') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-test-results-${{ strategy.job-index }}
@@ -260,7 +267,7 @@ jobs:
           REPORT_DURATION_SHARD: ${{ matrix.duration-shard }}
         run: |
           mkdir -p test-results/ci
-          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/6\n' \
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/8\n' \
             "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
             "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" "$REPORT_DURATION_SHARD" \
             > test-results/ci/http-${{ strategy.job-index }}.metadata.txt
@@ -317,9 +324,8 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the measurement step keeps its own 10-minute hang limit.
-    timeout-minutes: 30
+    # The measurement step keeps its own 3-minute hang limit.
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend
@@ -358,10 +364,10 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - name: Install pinned Playwright Chromium
-        run: npm exec --no -- playwright install --with-deps chromium
+        run: npm exec --no -- playwright install chromium
       - name: Run the measurements alone against the static export
         id: measurements
-        timeout-minutes: 10
+        timeout-minutes: 3
         continue-on-error: true
         run: npm test -- --project=measure --no-deps --reporter=line
       - name: Report the measurements

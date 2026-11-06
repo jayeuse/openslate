@@ -7,6 +7,7 @@ import {
   listPage,
   mockAccessApi,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 const metadata = {
   created_at: "2026-01-10T09:00:00Z",
@@ -118,10 +119,9 @@ test("access department and module search keeps unseen saved entries in the repl
     });
   });
   await page.goto(`/access?view=groups&group=${ids.readers}`);
-  const sheet = page.getByRole("dialog", {
-    name: "Finance readers",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Finance readers", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
     sheet.getByRole("region", { name: "This group gives", exact: true }),
@@ -181,10 +181,9 @@ test("catalog search refusal survives cached keys until explicit Retry", async (
       : "next",
   );
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
-  const sheet = page.getByRole("dialog", {
-    name: "Finance readers",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Finance readers", exact: true }),
+  );
   await expect(
     sheet.getByLabel("Inventory level", { exact: true }),
   ).toBeVisible();
@@ -220,10 +219,9 @@ test("Access summary describes overrides without claiming module totals", async 
 }) => {
   const api = await mockAccessApi(page);
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
-  const sheet = page.getByRole("dialog", {
-    name: "Finance readers",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Finance readers", exact: true }),
+  );
   const inventory = sheet
     .getByRole("list", { name: "Departments", exact: true })
     .getByRole("listitem")

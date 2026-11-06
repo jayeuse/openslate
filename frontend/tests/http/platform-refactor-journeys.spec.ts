@@ -10,6 +10,7 @@ import {
 } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireView } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 const MODULE = "10000000-0000-4000-8000-000000000001";
 const TITLE = "20000000-0000-4000-8000-000000000001";
 const QUANTITY = "20000000-0000-4000-8000-000000000002";
@@ -1185,6 +1186,9 @@ for (const viewport of [
       });
       await reachable(navigation);
       await navigation.click();
+      await openedSheet(
+        page.getByRole("dialog", { name: "Slate Operations navigation" }),
+      );
     }
     await page.getByRole("link", { name: "Search", exact: true }).click();
     await expect(page).toHaveURL(/section=search/);

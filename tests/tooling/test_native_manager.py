@@ -329,7 +329,9 @@ class ManagerBuildTests(unittest.TestCase):
     def test_ci_builds_native_unsigned_development_artifacts(self):
         workflow = (ROOT / ".github/workflows/native-manager.yml").read_text(encoding="utf-8")
 
-        self.assertIn("macos-14", workflow)
+        # macOS 14 images are retired; the macos-15 label is arm64.
+        self.assertIn("- os: macos-15\n", workflow)
+        self.assertIn("if: matrix.os == 'macos-15'\n", workflow)
         self.assertIn("windows-2025", workflow)
         self.assertIn("uv sync --locked --group manager", workflow)
         self.assertIn("--output-dir ../dist/native-manager", workflow)

@@ -18,6 +18,7 @@ import {
   mockAccessApi,
   person,
 } from "./helpers/access-api";
+import { openedSheet } from "./helpers/settled";
 
 // Access never loses an unsaved form or draft without a question, and never
 // reports a change that was discarded or made twice (see
@@ -77,7 +78,7 @@ test("a window return keeps open forms, dialogs, the open tab and filters", asyn
     .getByRole("table", { name: "People" })
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByRole("tab", { name: "Sessions" }).click();
   await leaveAndReturn(page);
   await expect(ben.getByRole("tab", { name: "Sessions" })).toHaveAttribute(
@@ -235,7 +236,7 @@ test("Discard in a person sheet keeps a hidden account policy draft", async ({
     .getByRole("table", { name: "People" })
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await ben.getByRole("button", { name: "Close" }).click();
   await page
@@ -265,7 +266,7 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
     return "next" as const;
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await ben.getByRole("button", { name: "Save changes" }).click();
   await personSave.entered;
@@ -308,7 +309,7 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
     return "next" as const;
   });
   await page.goto(`/access?view=groups&group=${ids.readers}&tab=members`);
-  const readers = sheet(page, "Finance readers");
+  const readers = await openedSheet(sheet(page, "Finance readers"));
   await readers.getByRole("tab", { name: "Members" }).click();
   await readers
     .getByRole("button", { name: /^Remove Ben Cruz/ })
@@ -386,7 +387,7 @@ async function saveThatMayHaveCompleted(page: Page) {
   );
   api.on("PATCH", `/api/users/${ids.ben}`, (route) => route.abort());
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await ben.getByRole("button", { name: "Save changes" }).click();
   await expect(ben.getByRole("alert")).toContainText(
@@ -525,7 +526,7 @@ test("a save that fails after the editor closed keeps the draft for the return",
     .getByRole("table", { name: "People" })
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await ben.getByRole("button", { name: "Save changes" }).click();
   await save.entered;
@@ -558,7 +559,7 @@ test("changing one's own role asks first and shows the server's refusal beside R
     }),
   );
   await page.goto(`/access?view=people&user=${ids.rosa}`);
-  const rosa = sheet(page, "Rosa Reyes");
+  const rosa = await openedSheet(sheet(page, "Rosa Reyes"));
   const role = rosa.getByLabel("Role");
   await role.selectOption("member");
   await rosa.getByRole("button", { name: "Save changes" }).click();
@@ -584,7 +585,7 @@ test("a failed Discard keeps its dialog open and says why", async ({
 }) => {
   await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
-  const ben = sheet(page, "Ben Cruz");
+  const ben = await openedSheet(sheet(page, "Ben Cruz"));
   await ben.getByLabel("Job title").fill("Team lead");
   await page.evaluate((prefix) => {
     const setItem = Storage.prototype.setItem;

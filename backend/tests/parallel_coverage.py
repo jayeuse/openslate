@@ -1,6 +1,6 @@
 """Run the backend coverage gate on this machine: the unit lane, then parallel stack shards.
 
-CI runs five shards on separate runners. Locally, three disposable stacks fit beside the
+CI runs ten shards on separate runners. Locally, three disposable stacks fit beside the
 development stack (10 CPUs, 8 GB for Docker); each test stack takes its own network block
 outside Docker's default address pools. Each shard writes to its own folder; the combine
 step applies the same 90% overall and changed-line gates as CI and writes the usual

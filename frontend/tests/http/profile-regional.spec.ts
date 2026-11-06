@@ -5,6 +5,7 @@ import {
   profileSelf,
 } from "./helpers/profile-api";
 import { ids, mockAccessApi } from "./helpers/access-api";
+import { openedPanel } from "./helpers/settled";
 
 /** Choose a zone in the searchable Timezone select; each choice saves at once. */
 async function chooseTimezone(page: Page, search: string, option: RegExp) {
@@ -308,7 +309,12 @@ test("confirmed Profile Regional choices reach Access people and sessions withou
     name: "Main navigation",
     exact: true,
   });
-  await navigation.getByRole("button", { name: "Access", exact: true }).click();
+  const accessGroup = navigation.getByRole("button", {
+    name: "Access",
+    exact: true,
+  });
+  await accessGroup.click();
+  await openedPanel(accessGroup);
   await navigation.getByRole("link", { name: "People", exact: true }).click();
   const table = page.getByRole("table", { name: "People", exact: true });
   const row = table.getByRole("row").filter({ hasText: "Ben Cruz" });

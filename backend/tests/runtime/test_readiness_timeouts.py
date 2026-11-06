@@ -61,6 +61,9 @@ def test_blocked_storage_probe_preserves_completed_core_and_one_shared_probe(
         readiness, "httpx", SimpleNamespace(Client=Client, HTTPError=httpx.HTTPError)
     )
     client = TestClient(create_app())
+    # FastAPI builds routes on an app's first request: 1 to 2 s on a loaded CI runner.
+    # Pay that here, so the probe's 2 s hold below covers readiness work only.
+    client.get("/api/health")
 
     try:
         readiness._get_or_start_snapshot()

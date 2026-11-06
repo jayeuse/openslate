@@ -4,6 +4,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { openedPanel } from "./helpers/settled";
 
 // docs/specs/openview-department-pages.md, DA1–DA9: the Departments section of
 // the sidebar. Module pages themselves are covered in openview-views-api.
@@ -154,10 +155,15 @@ test("an opened department stays open while the person moves between pages", asy
   ]);
   await target.goto("/platform?section=search");
   const nav = sidebar(target);
-  await nav.getByRole("button", { name: "Inventory", exact: true }).click();
+  const inventory = nav.getByRole("button", {
+    name: "Inventory",
+    exact: true,
+  });
+  await inventory.click();
   await expect(
     nav.getByRole("link", { name: "Products", exact: true }),
   ).toBeVisible();
+  await openedPanel(inventory);
   // Platform is the current group, so its sections are already listed.
   await nav.getByRole("link", { name: "Files", exact: true }).click();
   await expect(target).toHaveURL(/section=files/);

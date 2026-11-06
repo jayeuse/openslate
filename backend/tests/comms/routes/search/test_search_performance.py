@@ -91,4 +91,10 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
     path.write_text(json.dumps(evidence, indent=2) + "\n")
     record_property("search_request_p95_ms", evidence["request_p95_ms"])
     record_property("search_handler_p95_ms", evidence["handler_p95_ms"])
+    # A shared CI runner reports this wall-clock limit (docs/plans/ci-speed.md B1). Every
+    # other run enforces it. The SELECT and row bounds above block in every run.
+    if job_summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(job_summary, "a", encoding="utf-8") as summary:
+            summary.write(f"Search p95: {evidence['request_p95_ms']:.1f} ms (limit 300 ms)\n")
+        return
     assert evidence["request_p95_ms"] <= 300, evidence

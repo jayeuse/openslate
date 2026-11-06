@@ -17,6 +17,7 @@ import {
 import { pageOf } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
+import { openedSheet } from "./helpers/settled";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -621,6 +622,7 @@ async function openLinksPanel(page: Page) {
   await expect(
     page.getByRole("dialog", { name: "Record details" }),
   ).toBeVisible();
+  await openedSheet(page.getByRole("dialog", { name: "Record details" }));
   await page.getByRole("tab", { name: "Linked records" }).click();
   await expect(
     page.getByRole("heading", { name: "Follow-up visit" }),

@@ -13,6 +13,7 @@ import {
 } from "./helpers/board-kanban-api";
 import { boardId } from "./helpers/boards-api";
 import { dummyFile } from "../helpers/dummy-files";
+import { openedSheet } from "./helpers/settled";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -52,10 +53,9 @@ test("a writer edits an objective's assignee, due date, labels and description, 
   await stage(page, "Doing")
     .getByRole("button", { name: /^Renewal terms, objective/ })
     .click();
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await expect(sheet.getByText("Objective", { exact: true })).toBeVisible();
   await expect(sheet.getByText("Doing", { exact: true })).toBeVisible();
   await expect(
@@ -101,7 +101,9 @@ test("a writer edits an objective's assignee, due date, labels and description, 
   await stage(page, "To do")
     .getByRole("button", { name: /^Price list, objective/ })
     .click();
-  const other = page.getByRole("dialog", { name: "Price list", exact: true });
+  const other = await openedSheet(
+    page.getByRole("dialog", { name: "Price list", exact: true }),
+  );
   await other
     .getByRole("textbox", { name: "Description" })
     .fill("Send the 2027 price list.");
@@ -126,10 +128,9 @@ test("a writer assigns a board reader found by search who is neither assigned no
   await stage(page, "Doing")
     .getByRole("button", { name: /^Renewal terms, objective/ })
     .click();
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
 
   await sheet.getByRole("combobox", { name: "Assignee", exact: true }).click();
   await page
@@ -163,10 +164,9 @@ test("a writer adds, ticks and reorders checklist items; the card counts them", 
     extras: { [renewal.id]: { checklist: [{ text: "Pull volumes" }] } },
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   const checklist = sheet.getByRole("region", { name: "Checklist" });
   await expect(checklist).toContainText("0/1");
   // An empty item cannot be added, and Add item says why.
@@ -219,10 +219,9 @@ test("a writer uploads a file to a card and removes it", async ({ page }) => {
     cards: [renewal],
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Files" }).click();
   await sheet
     .getByLabel("Add an attachment")
@@ -261,10 +260,9 @@ test("a writer links a record they can read to a card", async ({ page }) => {
   });
   await installRecordSheetApi(page);
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await sheet.getByRole("tab", { name: "Linked records" }).click();
   await sheet
     .getByRole("combobox", { name: "Record module" })
@@ -315,10 +313,9 @@ test("a reader opens a card's sheet read-only, with the same tabs", async ({
   await stage(page, "Doing")
     .getByRole("button", { name: /^Renewal terms, objective/ })
     .click();
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await expect(
     sheet.getByRole("tablist", { name: "Card sections" }).getByRole("tab"),
   ).toHaveText(["Details", "Files", "Linked records", "Activity"]);
@@ -359,7 +356,9 @@ test("a record card opens the shared record sheet with On this board first; its 
   await stage(page, "Doing")
     .getByRole("button", { name: /^Q-24112, Quotes record/ })
     .click();
-  const sheet = page.getByRole("dialog", { name: "Q-24112", exact: true });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Q-24112", exact: true }),
+  );
   const tabs = sheet.getByRole("tablist", { name: "Record sections" });
   await expect(tabs.getByRole("tab").first()).toHaveText("On this board");
   await expect(tabs.getByRole("tab").first()).toHaveAttribute(
@@ -409,10 +408,9 @@ test("a card link opens its sheet and Copy link copies the card's own address", 
   await installKanbanApi(page, { level: "write", cards: [renewal] });
   // A filtered address: the copied link names the card only.
   await page.goto(kanbanHref(`search=renewal&card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await sheet.getByRole("button", { name: "More card actions" }).click();
   await page.getByRole("menuitem", { name: "Copy link" }).click();
   await expect
@@ -468,10 +466,9 @@ test("Archive card asks nothing, closes the sheet, and Undo puts the card back",
     cards: [renewal, wireCard("Price list", stageIds.doing, 2048)],
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await sheet.getByRole("button", { name: "More card actions" }).click();
   await page.getByRole("menuitem", { name: "Archive card" }).click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -500,10 +497,9 @@ test("a save another person beat says so and shows the latest card", async ({
     cards: [renewal],
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await expect(sheet.getByLabel("Due", { exact: true })).toBeVisible();
   // Another person changed the card while it was open.
   renewal.due_on = "2026-11-02";
@@ -529,10 +525,9 @@ test("on a phone the card sheet fills the screen, with Move to stage and 44px ta
     cards: [renewal],
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   const box = await sheet.boundingBox();
   expect(box).toMatchObject({ x: 0, width: 390 });
   for (const target of [
@@ -568,10 +563,9 @@ test("a writer's card title reads as the sheet title, with a field only on hover
   const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
   await installKanbanApi(page, { level: "read", cards: [renewal] });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   const heading = sheet.getByRole("heading", { name: "Renewal terms" });
   await expect(heading).toBeVisible();
   const type = (node: Element) => {
@@ -616,10 +610,9 @@ test("a manager on a board with no labels creates them from the card's Labels ro
     labels: [],
   });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   await sheet
     .getByRole("button", { name: "Create labels", exact: true })
     .click();
@@ -667,10 +660,9 @@ test("from 1280 a card's Description keeps an 8rem box while its other fields st
   const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
   await installKanbanApi(page, { level: "write", cards: [renewal] });
   await page.goto(kanbanHref(`card=${renewal.id}`));
-  const sheet = page.getByRole("dialog", {
-    name: "Renewal terms",
-    exact: true,
-  });
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Renewal terms", exact: true }),
+  );
   const description = sheet.getByRole("textbox", { name: "Description" });
   await expect(description).toBeVisible();
   expect((await description.boundingBox())!.height).toBeGreaterThanOrEqual(128);

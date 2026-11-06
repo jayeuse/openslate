@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             artifact: slateops-manager-macos-development
           - os: windows-2025
             artifact: slateops-manager-windows-development
@@ -62,7 +62,7 @@ jobs:
           --origin https://manager-ci.invalid --version 0.0.0-ci
           --output-dir ../dist/native-manager
       - name: Archive the macOS app bundle
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         run: >-
           ditto -c -k --sequesterRsrc --keepParent
           "../dist/native-manager/Slate Operations Manager.app"

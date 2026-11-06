@@ -20,6 +20,8 @@ def coverage_output(backend):
 
 
 DURATIONS = "tests/.test_durations"
+# Unit tests keep their own file: the stack shards store integration tests only.
+UNIT_DURATIONS = "tests/.test_durations_unit"
 MAX_DURATION_ID = 500
 
 
@@ -53,6 +55,27 @@ def compact_durations(durations):
         if len(test) <= MAX_DURATION_ID
     }
     return json.dumps(rounded, sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def junit_node_id(backend, classname, name):
+    """Rebuild a pytest node ID, or None when no test file matches the JUnit classname."""
+    parts = classname.split(".")
+    for end in range(len(parts), 0, -1):
+        path = "/".join(parts[:end]) + ".py"
+        if (backend / path).is_file():
+            return "::".join([path, *parts[end:], name])
+    return None
+
+
+def unit_durations(backend, reports):
+    """Read each unit test's total time from the JUnit reports of the unit lane."""
+    durations = {}
+    for report in reports:
+        for case in ET.parse(report).getroot().iter("testcase"):
+            node = junit_node_id(backend, case.get("classname", ""), case.get("name", ""))
+            if node:
+                durations[node] = float(case.get("time", "0"))
+    return durations
 
 
 def parse_shard(value):
@@ -227,12 +250,13 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
     )
 
 
-def run_unit_lane(backend, output, workers):
-    """Run every test not marked `integration` without a stack, in parallel.
+def run_unit_lane(backend, output, workers, part=(1, 1)):
+    """Run one part of the tests not marked `integration` without a stack, in parallel.
 
     It writes shard-like evidence (coverage data, JUnit, metadata with
     lane "unit") that combine_backend_coverage merges with the stack shards.
     A test that needs a stack fails or skips here, and either fails the lane.
+    The local gate runs one whole part; CI splits the lane across several jobs.
     """
     if any(os.getenv(name) for name in ("TEST_DATABASE_URL", "MIGRATION_DATABASE_URL")):
         raise SystemExit("The unit lane runs without a stack; unset the database URLs")
@@ -241,6 +265,13 @@ def run_unit_lane(backend, output, workers):
     output.mkdir(parents=True)
     before = source_inventory(backend)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+    group, total = part
+    split = [
+        f"--splits={total}",
+        f"--group={group}",
+        "--splitting-algorithm=least_duration",
+        f"--durations-path={UNIT_DURATIONS}",
+    ]
     result = subprocess.run(
         [
             sys.executable,
@@ -253,6 +284,7 @@ def run_unit_lane(backend, output, workers):
             str(workers),
             "--dist",
             "worksteal",
+            *(split if total > 1 else []),
             "--cov=app",
             "--cov-report=",
             "--cov-fail-under=0",
@@ -269,6 +301,7 @@ def run_unit_lane(backend, output, workers):
                 "revision": revision,
                 "base_ref": os.getenv("COVERAGE_BASE_REF"),
                 "lane": "unit",
+                "part": list(part),
                 "source_hashes": before,
                 "source_stable": stable,
                 "test_counts": counts,
@@ -281,7 +314,7 @@ def run_unit_lane(backend, output, workers):
     return 0 if passed else 1
 
 
-def combine_backend_coverage(backend, shards_dir, total):
+def combine_backend_coverage(backend, shards_dir, total, unit_parts=1):
     """Merge every CI shard into one report, then apply the normal coverage gate."""
     from coverage import Coverage
 
@@ -290,11 +323,14 @@ def combine_backend_coverage(backend, shards_dir, total):
         shutil.rmtree(output)
     output.mkdir(parents=True)
     shards = {}
-    units = []
+    units = {}
     for metadata_path in sorted(shards_dir.rglob("metadata.json")):
         metadata = json.loads(metadata_path.read_text())
         if metadata.get("lane") == "unit":
-            units.append(metadata_path.parent)
+            part = tuple(metadata.get("part") or ())
+            if len(part) != 2 or part[1] != unit_parts or part in units:
+                raise SystemExit(f"Unexpected or duplicate unit lane evidence: {metadata_path}")
+            units[part] = metadata_path.parent
             continue
         group = tuple(metadata.get("shard") or ())
         if len(group) != 2 or group[1] != total or group in shards:
@@ -303,9 +339,13 @@ def combine_backend_coverage(backend, shards_dir, total):
     expected = {(group, total) for group in range(1, total + 1)}
     if set(shards) != expected:
         raise SystemExit(f"Expected {total} coverage shards, found {sorted(shards)}")
-    if len(units) != 1:
-        raise SystemExit(f"Expected one unit lane beside the shards, found {len(units)}")
-    folders = [shards[group] for group in sorted(shards)] + units
+    if set(units) != {(part, unit_parts) for part in range(1, unit_parts + 1)}:
+        raise SystemExit(
+            f"Expected one unit lane beside the shards, in {unit_parts} part(s), "
+            f"found {sorted(units)}"
+        )
+    unit_folders = [units[part] for part in sorted(units)]
+    folders = [shards[group] for group in sorted(shards)] + unit_folders
 
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
     counts = dict.fromkeys(COUNT_KEYS, 0)
@@ -331,12 +371,18 @@ def combine_backend_coverage(backend, shards_dir, total):
     coverage.xml_report(outfile=str(output / "coverage.xml"))
     (output / ".coverage").unlink()
     (output / "test-durations.json").write_text(compact_durations(durations))
+    (output / "unit-durations.json").write_text(
+        compact_durations(
+            unit_durations(backend, [folder / "pytest.xml" for folder in unit_folders])
+        )
+    )
     (output / "metadata.json").write_text(
         json.dumps(
             {
                 "revision": revision,
                 "base_ref": os.getenv("COVERAGE_BASE_REF"),
                 "shards": total,
+                "unit_parts": unit_parts,
                 "source_stable": stable,
                 "test_counts": counts,
             },
@@ -353,16 +399,24 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["unit"]:
         parser = argparse.ArgumentParser(prog="backend_coverage.py unit")
         parser.add_argument("--workers", type=int, default=4)
+        parser.add_argument("--part", type=parse_shard, default=(1, 1))
         options = parser.parse_args(sys.argv[2:])
         backend = Path(__file__).resolve().parents[1]
-        raise SystemExit(run_unit_lane(backend, coverage_output(backend), options.workers))
+        raise SystemExit(
+            run_unit_lane(backend, coverage_output(backend), options.workers, options.part)
+        )
     if sys.argv[1:2] == ["combine"]:
         parser = argparse.ArgumentParser(prog="backend_coverage.py combine")
         parser.add_argument("shards_dir", type=Path)
         parser.add_argument("--shards", type=int, required=True)
+        parser.add_argument("--unit-parts", type=int, default=1)
         options = parser.parse_args(sys.argv[2:])
         backend = Path(__file__).resolve().parents[1]
-        raise SystemExit(combine_backend_coverage(backend, options.shards_dir, options.shards))
+        raise SystemExit(
+            combine_backend_coverage(
+                backend, options.shards_dir, options.shards, options.unit_parts
+            )
+        )
     if any(
         os.getenv(name) is None
         for name in (

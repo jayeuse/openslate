@@ -1,6 +1,7 @@
 import { expect, test, type Page, isEventStream } from "./helpers/test";
 
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
+import { openedPanel } from "./helpers/settled";
 
 const userA = "00000000-0000-4000-8000-0000000000a1";
 const userB = "00000000-0000-4000-8000-0000000000b2";
@@ -184,9 +185,12 @@ test("switching verified accounts clears unfinished Access drafts in the tab", a
   );
 
   currentUser = userB;
-  await navigation
-    .getByRole("button", { name: "Platform", exact: true })
-    .click();
+  const platform = navigation.getByRole("button", {
+    name: "Platform",
+    exact: true,
+  });
+  await platform.click();
+  await openedPanel(platform);
   await navigation.getByRole("link", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/\/platform/);
   await expect
@@ -222,9 +226,12 @@ test("a failed draft cleanup blocks an account switch and explains recovery", as
   }, draftA);
 
   currentUser = userB;
-  await navigation
-    .getByRole("button", { name: "Platform", exact: true })
-    .click();
+  const platform = navigation.getByRole("button", {
+    name: "Platform",
+    exact: true,
+  });
+  await platform.click();
+  await openedPanel(platform);
   await navigation.getByRole("link", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/\/platform/);
   await expect(
