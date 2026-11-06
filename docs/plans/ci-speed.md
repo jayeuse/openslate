@@ -207,6 +207,13 @@ Status: requested by the owner on 2026-11-06, after PR #92. It replaces workarou
 
 **Order.** Measure first, then build, then one retune. No slice changes limits or durations: after all fixes land, 3 full runs set them once (TASK-0029). Push one commit at a time, because `cancel-in-progress` drops a run in flight.
 
+**Owner decisions, 2026-11-06.** The owner approved all three:
+1. R3: add the `EXPLAIN` check. It replays the search SQL and fails on too many pages read or a lost search index. The 300 ms number stays as a report in CI and a limit in the local gate.
+2. R1: build it for correctness, with the guard, the one `zero_hit_excluded` row and the adjacency commit. Backend wall time is not expected to change.
+3. R6: correct the Boards test to measure the real order. A real cold load read the list twice in 95 of 95 normal loads, so the hold from PR #92 measures an order that does not occur by itself. The 34-request budget stays, and the app does not change.
+
+The work starts after PR #92 merges.
+
 **Not in this work:**
 - Sheet clicks: the app needs no fix.
 - Runner speed: free runners cannot change it.
