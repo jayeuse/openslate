@@ -12,9 +12,9 @@ from operations.sample.packs.clinic import PACK
 from operations.sample.packs.clinic.realism import BOARD_OBJECTIVES, BOARD_STAGES, holidays
 from operations.sample.population.board_kanban import card_target
 from operations.sample.population.openview import _dashboard_widgets, _source_plans
-from operations.sample.scenario import build_dataset
 from tests.operations.sample.packs.sample_pack_clinic_chain import validate_dates
 from tests.operations.sample.packs.sample_pack_openview_preflight import _api_structures
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ANCHOR = date(2026, 9, 30)
 
@@ -55,11 +55,11 @@ def test_clinic_closes_on_us_federal_holidays(day: date, closed: bool) -> None:
 
 @pytest.mark.parametrize("profile", ["standard", "large"])
 def test_clinic_children_are_dated_on_or_after_their_parents(profile: str) -> None:
-    validate_dates(build_dataset(profile, 42, ANCHOR, organization=PACK))
+    validate_dates(sample_dataset(profile, 42, ANCHOR, PACK.identity.key))
 
 
 def test_clinic_supporting_counts_match_the_boards_kanbans_and_openview_it_plans() -> None:
-    dataset = build_dataset("small", 42, ANCHOR, organization=PACK)
+    dataset = sample_dataset("small", 42, ANCHOR, PACK.identity.key)
     content = PACK.content.data
     kanban = content.kanban
     assert kanban is not None
