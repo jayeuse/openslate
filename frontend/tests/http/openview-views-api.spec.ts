@@ -2,6 +2,7 @@ import {
   authMeBody,
   defaultOrganization,
   expect,
+  settleReact,
   test,
   type Locator,
   type Page,
@@ -3591,6 +3592,43 @@ test("default invalidation follows the new default after an implicit draft is re
   await expect(
     selected.locator(`option[value="${secondViewId}"]`),
   ).toContainText("default");
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("panel");
+});
+
+test("a draft the address no longer holds never follows the default to another view", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [otherView],
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(selected).toHaveValue(viewId);
+  await search.fill("compressor");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await settleReact(page);
+  // Next updates useSearchParams after a replaceState, in a transition. The
+  // native call holds that update back, so the page's search params still
+  // show "compressor" when the view changes, as they can on a loaded machine.
+  await page.evaluate(() => {
+    window.history.replaceState = History.prototype.replaceState.bind(
+      window.history,
+    );
+  });
+  await search.fill("pump");
+  await expect(page).not.toHaveURL(/[?&]changes=/);
+
+  api.changeDefaultElsewhere(secondViewId);
+  await api.triggerInvalidation("saved_views");
   await expect(selected).toHaveValue(secondViewId);
   await expect(search).toHaveValue("panel");
 });

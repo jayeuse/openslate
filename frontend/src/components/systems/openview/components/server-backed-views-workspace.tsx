@@ -707,23 +707,29 @@ export default function ServerBackedViewsWorkspace({
   const mirroredChanges = useRef<string | null>(null);
   useEffect(() => {
     if (!draftBaseReady || navigationPending) return;
+    // Read the address itself. Next updates the search params after a
+    // replaceState, in a transition, so they can still show a value this page
+    // has already replaced; that value must not land on the next View.
+    const addressChanges = new URLSearchParams(window.location.search).get(
+      TEMPORARY_VIEW_PARAM,
+    );
     if (restoredDraftKey.current !== draftKey) {
       restoredDraftKey.current = draftKey;
       const arrived =
-        requestedChanges !== null &&
-        requestedChanges !== mirroredChanges.current &&
+        addressChanges !== null &&
+        addressChanges !== mirroredChanges.current &&
         draftState?.key !== draftKey;
       const restored = arrived
-        ? decodeTemporaryView(requestedChanges, baseDraft, fields)
+        ? decodeTemporaryView(addressChanges, baseDraft, fields)
         : null;
       if (restored && JSON.stringify(restored) !== JSON.stringify(baseDraft)) {
-        mirroredChanges.current = requestedChanges;
+        mirroredChanges.current = addressChanges;
         setDraftState({ key: draftKey, value: restored });
         return;
       }
     }
     mirroredChanges.current = temporaryChanges;
-    if (temporaryChanges !== requestedChanges)
+    if (temporaryChanges !== addressChanges)
       replaceTemporaryChanges(temporaryChanges);
   }, [
     baseDraft,
