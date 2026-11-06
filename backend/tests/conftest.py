@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 from collections.abc import Generator
 from functools import cache
 from pathlib import Path
@@ -258,10 +259,25 @@ def _guard_direct_database_tests(request):
         _guard_for_test(request, os.getenv("MIGRATION_DATABASE_URL", ""))
 
 
+def _sample_dataset_key(item) -> tuple[str, str] | None:
+    """The dataset that a realism, consistency or core test reads, for ordering only."""
+    params = getattr(getattr(item, "callspec", None), "params", {})
+    pack = params.get("pack") if item.path.name == "test_sample_realism_report.py" else None
+    if item.path.parent.name == "packs":
+        match = re.fullmatch(r"test_(\w+)_(?:consistency|core)\.py", item.path.name)
+        pack = match[1] if match else None
+    return (params.get("profile", "standard"), pack) if pack else None
+
+
 def pytest_collection_modifyitems(session, config, items):
     if os.getenv("SLATEOPS_REQUIRE_DATABASE_TESTS") == "true":
         _guard_integration_database(os.getenv("TEST_DATABASE_URL", ""))
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
+    # Each test process caches a sample dataset, so tests of one dataset run next to each
+    # other. This changes the order only: a wrong key costs a build, never a result.
+    keys = {id(item): _sample_dataset_key(item) for item in items}
+    keyed = sorted((item for item in items if keys[id(item)]), key=lambda item: keys[id(item)])
+    items[:] = keyed + [item for item in items if not keys[id(item)]]
 
 
 def pytest_sessionfinish(session, exitstatus):
