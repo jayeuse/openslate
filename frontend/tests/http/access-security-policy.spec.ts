@@ -208,6 +208,40 @@ for (const storage of ["available", "blocked"] as const)
     await expect(address).toBeFocused();
   });
 
+test("a refused address list focuses the address field when a frame runs before the page updates", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = policyDialog(page);
+  await policy.getByRole("button", { name: "Advanced", exact: true }).click();
+  const address = policy.getByLabel("Address or range", { exact: true });
+  await address.fill("192.0.2.0/24");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
+  const advanced = policy.getByRole("button", { name: /^Advanced/ });
+  await advanced.click();
+  await expect(address).toBeHidden();
+  state.policyWriteFailure = { status: 409, code: "ip_lockout" };
+  // Frame callbacks run at once, ahead of the update that ends the save, as
+  // they do when a frame boundary falls there. The count bounds a frame loop.
+  await page.evaluate(() => {
+    const frame = window.requestAnimationFrame.bind(window);
+    let early = 20;
+    window.requestAnimationFrame = (callback) => {
+      early -= 1;
+      if (early < 0) return frame(callback);
+      queueMicrotask(() => callback(performance.now()));
+      return 0;
+    };
+  });
+  await policy.getByRole("button", { name: "Save settings" }).click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await expect(address).toBeFocused();
+});
+
 test("the address list says an empty list allows every address and names the limit only when the list is full", async ({
   page,
 }) => {
