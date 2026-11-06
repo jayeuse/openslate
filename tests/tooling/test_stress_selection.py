@@ -79,10 +79,10 @@ class StressSelectionTests(unittest.TestCase):
                 json.dumps({"files": {"http/small.spec.ts": 1000, "http/big.spec.ts": 300000}})
             )
 
-            def selected(today: date) -> list[str]:
+            def selected(today: date, specs: list[str]) -> list[str]:
                 output = io.StringIO()
                 with (
-                    mock.patch.object(stress_selection, "changed_specs", return_value=[small, big]),
+                    mock.patch.object(stress_selection, "changed_specs", return_value=specs),
                     contextlib.redirect_stdout(output),
                 ):
                     stress_selection.main(
@@ -97,8 +97,11 @@ class StressSelectionTests(unittest.TestCase):
                     )
                 return output.getvalue().splitlines()
 
-            self.assertEqual(selected(SUNDAY), ["tests/http/big.spec.ts"])
-            self.assertEqual(selected(SATURDAY), ["tests/http/small.spec.ts"])
+            # The order matters: a large spec listed first must not use up the other nights.
+            for specs in ([small, big], [big, small]):
+                with self.subTest(specs=specs):
+                    self.assertEqual(selected(SUNDAY, specs), ["tests/http/big.spec.ts"])
+                    self.assertEqual(selected(SATURDAY, specs), ["tests/http/small.spec.ts"])
 
     def test_changed_specs_are_newest_first_existing_and_never_the_measurement(self):
         with tempfile.TemporaryDirectory() as directory:

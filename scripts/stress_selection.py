@@ -105,7 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     specs = changed_specs(args.since_days)
     budget = budget_ms(args.budget_minutes)
     large = large_spec_turn(specs, weights, budget, args.today)
-    for path in [large] if large else select(specs, weights, budget):
+    # On other nights a large spec stays out; if it came first, it would use up the budget.
+    fitting = [path for path in specs if spec_weight(path, weights) <= budget]
+    for path in [large] if large else select(fitting, weights, budget):
         print(path.removeprefix("frontend/"))
     return 0
 
