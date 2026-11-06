@@ -3619,6 +3619,11 @@ test("a draft the address no longer holds never follows the default to another v
   // Next updates useSearchParams after a replaceState, in a transition. The
   // native call holds that update back, so the page's search params still
   // show "compressor" when the view changes, as they can on a loaded machine.
+  expect(
+    await page.evaluate(
+      () => window.history.replaceState !== History.prototype.replaceState,
+    ),
+  ).toBe(true);
   await page.evaluate(() => {
     window.history.replaceState = History.prototype.replaceState.bind(
       window.history,
@@ -3631,6 +3636,77 @@ test("a draft the address no longer holds never follows the default to another v
   await api.triggerInvalidation("saved_views");
   await expect(selected).toHaveValue(secondViewId);
   await expect(search).toHaveValue("panel");
+});
+
+test("Back and Forward give each view its own draft, also when a read lands during the traversal", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, { additionalViews: [otherView] });
+  // Registered before Next's listener, so it can hold a traversal back.
+  await page.addInitScript(() => {
+    window.addEventListener("popstate", (event) => {
+      if (document.documentElement.dataset.holdTraversal)
+        event.stopImmediatePropagation();
+    });
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+  await search.fill("alpha");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const firstEntry = page.url();
+  await selected.selectOption(secondViewId);
+  await page.getByRole("button", { name: "Discard and continue" }).click();
+  await expect(page).toHaveURL(new RegExp(`[?&]view=${secondViewId}`));
+  await expect(search).toHaveValue("panel");
+  await search.fill("beta");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  const secondEntry = page.url();
+
+  await page.goBack();
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
+  await page.goForward();
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("beta");
+  await expect(page).toHaveURL(secondEntry);
+
+  // The address moves at popstate, but the page keeps the old view until the
+  // traversal commits. Holding Next's popstate listener keeps that window open.
+  await page.evaluate(() => {
+    document.documentElement.dataset.holdTraversal = "true";
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(firstEntry);
+  await expect(search).toHaveValue("beta");
+  // A read that changes only the open view's record reruns the address mirror.
+  otherView.updated_at = "2026-10-02T09:00:00Z";
+  const reread = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/views" &&
+      response.request().method() === "GET",
+  );
+  await api.triggerInvalidation("saved_views");
+  await reread;
+  await settleReact(page);
+  await expect(page).toHaveURL(firstEntry);
+  await page.evaluate(() => {
+    delete document.documentElement.dataset.holdTraversal;
+    window.dispatchEvent(
+      new PopStateEvent("popstate", { state: window.history.state }),
+    );
+  });
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("alpha");
+  await expect(page).toHaveURL(firstEntry);
 });
 
 for (const localAction of ["revert", "save"] as const) {

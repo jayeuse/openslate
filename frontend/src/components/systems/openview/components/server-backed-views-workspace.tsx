@@ -729,7 +729,7 @@ export default function ServerBackedViewsWorkspace({
       }
     }
     mirroredChanges.current = temporaryChanges;
-    if (temporaryChanges !== addressChanges)
+    if (temporaryChanges !== requestedChanges)
       replaceTemporaryChanges(temporaryChanges);
   }, [
     baseDraft,
@@ -738,6 +738,7 @@ export default function ServerBackedViewsWorkspace({
     draftState,
     fields,
     navigationPending,
+    // Back and Forward on the same View rerun the mirror through this value.
     requestedChanges,
     temporaryChanges,
   ]);
