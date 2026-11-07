@@ -353,6 +353,7 @@ def create_report_run(
         headings=snapshot.headings,
         row_count=len(snapshot.rows),
         csv_bytes=snapshot.csv_bytes,
+        csv_sha256=snapshot.csv_sha256,
     )
     db.add(run)
     try:

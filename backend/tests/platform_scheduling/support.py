@@ -4,6 +4,7 @@ Every builder only adds and flushes rows in the caller's session; the caller own
 transaction. Tests in other areas import these builders from here, not from test modules.
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
@@ -105,6 +106,7 @@ def report_run(db: Session, report: Report, work: ScheduledWork) -> ReportRun:
         headings=[],
         row_count=0,
         csv_bytes=b"",
+        csv_sha256=hashlib.sha256(b"").hexdigest(),
     )
     db.add(run)
     db.flush()
@@ -275,6 +277,7 @@ def report_notification(
         headings=[],
         row_count=0,
         csv_bytes=b"SECRET OUTPUT",
+        csv_sha256=hashlib.sha256(b"SECRET OUTPUT").hexdigest(),
     )
     db.add(run)
     db.flush()

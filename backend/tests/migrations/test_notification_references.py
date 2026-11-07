@@ -35,8 +35,9 @@ def _sources(db):
         "INSERT INTO reports(id,org_id,module_id,name,recipe) "
         "VALUES(:report,:org,:module,'Report','{}'::jsonb)",
         "INSERT INTO report_runs(id,org_id,report_id,module_id,idempotency_key,recipe_revision,"
-        "recipe,headings,row_count,csv_bytes) "
-        "VALUES(:run,:org,:report,:module,:report_work,1,'{}'::jsonb,'[]'::jsonb,0,:csv)",
+        "recipe,headings,row_count,csv_bytes,csv_sha256) "
+        "VALUES(:run,:org,:report,:module,:report_work,1,'{}'::jsonb,'[]'::jsonb,0,:csv,"
+        "encode(sha256(:csv),'hex'))",
         "INSERT INTO boards(id,org_id,scope,name) "
         "VALUES(:board,:org,'project','Notification migration')",
         "INSERT INTO board_posts(id,org_id,board_id,author_id,title,body,status,"

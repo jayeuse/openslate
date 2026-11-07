@@ -182,9 +182,9 @@ def _assert_runtime_write_and_owner_read(
             text(
                 "INSERT INTO public.report_runs "
                 "(id, org_id, report_id, module_id, idempotency_key, recipe_revision, "
-                "recipe, headings, row_count, csv_bytes) "
+                "recipe, headings, row_count, csv_bytes, csv_sha256) "
                 "VALUES (:id, :org, :report, :module, :key, 1, '{}'::jsonb, "
-                "'[\"Name\"]'::jsonb, 1, :csv)"
+                "'[\"Name\"]'::jsonb, 1, :csv, encode(sha256(:csv), 'hex'))"
             ),
             {
                 "id": ids["run"],

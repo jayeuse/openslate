@@ -1,6 +1,7 @@
 """Private immutable Report runs on runner-owned, committed PostgreSQL data."""
 
 import csv
+import hashlib
 import importlib
 import io
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from uuid6 import uuid7
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import GroupMember
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
@@ -92,6 +94,37 @@ def test_manual_report_run_freezes_grouped_csv_and_replays_key(
         )
         == 3
     )
+
+
+def test_run_audit_holds_the_hash_of_the_downloaded_csv_and_no_output_rows_dbi13(
+    report_run_fixture: _RunFixture,
+) -> None:
+    # DBI-13 (D9): one unredacted hash on the audited run proves the output, so a saved copy
+    # of the CSV can be checked after the run is gone. Its output rows write no audit.
+    fixture = report_run_fixture
+    path = f"/api/reports/{fixture.report_id}/runs"
+    created = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert created.status_code == 201, created.text
+    run_id = UUID(created.json()["id"])
+    downloaded = fixture.client.get(f"{path}/{run_id}/csv", headers=fixture.headers())
+    assert downloaded.status_code == 200
+
+    with Session(fixture.owner_engine) as reader:
+        audited = reader.scalars(
+            select(AuditLog).where(
+                AuditLog.entity_type == "report_runs", AuditLog.entity_id == run_id
+            )
+        ).one()
+        rows = reader.scalars(select(ReportRunRow.id).where(ReportRunRow.run_id == run_id)).all()
+        row_audit = reader.scalars(
+            select(AuditLog.id).where(
+                AuditLog.entity_type == "report_run_rows", AuditLog.entity_id.in_(rows)
+            )
+        ).all()
+    assert audited.after["csv_sha256"] == hashlib.sha256(downloaded.content).hexdigest()
+    assert audited.after["row_count"] == 3
+    assert len(rows) == 3
+    assert row_audit == []
 
 
 def test_report_capture_resolves_current_select_label_and_freezes_each_run(

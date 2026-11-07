@@ -84,13 +84,16 @@ class ReportRun(BaseModel):
     headings: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     csv_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # Not redacted: the audit row keeps it, and it proves a saved CSV after the run is trimmed.
+    csv_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class ReportRunRow(BaseModel):
     """One ordered, output-ready row with a restrictive source-record reference."""
 
     __tablename__ = "report_run_rows"
-    __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"cells"})
+    # The run's audit row holds the row count and the CSV hash (decision D9).
+    __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_report_run_rows_org_id_id"),
         ForeignKeyConstraint(
