@@ -12,16 +12,17 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, create_engine, delete, func, select, update
+from sqlalchemy import Engine, create_engine, delete, event, func, select, text, update
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.events.publisher import MAX_INVALIDATIONS_PER_COMMIT
 from app.systems.platform.scheduling import retention
 from app.systems.platform.scheduling import worker as worker_module
@@ -40,7 +41,7 @@ from app.systems.sandbox.record_triggers.models import (
 from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.test_runs.models import SandboxTestRun
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.platform_scheduling.retention_support import NOW, sweep, uuid7_at
 from tests.postgres_runtime import assert_runner_database_url
 from tests.rbac.support import organization
@@ -55,6 +56,9 @@ pytestmark = pytest.mark.integration
 
 DAY = timedelta(days=1)
 SECOND = timedelta(seconds=1)
+YOUNG_NOTIFICATIONS = 5_000
+# The bound statements read 2 pages; without the bound they read about 93, all of these rows.
+NOTIFICATION_PAGE_CEILING = 10
 
 
 @dataclass(frozen=True)
@@ -183,11 +187,16 @@ def test_an_old_root_stays_while_a_child_references_it_dbi4(
 
 
 def _notification(
-    world: _World, age: timedelta, *, read_age: timedelta | None = None, deleted: bool = False
+    world: _World,
+    age: timedelta,
+    *,
+    read_age: timedelta | None = None,
+    deleted: bool = False,
+    id_age: timedelta | None = None,
 ) -> UUID:
     created = NOW - age
     notification = InAppNotification(
-        id=uuid7_at(created),
+        id=uuid7_at(NOW - id_age if id_age is not None else created),
         created_at=created,
         org_id=world.module.org_id,
         kind="record-assigned",
@@ -215,6 +224,9 @@ def test_notifications_age_from_creation_by_read_state_and_each_delete_is_audite
     kept = [
         _notification(world, 29 * DAY, read_age=DAY),
         _notification(world, 89 * DAY),
+        # The id bound only prunes: an old id does not make a young row old.
+        _notification(world, 29 * DAY, read_age=DAY, id_age=400 * DAY),
+        _notification(world, 89 * DAY, id_age=400 * DAY),
     ]
     backup_created = NOW - 91 * DAY
     backup = InAppNotification(
@@ -396,6 +408,84 @@ def _lane_session(runtime: Engine, org_id: UUID) -> AuditSession:
     # A hang guard, not a time limit: a blocked lane fails here instead of hanging the test.
     db.connection().exec_driver_sql("SET LOCAL lock_timeout = '10s'")
     return db
+
+
+def _pages_read(plan: dict[str, Any]) -> int:
+    # Buffers count each page visit, warm or cold, so the number does not depend on the cache.
+    return int(plan["Shared Hit Blocks"]) + int(plan["Shared Read Blocks"])
+
+
+def test_a_wake_with_no_old_notification_reads_almost_nothing(
+    engines: tuple[Engine, Engine],
+) -> None:
+    # On Harbor Large the age filter alone read all 1,693 pages of the organization's rows on
+    # each wake; the id bound reads 2. Row-level security applies only to the runtime role, so
+    # the statements are replayed there.
+    owner, runtime = engines
+    with Session(owner) as setup:
+        org = create_organization(setup)
+        recipient, _membership = create_member(
+            setup, org, email=f"retention-{uuid7()}@example.test", username=f"retention-{uuid7()}"
+        )
+        setup.commit()
+        org_id, recipient_id = org.id, recipient.id
+    with owner.begin() as connection:
+        connection.execute(
+            InAppNotification.__table__.insert(),
+            [
+                {
+                    "id": uuid7(),
+                    "org_id": org_id,
+                    "kind": "record-assigned",
+                    "subject_type": "record",
+                    "subject_id": uuid7(),
+                    "recipient_id": recipient_id,
+                }
+                for _row in range(YOUNG_NOTIFICATIONS)
+            ],
+        )
+        connection.execute(text("ANALYZE in_app_notifications"))
+        table_pages = connection.scalar(
+            text(
+                "SELECT pg_relation_size('in_app_notifications') "
+                "/ current_setting('block_size')::bigint"
+            )
+        )
+    assert table_pages > 5 * NOTIFICATION_PAGE_CEILING
+
+    captured: list[tuple[str, Any]] = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, _many) -> None:
+        if "FROM in_app_notifications" in statement:
+            captured.append((statement, parameters))
+
+    try:
+        with AuditSession(bind=runtime) as db:
+            scope_session(db, org_id)
+            event.listen(runtime, "before_cursor_execute", capture)
+            try:
+                assert retention.trim_notifications(db, utc_now()) == 0
+            finally:
+                event.remove(runtime, "before_cursor_execute", capture)
+            assert len(captured) == 2, captured
+            cursor = db.connection().connection.cursor()
+            cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+            pages = []
+            for statement, parameters in captured:
+                cursor.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement, parameters)
+                pages.append(_pages_read(cursor.fetchone()[0][0]["Plan"]))
+            db.rollback()
+        assert max(pages) <= NOTIFICATION_PAGE_CEILING, pages
+    finally:
+        with owner.begin() as connection:
+            connection.execute(
+                delete(InAppNotification).where(InAppNotification.org_id == org_id)
+            )
+            connection.execute(delete(Membership).where(Membership.user_id == recipient_id))
+            connection.execute(delete(User).where(User.id == recipient_id))
+            connection.execute(
+                delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id)
+            )
 
 
 def test_an_open_sweep_transaction_does_not_block_a_claim_and_its_run(

@@ -55,7 +55,7 @@ The [retention sweep](../../backend/app/systems/platform/scheduling/retention.py
 |---|---|
 | `record_trigger_events` and their `record_trigger_runs` | 30 days after the last attempt if succeeded, 90 days if failed; pending and running events stay, and a root event stays while a child event references it |
 | `in_app_notifications` | 30 days from creation if read, 90 days if unread |
-| `report_runs`, with their rows, notifications, eligible users and work row | The latest 30 of each report |
+| `report_runs`, with their rows, notifications, eligible users and work row | The latest 30 of each report, and every run younger than 30 days |
 | `sandbox_test_runs` | The latest 20 live runs of each document; cleared runs do not stay |
 
 Each batch is one commit of individual ORM deletes with at most 50 audited rows. Audited rows keep a delete entry in the audit history.

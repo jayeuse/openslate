@@ -35,6 +35,7 @@ from app.systems.sandbox.test_runs.models import SandboxTestRun
 
 READ_NOTIFICATION_AGE = timedelta(days=30)
 UNREAD_NOTIFICATION_AGE = timedelta(days=90)
+REPORT_RUN_AGE = timedelta(days=30)
 REPORT_RUNS_KEPT = 30
 TEST_RUNS_KEPT = 20
 AUDITED_BATCH = 50
@@ -157,9 +158,10 @@ def trim_notifications(db: Session, now: datetime) -> int:
     return 0
 
 
-def trim_report_run(db: Session, _now: datetime) -> int:
-    """Delete one run past a report's latest 30, under the report's lock.
+def trim_report_run(db: Session, now: datetime) -> int:
+    """Delete one run past a report's latest 30 and older than 30 days, under the report's lock.
 
+    Any module reader can post a run, so the age keeps a burst from removing recent history.
     A run can have more recipients than one batch holds, so its notifications go first in
     their own commits; the run then goes in one transaction.
     """
@@ -168,9 +170,16 @@ def trim_report_run(db: Session, _now: datetime) -> int:
         partition_by=ReportRun.report_id,
         order_by=(ReportRun.created_at.desc(), ReportRun.id.desc()),
     )
-    ranked = select(ReportRun.id, ReportRun.report_id, position.label("position")).subquery()
+    ranked = select(
+        ReportRun.id, ReportRun.report_id, ReportRun.created_at, position.label("position")
+    ).subquery()
     excess = db.execute(
-        select(ranked.c.id, ranked.c.report_id).where(ranked.c.position > REPORT_RUNS_KEPT).limit(1)
+        select(ranked.c.id, ranked.c.report_id)
+        .where(
+            ranked.c.position > REPORT_RUNS_KEPT,
+            ranked.c.created_at < now - REPORT_RUN_AGE,
+        )
+        .limit(1)
     ).first()
     if excess is None:
         return 0
@@ -241,7 +250,11 @@ _STAGES: tuple[Callable[[Session, datetime], int], ...] = (
 
 
 def _clear_to_sweep(db: Session, now: datetime) -> bool:
-    """Each API process runs this thread; one of them sweeps an organization at a time."""
+    """Each API process runs this thread; only one of them runs a batch of an organization.
+
+    The lock lasts for one batch, so processes can take turns inside a wake. A process that
+    misses the lock ends its wake for this organization.
+    """
 
     name = f"{_LOCK_NAME}:{session_organization(db)}"
     if not db.scalar(select(func.pg_try_advisory_xact_lock(func.hashtextextended(name, 0)))):

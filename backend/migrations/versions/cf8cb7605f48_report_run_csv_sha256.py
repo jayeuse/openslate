@@ -1,8 +1,11 @@
 """report run csv sha256
 
 The audited run keeps one hash of its CSV (decision D9), so a saved copy can be proved after
-the run is trimmed. The heap is small and `csv_bytes` stays in TOAST, so the backfill and the
-`SET NOT NULL` scan run in one step, inside the migration's 5 s lock limit.
+the run is trimmed. The column, the backfill and `SET NOT NULL` run in one transaction, which
+holds ACCESS EXCLUSIVE on `report_runs` until it commits. The backfill reads every stored CSV,
+and the 5 s `lock_timeout` limits only the wait for that lock, not the hold. Every read and
+write of report runs waits for the whole backfill, so this revision belongs in the upgrade
+outage.
 
 Revision ID: cf8cb7605f48
 Revises: 65bf3d1eb512
