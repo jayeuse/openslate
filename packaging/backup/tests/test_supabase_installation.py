@@ -251,6 +251,29 @@ def test_backup_verifies_the_snapshot_before_publishing_its_marker(
     )
 
 
+@pytest.mark.parametrize("runner_heads", [True, False], ids=["runner", "manual"])
+def test_the_runner_audit_seal_heads_go_into_the_bundle_as_a_listed_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_heads: bool
+) -> None:
+    config = _config(tmp_path)
+    heads = b'{"heads":[{"org_id":null,"hour_start":"2026-10-03T09:00:00+00:00"}]}'
+    if runner_heads:
+        (tmp_path / "audit-seal-heads.json").write_bytes(heads)
+        (tmp_path / "audit-seal-heads.json").chmod(0o600)
+    commands = BackupCommands(config)
+    _mock_volume_exports(monkeypatch)
+
+    run_backup(config, command_runner=commands)
+
+    listed = json.loads(commands.snapshot_manifest or b"{}")["files"]
+    if runner_heads:
+        assert commands.archive_files["audit/seal-heads.json"] == heads
+        assert listed["audit/seal-heads.json"]["bytes"] == len(heads)
+    else:
+        assert not [name for name in commands.archive_files if name.startswith("audit/")]
+        assert not [name for name in listed if name.startswith("audit/")]
+
+
 @pytest.mark.parametrize(
     ("failure", "message"),
     [

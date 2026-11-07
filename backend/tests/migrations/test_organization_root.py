@@ -19,7 +19,7 @@ COMMS_TABLES = frozenset(
 # S04 proves schema ownership and paired keys; test_organization_row_security proves RLS.
 ORGANIZATION_TABLES = (
     frozenset(
-        "audit_logs board_attachments board_event_reminders board_events board_groups "
+        "audit_logs audit_seals board_attachments board_event_reminders board_events board_groups "
         "board_post_revision_attachments board_post_revision_record_links board_post_revisions "
         "board_posts board_record_links boards charts dashboard_widgets dashboards "
         "departments fields files group_access group_members groups in_app_notifications "
@@ -56,11 +56,17 @@ ORGANIZATION_TABLES = (
     }
 )
 MIXED_TABLES = frozenset(
-    {"audit_logs", "files", "security_events", "in_app_notifications", "server_errors"}
+    {
+        "audit_logs", "audit_seals", "files", "security_events", "in_app_notifications",
+        "server_errors",
+    }
 )
 # Keyed by something other than ``id``, and no other table refers to them by organization.
 # ``audit_logs`` is partitioned: a unique key must hold ``created_at`` (decision D4).
-WITHOUT_ID_KEY = frozenset({"audit_logs", "report_run_eligible_users", "server_errors"})
+# Nothing refers to an ``audit_seals`` row; its key is the chain and the hour (K38).
+WITHOUT_ID_KEY = frozenset(
+    {"audit_logs", "audit_seals", "report_run_eligible_users", "server_errors"}
+)
 
 
 def test_root_schema_has_scoped_keys_without_organization_seeds(integration_owner_db):

@@ -10,6 +10,7 @@ EXPECTED_DATABASE_USER = "slateops_owner"
 
 APPLICATION_TABLES = (
     "audit_logs",
+    "audit_seals",
     "backup_export_operations",
     "backup_policies",
     "backup_runs",
@@ -210,6 +211,7 @@ DELETE_ORDER = (
     "report_runs",
     "reports",
     "relationship_edges",
+    "audit_seals",
     "audit_logs",
     "security_events",
     "server_errors",
@@ -266,7 +268,7 @@ SELECT count(*) FILTER (WHERE profile.id <> %s),
 FROM public.users AS profile
 """
 _LOCK_APPLICATION_STATEMENT = """
-LOCK TABLE public.alembic_version, public.audit_logs,
+LOCK TABLE public.alembic_version, public.audit_logs, public.audit_seals,
  public.backup_export_operations, public.backup_policies, public.backup_runs,
  public.update_statuses,
  public.board_attachments, public.board_calendar_sources,

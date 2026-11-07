@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,6 +17,7 @@ from tests.operations.backups.backup_runner_fixtures import (
     execute,
     private_file,
     runner_config,
+    successful_archive,
 )
 
 
@@ -244,3 +246,86 @@ def test_restart_preserves_admitted_ids_and_existing_overlay_labels(tmp_path: Pa
         item["Config"]["Labels"]["slateops.test.run"] == "owned-extra-overlay"
         for item in commands.containers
     )
+
+
+HEADS = [
+    {
+        "org_id": "01a1b5c1-0000-7000-8000-000000000001",
+        "hour_start": "2026-10-03T09:00:00+00:00",
+        "chain_hash": "ab" * 32,
+        "row_count": 4,
+    }
+]
+
+
+def test_audit_seal_heads_are_saved_beside_the_claim_before_the_database_stops(
+    tmp_path: Path,
+) -> None:
+    config, state = runner_config(tmp_path)
+    commands = SyntheticCommands(config)
+    commands.heads = HEADS
+    seen: list[Any] = []
+
+    def archive(host: Host, journal: dict[str, Any]) -> None:
+        heads = host.run_directory(journal) / "audit-seal-heads.json"
+        seen.append((json.loads(heads.read_text()), heads.stat().st_mode & 0o777))
+        successful_archive(host, journal)
+
+    result = execute(config, state, commands, archive_runner=archive)
+
+    assert result["state"] == "succeeded"
+    assert seen == [({"heads": HEADS}, 0o600)]
+    order = [
+        "heads" if b"audit-seal-heads" in (kwargs.get("input") or b"") else "stop"
+        for args, kwargs in commands.calls
+        if b"audit-seal-heads" in (kwargs.get("input") or b"") or "stop" in args
+    ]
+    assert order[:2] == ["heads", "stop"]
+    assert [request["op"] for request in commands.seal_operations] == ["audit-seal-heads"]
+
+
+@pytest.mark.parametrize("failure", ["bridge", "write"])
+def test_a_backup_goes_on_without_heads_when_they_cannot_be_read_or_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from operations.backups import host as host_module
+
+    config, state = runner_config(tmp_path)
+    commands = SyntheticCommands(config)
+    if failure == "bridge":
+        commands.heads = None
+    else:
+        commands.heads = HEADS
+        write = host_module.private_json
+
+        def full_disk(path: Path, payload: Any) -> None:
+            if path.name == "audit-seal-heads.json":
+                raise OSError(28, "No space left on device")
+            write(path, payload)
+
+        monkeypatch.setattr(host_module, "private_json", full_disk)
+    logger = Mock()
+    monkeypatch.setattr(host_module, "log_event", logger)
+    present: list[bool] = []
+
+    def archive(host: Host, journal: dict[str, Any]) -> None:
+        present.append((host.run_directory(journal) / "audit-seal-heads.json").exists())
+        successful_archive(host, journal)
+
+    result = execute(config, state, commands, archive_runner=archive)
+
+    assert result["state"] == "succeeded"
+    assert present == [False]
+    assert [call.kwargs["reason_code"] for call in logger.call_args_list] == [
+        "audit_heads_unavailable"
+    ]
+
+
+def test_an_idle_tick_reads_no_heads(tmp_path: Path) -> None:
+    config, state = runner_config(tmp_path)
+    commands = SyntheticCommands(config)
+    commands.queue = False
+
+    execute(config, state, commands)
+
+    assert commands.seal_operations == []

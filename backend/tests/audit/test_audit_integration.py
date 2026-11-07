@@ -285,12 +285,14 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
     integration_db.flush()
+    removed_id = removed_actor.id
     integration_db.delete(membership_of(integration_db, removed_actor.id))
     integration_db.flush()
     integration_db.delete(removed_actor)
     integration_db.flush()
     integration_db.refresh(rows[-2], attribute_names=["performed_by"])
-    assert rows[-2].performed_by is None
+    # D21: removing the person leaves the audit row as written, with an id that names no one.
+    assert rows[-2].performed_by == removed_id
 
     statements, capture_statement = _statement_collector()
 

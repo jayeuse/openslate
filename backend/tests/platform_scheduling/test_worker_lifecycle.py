@@ -14,6 +14,7 @@ from uuid6 import uuid7
 
 import app.main as main
 from app.core.database.session import AuditSession
+from app.systems.manage.audit.seals import SealPass
 from app.systems.openview.reports.models import ReportRun
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 
@@ -259,6 +260,7 @@ def test_retention_wakes_every_five_minutes_and_reports_a_failure_once(monkeypat
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "sweep_organization", fail_sweep)
     monkeypatch.setattr(module, "ensure_audit_partitions", Mock(return_value=0))
+    monkeypatch.setattr(module, "seal_audit", Mock(return_value=SealPass(backlog=False)))
     logger = Mock()
     monkeypatch.setattr(module, "log_event", logger)
 
@@ -315,6 +317,7 @@ def _partition_worker(monkeypatch, *, until: float, outcomes):
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "sweep_organization", Mock())
     monkeypatch.setattr(module, "ensure_audit_partitions", ensure)
+    monkeypatch.setattr(module, "seal_audit", Mock(return_value=SealPass(backlog=False)))
     monkeypatch.setattr(module, "worker_organization", bound_organization)
     logger = Mock()
     monkeypatch.setattr(module, "log_event", logger)
@@ -358,6 +361,54 @@ def test_a_skipped_month_logs_once_until_it_clears(monkeypatch) -> None:
         (call.kwargs["reason_code"], call.kwargs["count"]) for call in logger.call_args_list
     ]
     assert reported == [("audit_partition_skipped", 2), ("audit_partition_skipped", 1)]
+
+
+def _seal_wakes(monkeypatch, *, until: float, outcomes) -> tuple[list[float], Mock]:
+    """Run the worker loop; each seal wake takes the next item of ``outcomes``."""
+
+    from app.systems.platform.scheduling import worker as module
+
+    worker, _wakes, logger, _reports = _partition_worker(
+        monkeypatch, until=until, outcomes=[0] * 100
+    )
+    clock = module.time
+    wakes: list[float] = []
+    remaining = iter(outcomes)
+
+    def seal(_engine, *, now):
+        assert now.tzinfo is not None
+        wakes.append(clock.monotonic())
+        outcome = next(remaining)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(module, "seal_audit", seal)
+    worker._run()
+    return wakes, logger
+
+
+def test_audit_seals_run_at_start_and_hourly_and_every_minute_while_behind(monkeypatch) -> None:
+    clean, behind = SealPass(backlog=False), SealPass(backlog=True)
+
+    wakes, logger = _seal_wakes(monkeypatch, until=7300, outcomes=[behind, behind, clean, clean])
+
+    assert wakes == [0, 60, 120, 3720]
+    assert logger.call_args_list == []
+
+
+def test_a_seal_failure_logs_once_for_a_streak(monkeypatch) -> None:
+    fault = RuntimeError("temporary seal fault")
+    failed = SealPass(backlog=False, failed=uuid7(), cause="database", failures=2)
+
+    wakes, logger = _seal_wakes(
+        monkeypatch, until=14400, outcomes=[fault, failed, SealPass(backlog=False), failed, fault]
+    )
+
+    assert wakes == [0, 3600, 7200, 10800, 14400]
+    assert [
+        (call.kwargs["reason_code"], call.kwargs["count"]) for call in logger.call_args_list
+    ] == [("audit_seal_failed", 1), ("audit_seal_failed", 2)]
 
 
 def test_run_once_leaves_retention_to_its_own_timer(monkeypatch) -> None:

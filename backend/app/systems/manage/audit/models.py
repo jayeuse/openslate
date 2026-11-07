@@ -4,10 +4,13 @@ from typing import Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
+    LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -89,11 +92,9 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, default=utc_now
     )
-    performed_by: Mapped[UUID | None] = mapped_column(
-        PostgreSQLUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL", use_alter=True),
-        nullable=True,
-    )
+    # No foreign key (D21): removing a person must never rewrite a sealed audit row, so a
+    # removed person's id stays with no name, as `security_events.actor_id` does.
+    performed_by: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
     action: Mapped[AuditAction] = mapped_column(String(50), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
@@ -106,6 +107,42 @@ class AuditLog(Base):
     actor_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+
+
+class AuditSeal(Base):
+    """One hour of one chain: an organization's audit rows, or the installation's (NULL).
+
+    The runtime may only add a seal; `audit_seals` grants and policies are in the revision.
+    """
+
+    __tablename__ = "audit_seals"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id", "hour_start", name="uq_audit_seals_org_hour",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint("row_count >= 0", name="ck_audit_seals_row_count"),
+        CheckConstraint("octet_length(rows_hash) = 32", name="ck_audit_seals_rows_hash"),
+        CheckConstraint("octet_length(chain_hash) = 32", name="ck_audit_seals_chain_hash"),
+        # The chain hash holds whole seconds and the job keys hours by their start (F1).
+        CheckConstraint(
+            "(extract(epoch FROM hour_start) % 3600) = 0", name="ck_audit_seals_whole_hour"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
+    )
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    row_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    rows_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    chain_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    form: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    sealed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
 
 class SecurityEvent(Base):
     __tablename__ = "security_events"

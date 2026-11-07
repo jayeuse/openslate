@@ -43,9 +43,6 @@ FOREIGN_KEYS = {
     "fk_audit_logs_org_id_organizations": (
         "FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE RESTRICT"
     ),
-    "fk_audit_logs_performed_by_users": (
-        "FOREIGN KEY (performed_by) REFERENCES users(id) ON DELETE SET NULL"
-    ),
 }
 ORGANIZATION_ROWS = (
     "((org_id IS NULL) OR (org_id = ( SELECT "

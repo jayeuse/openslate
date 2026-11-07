@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
 from psycopg import Cursor, connect
+from sqlalchemy.pool import NullPool
 
+from app.systems.manage.audit.seals import seal_chain
 from operations.reset.models import ResetError
 from operations.reset.organization import (
     AuthAccount,
@@ -15,6 +18,8 @@ from operations.reset.organization import (
     read_user_references,
 )
 from operations.reset.organization_execution import apply_organization_removal
+from operations.verify_audit_seals import Report, check_chain
+from tests.conftest import guarded_create_engine
 from tests.reset_application_data.reset_integration_support import (
     SecondOrganization,
     delete_second_organization,
@@ -43,12 +48,13 @@ def _second_org_counts(cursor: Cursor, second: SecondOrganization) -> dict[str, 
 
 
 @pytest.mark.integration
-def test_user_references_name_the_audit_table_and_not_its_partitions(monkeypatch) -> None:
+def test_user_references_leave_out_the_audit_table_and_its_partitions(monkeypatch) -> None:
+    # D21: an audit row keeps a removed person's id, so audit rows never block a removal.
     database_target = guarded_reset_database(monkeypatch)
     with connect(database_target.url) as connection:
         references = read_user_references(connection)
-    assert references.referencing["audit_logs"] == ("performed_by",)
-    assert not [table for table in references.referencing if table.startswith("audit_logs_")]
+    assert "memberships" in references.referencing
+    assert not [table for table in references.referencing if table.startswith("audit_logs")]
 
 
 @pytest.mark.integration
@@ -81,6 +87,10 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
         cursor.execute(
             "DELETE FROM public.audit_logs WHERE id = ANY(%s)",
             ([pack_audit_id, installation_audit_id],),
+        )
+        cursor.execute(
+            "DELETE FROM public.audit_seals WHERE org_id IS NULL OR org_id = ANY(%s)",
+            ([org_id, partner_id],),
         )
         for table in ("departments", "memberships"):
             cursor.execute(
@@ -157,12 +167,25 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
             )
             cursor.execute(
                 "INSERT INTO public.audit_logs (id, org_id, created_at, action, entity_type, "
-                "entity_id) VALUES (%s, %s, now(), 'create', 'departments', %s), "
-                "(%s, NULL, now(), 'update', 'users', %s)",
-                (pack_audit_id, org_id, uuid4(), installation_audit_id, solo_id),
+                "entity_id, performed_by) VALUES (%s, %s, now(), 'create', 'departments', %s, "
+                "NULL), (%s, NULL, now(), 'update', 'users', %s, %s)",
+                (pack_audit_id, org_id, uuid4(), installation_audit_id, solo_id, solo_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.audit_seals (id, org_id, hour_start, row_count, rows_hash, "
+                "chain_hash, form, sealed_at) VALUES (%s, %s, date_trunc('hour', now()), 1, "
+                "sha256(''::bytea), sha256(''::bytea), 1, now())",
+                (uuid4(), org_id),
             )
             second_before = _second_org_counts(cursor, second)
+            cursor.execute("SELECT now() + interval '3 hours'")
+            sealed_at = cursor.fetchone()[0]
         database.commit()
+        # The installation chain, sealed up to this hour, before the removal.
+        runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], poolclass=NullPool)
+        request.addfinalizer(runtime.dispose)
+        while seal_chain(runtime, None, sealed_at):
+            pass
 
         storage_keys = {
             f"slateops-ready/org/{org_id}/logo",
@@ -220,7 +243,8 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
             confirmed.target_counts["departments"],
             confirmed.target_counts["files"],
             confirmed.target_counts["audit_logs"],
-        ) == (2, 6, 2, 1, 1)
+            confirmed.target_counts["audit_seals"],
+        ) == (2, 6, 2, 1, 1, 1)
         assert confirmed.retained["memberships"][str(second.org_id)] == 4
         assert confirmed.storage_object_keys == (
             f"slateops-avatars/user/{solo_id}/avatar",
@@ -323,7 +347,18 @@ def test_removal_deletes_only_the_pack_organizations_and_their_own_accounts(
             )
             assert cursor.fetchone() == (0,)
             cursor.execute(
-                "SELECT id FROM public.audit_logs WHERE id = ANY(%s)",
+                "SELECT id, performed_by FROM public.audit_logs WHERE id = ANY(%s)",
                 ([pack_audit_id, installation_audit_id],),
             )
-            assert cursor.fetchall() == [(installation_audit_id,)]
+            # D21: the installation row keeps the removed person's id, unchanged.
+            assert cursor.fetchall() == [(installation_audit_id, solo_id)]
+            cursor.execute(
+                "SELECT count(*) FROM public.audit_seals WHERE org_id = ANY(%s)",
+                ([org_id, partner_id],),
+            )
+            assert cursor.fetchone() == (0,)
+        report = Report()
+        with runtime.connect() as connection:
+            check_chain(connection, None, sealed_at, report)
+        assert report.sealed_hours > 0
+        assert report.findings == []

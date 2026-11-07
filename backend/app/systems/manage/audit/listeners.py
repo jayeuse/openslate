@@ -1,18 +1,21 @@
 import logging
 from collections.abc import Collection
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session, SessionTransaction
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.core.observability import log_event
 from app.systems.boards.models import Board
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.manage.audit.department_ancestry import DepartmentAncestry
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
+from app.systems.manage.audit.seals import SEAL_DELAY
 from app.systems.manage.audit.snapshots import (
     AUDIT_METADATA_FIELDS,
     build_update_snapshot,
@@ -29,6 +32,9 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 PENDING_CHANGES_KEY = "audit_pending_changes"
 REALTIME_INVALIDATION_KEY = "realtime_invalidation_pending"
 SAVEPOINT_INVALIDATION_KEY = "realtime_invalidation_savepoints"
+# When this transaction added its first audit row; never later than that row's created_at.
+AUDIT_FIRST_AT_KEY = "audit_first_at"
+COMMIT_LAG_LOGGED = timedelta(seconds=10)
 
 
 @dataclass
@@ -188,6 +194,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
     if not pending:
         return
 
+    session.info.setdefault(AUDIT_FIRST_AT_KEY, utc_now())
     context = get_audit_context(session)
     record_redacted_fields = _record_redacted_fields(session, pending)
     edge_modules = _edge_modules(session, pending)
@@ -291,6 +298,23 @@ def clear_pending_changes(session: AuditSession) -> None:
         return
     session.info.pop(SAVEPOINT_INVALIDATION_KEY, None)
     session.info.pop(REALTIME_INVALIDATION_KEY, None)
+    session.info.pop(AUDIT_FIRST_AT_KEY, None)
+
+
+def _log_commit_lag(session: AuditSession) -> None:
+    """A row committed later than the seal delay after its `created_at` can miss its seal."""
+
+    first = session.info.pop(AUDIT_FIRST_AT_KEY, None)
+    if first is None:
+        return
+    lag = utc_now() - first
+    if lag < COMMIT_LAG_LOGGED:
+        return
+    age_ms = int(lag.total_seconds() * 1000)
+    log_event("worker_metrics", reason_code="audit_commit_lag", age_ms=age_ms)
+    if lag >= SEAL_DELAY:
+        log_event("operational_attention", reason_code="audit_commit_after_seal_delay",
+                  age_ms=age_ms)
 
 
 @event.listens_for(AuditSession, "after_commit")
@@ -302,6 +326,7 @@ def broadcast_committed_changes(session: AuditSession) -> None:
         snapshots.pop(session.get_nested_transaction(), None)
         return
     session.info.pop(SAVEPOINT_INVALIDATION_KEY, None)
+    _log_commit_lag(session)
     invalidations = session.info.pop(REALTIME_INVALIDATION_KEY, [])
     if not invalidations:
         return

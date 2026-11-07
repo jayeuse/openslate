@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.core.config.instance import instance_target_for_process
+from app.core.observability import log_event
 
 ROOT = Path(__file__).resolve().parents[3]
 SERVICES = frozenset(
@@ -339,6 +340,24 @@ class Host:
             (directory / name).unlink()
         directory.rmdir()
         fsync_directory(directory.parent)
+
+    def save_seal_heads(self, journal: Json) -> None:
+        """Keep the audit chain heads beside the claim's config while the database runs.
+
+        The archive copies them into the bundle. A backup is worth more than its heads, so a
+        failure only logs and the backup goes on (K27).
+        """
+        try:
+            heads = self.bridge({"op": "audit-seal-heads"})["heads"]
+            if not isinstance(heads, list):
+                raise ValueError("heads")
+            # The write replaces the file atomically, so a failure leaves no partial file.
+            private_json(self.run_directory(journal) / "audit-seal-heads.json", {"heads": heads})
+        except (RunnerError, KeyError, ValueError, OSError, RuntimeError):
+            log_event(
+                "operational_attention", reason_code="audit_heads_unavailable",
+                upstream="backup-runner",
+            )
 
     def bridge(self, command: Json, journal: Json | None = None, *, timeout: float = 60) -> Json:
         payload = {

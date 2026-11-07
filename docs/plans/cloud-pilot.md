@@ -116,6 +116,7 @@ These parts are not finished. Each one must stay compatible with external-provid
 | 1 | Step 2.6 archive needs a verified Restic snapshot before a drop, pull request 2d (deferred, D18) | Use the verified R2 upload as the equivalent proof. |
 | 1 | Steps 4.5 and 4.6 Auth settings in `compose.yaml`, pull request 4 | Push them with the C7 command. The Auth audit table is in the `auth` schema; check in S1 that `postgres` can delete old rows. |
 | 1 | Audit growth with 13 months online, plus seals | Counts against the 500 MB read-only limit (see risk R1). |
+| 1 | Step 2.5 chain heads: the backup runner saves them before the stop, pull request 2c | `cloud_backup.py` calls `read_seal_heads` and uploads `{"heads": [...]}` as `audit/seal-heads.json` beside the dump. Until then, the operator runs `verify_audit_seals.py --write-heads`. |
 | 3 | Backup freshness for admins (spec slice S3) | The slice reads `BackupRun` rows (`app/systems/manage/backups/models.py`). `installation_id()` (`service.py:46-56`) fences that data with `cluster_name`, which Cloud does not have. So `cloud_backup.py` must write `BackupRun` rows, and the C1 project-reference check must also replace the check in `installation_id()`. If not, the health page shows no backups on Cloud, and C8 hides the backup controls. |
 | 3 | Installation section (spec slice S5) | Its database size figure is the signal for D4 on Cloud. Keep it readable without `cluster_name`. |
 | 3 | Diagnostics export (spec slice S6) | On-premise only. No change. |

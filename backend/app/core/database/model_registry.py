@@ -60,7 +60,7 @@ from app.systems.comms.settings.models import CommsPersonalPreferences as CommsP
 from app.systems.comms.settings.models import CommsSettingLock as CommsSettingLock
 from app.systems.comms.settings.models import CommsSettings as CommsSettings
 from app.systems.comms.templates.models import CommsTemplate as CommsTemplate
-from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
+from app.systems.manage.audit.models import AuditLog, AuditSeal, SecurityEvent  # noqa: F401
 from app.systems.manage.backups.models import (  # noqa: F401
     BackupExportOperation,
     BackupPolicy,

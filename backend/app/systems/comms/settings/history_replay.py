@@ -6,7 +6,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Table, and_, false, or_, select, true, union
+from sqlalchemy import Table, and_, any_, false, func, or_, select, true, union
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -224,7 +224,13 @@ def history(db: Session, scope: Scope) -> dict[UUID, ConfigurationHistory]:
                 "comms_unavailable", "Configuration history exceeds the synchronous read bound", 503
             )
         graph[name] = {row["id"]: dict(row) for row in rows}
-        clauses.append(and_(AuditLog.entity_type == name, AuditLog.entity_id.in_(ids)))
+        # Once for the statement, not once in each audit partition (REQ-0007).
+        clauses.append(
+            and_(
+                AuditLog.entity_type == name,
+                AuditLog.entity_id == any_(func.array(ids.scalar_subquery())),
+            )
+        )
     audits = list(
         db.scalars(
             select(AuditLog)

@@ -13,6 +13,7 @@ from app.systems.access.users.models import UserRole
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
+from tests.boards.support import project_board
 from tests.rbac.support import (
     _client,
     add_department,
@@ -495,3 +496,48 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
             assert row["target_label"] == detail.json()["target_label"] == expected_label
             assert list(csv.DictReader(io.StringIO(exported.text)))[0]["Target"] == expected_label
             assert "Private title canary" not in response.text + detail.text + exported.text
+
+
+def test_a_removed_person_gives_no_name_and_no_error_in_each_actor_reader(
+    integration_db: Session,
+) -> None:
+    # D21: with no foreign key, an audit row keeps the id of a person who has no user row.
+    from app.main import create_app
+
+    api = create_app()
+    admin = add_user(integration_db, role=UserRole.ADMIN)
+    board = project_board(integration_db)
+    removed = uuid7()
+    row = AuditLog(
+        org_id=board.org_id,
+        id=uuid7(),
+        created_at=datetime.now(UTC),
+        action=AuditAction.CREATE,
+        entity_type="boards",
+        entity_id=board.id,
+        performed_by=removed,
+    )
+    object.__setattr__(row, "_audit_internal", True)
+    integration_db.add(row)
+    integration_db.flush()
+    client = _client(api, admin, integration_db)
+
+    listed = client.get("/api/audit-logs", params={"performed_by": str(removed)})
+    options = client.get("/api/audit-logs/options")
+    exported = client.get("/api/audit-logs/export", params={"performed_by": str(removed)})
+    activity = client.get(f"/api/boards/{board.id}/activity")
+
+    assert [response.status_code for response in (listed, options, exported, activity)] == [
+        200, 200, 200, 200,
+    ]
+    assert [(item["performed_by"], item["actor_name"]) for item in listed.json()["items"]] == [
+        (str(removed), None)
+    ]
+    assert {
+        "performed_by": str(removed), "actor_label": None, "actor_name": None
+    } in options.json()["actors"]
+    [exported_row] = csv.DictReader(io.StringIO(exported.text))
+    assert exported_row["User"] == "Unknown person"
+    assert [
+        item["actor_label"] for item in activity.json()["items"] if item["id"] == str(row.id)
+    ] == [None]
