@@ -1,6 +1,6 @@
 # Database improvements
 
-Status: approved (2026-10-31). Jay approved D1 to D12 as recommended, D13 and D14 on 2026-11-05, and D15 to D20 on 2026-11-07. No decision is open. Done: Phase 0 and Phase 1 (pull request 1, #81), step 3.7 with D13 (the follow-up pull request, #91), and steps 2.1 to 2.3 and 2.8 to 2.10 (pull request 2a, #94). Next: pull request 2b. Pull request 2d is deferred (D18). The rebrand rebuild of 2026-11-02 removed the Large packs. Harbor and School are repopulated at Large on 2026-11-05, and the Phase 0 pass is repeated on them as the new baseline.
+Status: approved (2026-10-31). Jay approved D1 to D12 as recommended, D13 and D14 on 2026-11-05, and D15 to D20 on 2026-11-07. No decision is open. Done: Phase 0 and Phase 1 (pull request 1, #81), step 3.7 with D13 (the follow-up pull request, #91), steps 2.1 to 2.3 and 2.8 to 2.10 (pull request 2a, #94), and step 2.4 (pull request 2b, #95). Next: pull request 2c. Pull request 2d is deferred (D18). The rebrand rebuild of 2026-11-02 removed the Large packs. Harbor and School are repopulated at Large on 2026-11-05, and the Phase 0 pass is repeated on them as the new baseline.
 
 Target: the same as [Product concurrency fixes](product-concurrency-fixes.md): one server with 8 cores and 16 GB, up to about 300 people active at the same time across all organizations. Data volume: the seven Large packs in one installation. The development data holds Harbor and School at Large today, and the other five packs at Small until D17 moves them.
 
@@ -90,21 +90,21 @@ Checked and correct (keep as is): every table has a primary key; every timestamp
 
 ## Pull requests
 
-The work follows the phase order below, split into nine pull requests. Line counts are estimates that include tests (±50%). Pull request 1 took 1,985 changed lines, 37% above its estimate. #91 took 1,140, 128% above its estimate. #94 took 2,018, 55% above its estimate, and tests were 1,429 of those lines. Read the later estimates as low.
+The work follows the phase order below, split into nine pull requests. Line counts are estimates that include tests (±50%). Pull request 1 took 1,985 changed lines, 37% above its estimate. #91 took 1,140, 128% above its estimate. #94 took 2,018, 55% above its estimate, and tests were 1,429 of those lines. #95 took 2,680, 123% above the plan's estimate and inside the contract's 1,900 to 2,600 plus its two fixes. Read the later estimates as low.
 
 | Pull request | Status | Steps | Estimated lines | Content |
 |---|---|---|---|---|
 | 1 | Merged (#81) | 0.1, 0.2, 1.1–1.5 | 1,450 | Baseline numbers, timeouts, soft-delete checks, notification cleanup on purge, redundant indexes, file check command |
 | Follow-up | Merged (#91) | 3.7 (D14), D13 | 500 | Member audit page; the Harbor Sales Writers and Sales Readers groups in the pack definition; the 28 partial indexes recreated with `IS FALSE`; the polling migration lock; the 20-minute limit on the `unit` CI job, which #92 replaced with three unit jobs. One commit for each, so that each one can be measured and reverted alone |
 | 2a | Merged (#94) | 2.1–2.3, 2.8–2.10 | 1,300 | Trigger events out of audit, retention sweep, autovacuum, report runs with CSV hash, event values cleared on success, record fillfactor |
-| 2b | Next | 2.4 | 1,900–2,600 (TASK-0034) | Monthly audit partitions, rehearsed first on the Large development data |
-| 2c | Waiting | 2.5, REQ-0007 | 1,300 | The Boards activity fix as its first commit (REQ-0007), then audit seals and the verify command |
+| 2b | Merged (#95) | 2.4 | 1,900–2,600 (TASK-0034) | Monthly audit partitions, rehearsed first on the Large development data |
+| 2c | Next | 2.5, REQ-0007 | 1,300 | The Boards activity fix as its first commit (REQ-0007), then audit seals and the verify command |
 | 2d | Deferred (D18) | 2.6, 2.7, 1.5 schedule | 1,800 | Archive and drop of audit months and old security events; the file check on the backup runner's schedule |
 | 3a | Waiting | 3.3–3.6, 3.8 | 1,600 | Backend query paths: Comms counts, access once per request, worker wake-up instead of polling, Comms realtime indexes. The estimate leaves out step 3.8 |
 | 3b | Waiting | 3.1, 3.2 | 1,900 | Capped totals and keyset paging, backend and frontend; `ui-ux-pro-max` decides the visible change, and a feature pass checks it |
 | 4 | Waiting | 4.1–4.6, Phase 5 | 750 | PostgreSQL settings, edge index, Auth audit log, Auth sessions, final measurements |
 
-Order after 2b: 2c, 3a, 3b, 4. Order rules: 2b before 2d, because the archive drops partitions. 2c before 2d, because the archive manifest holds the seal hashes. 2b before 3b, because the audit keyset index comes from the partition migration.
+Order from here: 2c, 3a, 3b, 4. Order rules: 2b before 2d, because the archive drops partitions. 2c before 2d, because the archive manifest holds the seal hashes. 2b before 3b, because the audit keyset index comes from the partition migration.
 
 ## Phases
 
