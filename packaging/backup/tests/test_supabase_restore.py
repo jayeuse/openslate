@@ -348,6 +348,31 @@ def test_restore_inspection_verifies_archive_without_creating_target_or_volumes(
     assert not list((tmp_path / "staging").iterdir())
 
 
+def test_restore_accepts_a_bundle_that_lists_its_audit_seal_heads(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bundle = _bundle_fixture(tmp_path, config)
+    heads = bundle / "audit" / "seal-heads.json"
+    heads.parent.mkdir()
+    heads.write_text('{"heads": []}', encoding="utf-8")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["audit/seal-heads.json"] = {
+        "sha256": _digest(heads), "bytes": heads.stat().st_size,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = run_restore(
+        config, SNAPSHOT, "client-b", tmp_path / "target", TARGET_INSTANCE,
+        command_runner=RestoreCommands(bundle),
+    )
+
+    assert result.executed is False
+    assert sorted(manifest) == [
+        "created_at", "deployment", "files", "format_version", "images", "source_installation_id",
+        "source_project", "volumes",
+    ]
+
+
 def test_restore_requires_a_full_snapshot_id_before_external_commands(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bundle = _bundle_fixture(tmp_path, config)

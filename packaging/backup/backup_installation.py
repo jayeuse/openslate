@@ -588,6 +588,11 @@ def run_backup(
             _copy_file(source, bundle / "compose" / source.name, private=False)
         for name in ("upstream", "templates"):
             _copy_directory(config.compose_root / name, bundle / "compose" / name, private=False)
+        # The host runner writes the audit chain heads beside this claim's config before the
+        # database stops. A manual run has none. Restore accepts any listed file.
+        heads = config_path.parent / "audit-seal-heads.json"
+        if heads.exists():
+            _copy_file(heads, bundle / "audit" / "seal-heads.json", private=True)
         files = _manifest_files(bundle)
         manifest = {
             "format_version": 3,

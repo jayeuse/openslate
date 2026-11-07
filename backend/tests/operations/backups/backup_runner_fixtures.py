@@ -140,6 +140,9 @@ class SyntheticCommands:
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
         self.operations: list[dict[str, Any]] = []
         self.export_operations: list[dict[str, Any]] = []
+        self.seal_operations: list[dict[str, Any]] = []
+        # The audit chain heads that the bridge returns; None makes the op fail.
+        self.heads: list[dict[str, Any]] | None = []
         self.claim: dict[str, Any] | None = None
         self.candidates: list[dict[str, Any]] = []
         self.snapshots = {SNAPSHOT}
@@ -336,6 +339,12 @@ class SyntheticCommands:
         if args[:2] == ["docker", "run"] and args[-1] == "operations/backup_state.py":
             request = json.loads(kwargs["input"])
             op = request["op"]
+            if op == "audit-seal-heads":
+                self.seal_operations.append(request)
+                running = self.service_running("db")
+                if self.heads is None or not running:
+                    return self.result(args, {"code": "backup_state_unavailable"}, 3)
+                return self.result(args, {"heads": self.heads})
             is_export = op in {"claim-export", "inspect-export", "export-outcome", "export-cleaned"}
             if is_export:
                 self.export_operations.append(request)
@@ -440,6 +449,15 @@ class SyntheticCommands:
             self.snapshots.discard(args[-1])
             return self.result(args, b"")
         raise AssertionError(f"Unexpected external command: {args[0:3]}")
+
+    def service_running(self, service: str) -> bool:
+        return bool(
+            next(
+                item
+                for item in self.containers
+                if item["Config"]["Labels"]["com.docker.compose.service"] == service
+            )["State"]["Running"]
+        )
 
     def orphan_container(self) -> dict[str, Any]:
         return {

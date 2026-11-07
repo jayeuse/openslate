@@ -31,10 +31,12 @@ from app.core.config.instance import (
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.seals import read_seal_heads
 from app.systems.manage.backups import exports, service
 from app.systems.manage.backups.models import BackupPolicy, UpdateStatus
 from app.systems.manage.backups.schemas import (
     AdoptCommand,
+    AuditSealHeadsCommand,
     ClaimCommand,
     ExpireCommand,
     ExportClaimCommand,
@@ -60,7 +62,8 @@ Command = Annotated[
     | ExportClaimCommand
     | ExportInspectCommand
     | ExportOutcomeCommand
-    | ExportCleanedCommand,
+    | ExportCleanedCommand
+    | AuditSealHeadsCommand,
     Field(discriminator="op"),
 ]
 COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
@@ -131,6 +134,9 @@ def coordinated_session(engine: Engine, target: InstanceTarget) -> Iterator[Audi
 def execute(db: AuditSession, command: Command) -> dict[str, Any]:
     """Return validated safe projections; caller owns the coordinated commit."""
     instance = command.installation_id
+    if isinstance(command, AuditSealHeadsCommand):
+        # Chain ids and hashes only: no row content and no secret.
+        return {"heads": read_seal_heads(db.connection())}
     if isinstance(command, ExportInspectCommand):
         return exports.inspect_exports(db, instance, command).model_dump(mode="json")
     if isinstance(command, ExportClaimCommand):

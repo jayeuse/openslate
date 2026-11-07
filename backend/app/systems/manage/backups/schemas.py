@@ -202,6 +202,12 @@ class OutcomeCommand(BridgeCommand):
         return self
 
 
+class AuditSealHeadsCommand(BridgeCommand):
+    """Read the latest audit seal of each chain before the database stops (K27)."""
+
+    op: Literal["audit-seal-heads"]
+
+
 class ReleaseCommand(BridgeCommand):
     op: Literal["release"]
     checked_at: AwareDatetime

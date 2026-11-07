@@ -389,6 +389,7 @@ def run_once(
         journal["claim"] = claim.model_dump(mode="json")
         journal["phase"] = "claimed"
         host.save(journal)
+        host.save_seal_heads(journal)
         facts = {"snapshot_id": None, "manifest_sha256": None, "verified_at": None}
         try:
             host.compose(["stop"], failure="backup_interrupted")
