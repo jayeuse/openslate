@@ -4,7 +4,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, any_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -175,10 +175,17 @@ def list_board_activity(
             *(AuditLog.after.has_key(key) for key in _BOARD_METADATA_FIELDS),
         ),
     )
+    # `= ANY (array(...))` runs the identity read once for the statement. An `IN (subquery)`
+    # under `OR` stays a subplan that each audit partition runs again (REQ-0007).
     group_event = and_(
         AuditLog.entity_type == "board_groups",
-        AuditLog.entity_id.in_(
-            _board_group_snapshots(board).with_only_columns(_GroupAudit.entity_id)
+        AuditLog.entity_id
+        == any_(
+            func.array(
+                _board_group_snapshots(board)
+                .with_only_columns(_GroupAudit.entity_id)
+                .scalar_subquery()
+            )
         ),
     )
     result = execute_standard_list(
