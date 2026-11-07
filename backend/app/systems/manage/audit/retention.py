@@ -1,4 +1,4 @@
-"""Invoke the exact database-owned event deletion/proof capability."""
+"""Invoke the exact database-owned routines: event deletion and audit partition creation."""
 
 from typing import cast
 
@@ -16,6 +16,17 @@ def retain_security_events(db: Session) -> int:
         else:
             db.rollback()
         return count
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+def ensure_audit_partitions(db: Session) -> int:
+    """Own one transaction; return the months skipped because `DEFAULT` holds their rows."""
+    try:
+        skipped = cast(int, db.scalar(select(func.public.ensure_audit_partitions())))
+        db.commit()
+        return skipped
     except SQLAlchemyError:
         db.rollback()
         raise
