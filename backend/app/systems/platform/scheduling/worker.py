@@ -20,8 +20,10 @@ from app.systems.platform.scheduling.post_execution import (
     execute_due_post_publications,
 )
 from app.systems.platform.scheduling.reminder_execution import execute_due_reminders
+from app.systems.platform.scheduling.retention import sweep_organization
 
 _POLL_SECONDS = 1
+_RETENTION_SECONDS = 300
 _MAX_RETRY_SECONDS = 60
 _SHUTDOWN_SECONDS = 5
 
@@ -87,6 +89,7 @@ class ReportSchedulingWorker:
         self._comms_poll = comms_poll
         self._comms_retry_seconds = _POLL_SECONDS
         self._comms_failure_reported = False
+        self._retention_failure_reported = False
 
     @property
     def running(self) -> bool:
@@ -137,6 +140,11 @@ class ReportSchedulingWorker:
 
         return self._poll(now=now, reports=True, posts=True, reminders=True, comms=True)
 
+    def run_retention_once(self, *, now: datetime | None = None) -> None:
+        """Sweep every organization once."""
+
+        self._poll_retention(now=now)
+
     def _poll(
         self,
         *,
@@ -145,6 +153,7 @@ class ReportSchedulingWorker:
         posts: bool,
         reminders: bool,
         comms: bool = False,
+        retention: bool = False,
     ) -> list[UUID]:
         completed: list[UUID] = []
         if reports:
@@ -164,6 +173,8 @@ class ReportSchedulingWorker:
             else:
                 self._comms_retry_seconds = _POLL_SECONDS
                 self._comms_failure_reported = False
+        if retention and not self._stop.is_set():
+            self._poll_retention(now=now)
         return completed
 
     def _poll_reports(self, *, now: datetime | None) -> list[UUID]:
@@ -203,12 +214,24 @@ class ReportSchedulingWorker:
         self._reminder_retry_seconds = _POLL_SECONDS
         self._reminder_failure_reported = False
 
+    def _poll_retention(self, *, now: datetime | None) -> None:
+        failure = _each_organization(
+            lambda: sweep_organization(get_engine(), now=now, stopping=self._stop.is_set)
+        )
+        if failure is not None:
+            if not self._retention_failure_reported:
+                _report_failure("retention_sweep_failed", "retention", failure)
+                self._retention_failure_reported = True
+            return
+        self._retention_failure_reported = False
+
     def _run(self) -> None:
         self._running = True
         next_report_poll = time.monotonic()
         next_post_poll = next_report_poll
         next_reminder_poll = next_report_poll
         next_comms_poll = next_report_poll
+        next_retention_poll = next_report_poll + _RETENTION_SECONDS
         try:
             while not self._stop.is_set():
                 current = time.monotonic()
@@ -216,12 +239,14 @@ class ReportSchedulingWorker:
                 posts_due = current >= next_post_poll
                 reminders_due = current >= next_reminder_poll
                 comms_due = self._comms_poll is not None and current >= next_comms_poll
+                retention_due = current >= next_retention_poll
                 self._poll(
                     now=None,
                     reports=reports_due,
                     posts=posts_due,
                     reminders=reminders_due,
                     comms=comms_due,
+                    retention=retention_due,
                 )
                 # Outside any organization binding: the heartbeats are installation-wide.
                 if reports_due:
@@ -237,6 +262,8 @@ class ReportSchedulingWorker:
                     next_reminder_poll = completed_at + self._reminder_retry_seconds
                 if comms_due:
                     next_comms_poll = completed_at + self._comms_retry_seconds
+                if retention_due:
+                    next_retention_poll = completed_at + _RETENTION_SECONDS
                 wait_seconds = max(
                     0.0,
                     min(
@@ -244,6 +271,7 @@ class ReportSchedulingWorker:
                         next_post_poll,
                         next_reminder_poll,
                         next_comms_poll if self._comms_poll is not None else float("inf"),
+                        next_retention_poll,
                     )
                     - time.monotonic(),
                 )

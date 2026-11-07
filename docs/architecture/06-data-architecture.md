@@ -49,6 +49,17 @@ OpenView persists department Dashboards and widget configurations in [`dashboard
 
 `report_run_eligible_users` records the module readers at the time each run is created. A run read also requires current read access on the module.
 
+The [retention sweep](../../backend/app/systems/platform/scheduling/retention.py) bounds the tables that grow with use. It runs on the scheduling worker every 300 seconds, for one organization at a time, and yields to any trigger event that has waited longer than 1 second.
+
+| Rows | Kept |
+|---|---|
+| `record_trigger_events` and their `record_trigger_runs` | 30 days after the last attempt if succeeded, 90 days if failed; pending and running events stay, and a root event stays while a child event references it |
+| `in_app_notifications` | 30 days from creation if read, 90 days if unread |
+| `report_runs`, with their rows, notifications, eligible users and work row | The latest 30 of each report |
+| `sandbox_test_runs` | The latest 20 live runs of each document; cleared runs do not stay |
+
+Each batch is one commit of individual ORM deletes with at most 50 audited rows. Audited rows keep a delete entry in the audit history.
+
 [`charts`](../../backend/app/systems/openview/charts/models.py) stores shared, revisioned chart definitions with source `module_id`, derived `department_id`, query and presentation configuration. The forward migration [`c64062dacada`](../../backend/migrations/versions/c64062dacada_add_saved_charts_and_widget_query_.py) adds that table and widget `chart_id`/query support after the fresh root. The removal of the old personal chart-preference table does not mean that current Charts are page-local only. Results are queried at read time under current access; saved definitions contain no materialized Record output.
 
 ## Fresh-root construction and lifecycle
