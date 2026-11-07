@@ -415,7 +415,7 @@ def _pages_read(plan: dict[str, Any]) -> int:
     return int(plan["Shared Hit Blocks"]) + int(plan["Shared Read Blocks"])
 
 
-def test_a_wake_with_no_old_notification_reads_almost_nothing(
+def test_the_notification_stage_reads_almost_nothing_with_no_old_row(
     engines: tuple[Engine, Engine],
 ) -> None:
     # On Harbor Large the age filter alone read all 1,693 pages of the organization's rows on

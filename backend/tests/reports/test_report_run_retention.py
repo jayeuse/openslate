@@ -195,6 +195,13 @@ def test_a_read_level_member_cannot_push_out_a_young_run_dbi13(
         assert created.status_code == 201, created.text
         posted.append(UUID(created.json()["id"]))
 
+    with Session(fixture.owner_engine) as setup:
+        report = setup.get_one(Report, fixture.report_id)
+        young_excess = setup.get_one(ReportRun, posted[0])
+        reader = setup.get_one(User, fixture.owner_id)
+        notifications = _work(setup, report, young_excess, [reader])
+        setup.commit()
+
     def stored_runs() -> list[UUID]:
         with fixture.owner_engine.connect() as connection:
             return list(
@@ -203,12 +210,28 @@ def test_a_read_level_member_cannot_push_out_a_young_run_dbi13(
                 )
             )
 
+    def stored_output() -> tuple[list[UUID], list[UUID]]:
+        """The output rows and notifications of the run that the second sweep removes."""
+        with fixture.owner_engine.connect() as connection:
+            rows = connection.scalars(
+                select(ReportRunRow.id).where(ReportRunRow.run_id == posted[0])
+            )
+            notified = connection.scalars(
+                select(InAppNotification.id).where(InAppNotification.id.in_(notifications))
+            )
+            return list(rows), list(notified)
+
+    output_rows, _notified = stored_output()
+    assert output_rows
+
     with worker_organization(fixture.org_id):
         sweep_organization(fixture.runtime_engine)
         assert sorted(stored_runs()) == sorted(posted)
+        assert stored_output() == (output_rows, notifications)
 
         sweep_organization(fixture.runtime_engine, now=utc_now() + timedelta(days=31))
         assert sorted(stored_runs()) == sorted(posted[1:])
+        assert stored_output() == ([], [])
 
 
 def test_a_run_with_many_recipients_stays_within_the_audited_batch(
