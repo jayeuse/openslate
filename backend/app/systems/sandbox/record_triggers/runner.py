@@ -82,6 +82,9 @@ def execute_claim(db: Session, claim: ClaimedTriggerEvent) -> bool:
         event.state = TriggerEventState.SUCCEEDED
         event.lease_token = None
         event.lease_expires_at = None
+        # Only this run reads the copies. A failed attempt rolls back and keeps them for its retry.
+        event.values = {}
+        event.previous_values = {}
     db.flush()
     return True
 

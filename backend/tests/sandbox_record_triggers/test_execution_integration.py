@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
@@ -10,13 +12,20 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.manage.audit.models import AuditLog
+from app.systems.access.users.models import UserRole
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.platform.scheduling.models import InAppNotification
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers import execution as trigger_execution
+from app.systems.sandbox.record_triggers import runner
 from app.systems.sandbox.record_triggers.execution import (
     claim_due_events,
     mark_claim_failed,
 )
 from app.systems.sandbox.record_triggers.models import (
+    RecordTriggerAction,
+    RecordTriggerCondition,
     RecordTriggerEvent,
     RecordTriggerRun,
     TriggerEventState,
@@ -26,6 +35,7 @@ from app.systems.sandbox.record_triggers.service import list_recent_runs
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.rbac.support import add_user, make_group_access
 from tests.record_versions import record_version
 from tests.sandbox_record_triggers.support import (
     event_count,
@@ -141,45 +151,189 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
     assert execute_claim(integration_owner_db, claims[-1]) is False
 
 
-def test_event_snapshots_redact_secret_record_values(integration_owner_db: Session) -> None:
-    actor, module, fields, _definition = publish_trigger(integration_owner_db)
-    fields["title"].audit_redacted = True
-    secret = "top-secret-trigger-value"
+def test_record_save_and_its_trigger_run_keep_their_audit_with_no_event_rows_dbi3(
+    integration_owner_db: Session,
+) -> None:
+    # DBI-3 (D2): an event is queue state, so its create, lease and finish write no audit row.
+    # What a person or an automation did stays audited: the save, the run, the automation's
+    # record change and its notification.
+    assert RecordTriggerEvent.__audit_enabled__ is False
+    db = integration_owner_db
+    actor, module, fields, definition = publish_trigger(db)
+    assignee_field = Field(
+        org_id=module.org_id,
+        module_id=module.id,
+        name="Assignee",
+        type="user",
+        position=4,
+        required=False,
+        config={},
+    )
+    db.add(assignee_field)
+    assignee = add_user(db, role=UserRole.MEMBER)
+    make_group_access(db, [assignee], db.get(Department, module.department_id), module)
+    db.add(
+        RecordTriggerAction(
+            org_id=definition.org_id,
+            trigger_id=definition.id,
+            target_field_id=assignee_field.id,
+            position=1,
+            value_kind="literal",
+            literal_value={"value": str(assignee.id)},
+        )
+    )
+    db.commit()
+
     record = create_record(
         RecordCreate(
             module_id=module.id,
             data={
-                str(fields["request-number"].id): "REQ-SECRET",
-                str(fields["title"].id): secret,
+                str(fields["request-number"].id): "REQ-AUDIT",
+                str(fields["priority"].id): option_id(fields["priority"], "Low"),
                 str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,
-        integration_owner_db,
+        db,
     )
+    db.commit()
     update_record(
         record.id,
-        RecordUpdate(data={**record.data, str(fields["title"].id): f"{secret}-next"}),
+        RecordUpdate(
+            data={**record.data, str(fields["priority"].id): option_id(fields["priority"], "High")}
+        ),
         actor,
-        integration_owner_db,
-        if_match=record_version(integration_owner_db, record.id),
+        db,
+        if_match=record_version(db, record.id),
     )
-    integration_owner_db.commit()
+    db.commit()
 
-    logs = integration_owner_db.scalars(
-        select(AuditLog).where(
-            AuditLog.entity_type == "record_trigger_events",
-            AuditLog.entity_id.in_(
-                select(RecordTriggerEvent.id).where(RecordTriggerEvent.record_id == record.id)
-            ),
+    def audit_of(entity_type: str, entity_ids: list[UUID]) -> list[AuditLog]:
+        return list(
+            db.scalars(
+                select(AuditLog).where(
+                    AuditLog.entity_type == entity_type, AuditLog.entity_id.in_(entity_ids)
+                )
+            )
         )
-    ).all()
-    assert logs
-    for log in logs:
-        assert secret not in repr(log.before)
-        assert secret not in repr(log.after)
-        assert (log.after or {}).get("values") == "[REDACTED]"
-        assert (log.after or {}).get("previous_values") == "[REDACTED]"
+
+    assert [row.request_method for row in audit_of("records", [record.id])] == ["POST", "POST"]
+
+    while claims := claim_due_events(db):
+        db.commit()
+        for claim in claims:
+            assert execute_claim(db, claim)
+            db.commit()
+
+    events = list(
+        db.scalars(select(RecordTriggerEvent.id).where(RecordTriggerEvent.record_id == record.id))
+    )
+    assert len(events) >= 2
+    assert audit_of("record_trigger_events", events) == []
+    runs = list(
+        db.scalars(select(RecordTriggerRun.id).where(RecordTriggerRun.event_id.in_(events)))
+    )
+    assert runs
+    assert {row.entity_id for row in audit_of("record_trigger_runs", runs)} == set(runs)
+    assert [
+        row.action
+        for row in audit_of("records", [record.id])
+        if row.request_method == "TRIGGER"
+    ] == [AuditAction.UPDATE, AuditAction.UPDATE]
+    notification = db.scalar(
+        select(InAppNotification.id).where(
+            InAppNotification.kind == "record-assigned",
+            InAppNotification.subject_id == record.id,
+            InAppNotification.recipient_id == assignee.id,
+        )
+    )
+    assert notification is not None
+    assert [row.action for row in audit_of("in_app_notifications", [notification])] == [
+        AuditAction.CREATE
+    ]
+
+
+def test_succeeded_event_drops_its_value_copies_and_a_retry_reads_them_dbi14(
+    integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DBI-14: only the runner reads an event's values. A failed attempt keeps them, so its
+    # retry decides from the same values even when the record has moved on; success clears them.
+    db = integration_owner_db
+    actor, module, fields, definition = publish_trigger(db)
+    high = option_id(fields["priority"], "High")
+    low = option_id(fields["priority"], "Low")
+    for condition in db.scalars(
+        select(RecordTriggerCondition).where(RecordTriggerCondition.trigger_id == definition.id)
+    ):
+        db.delete(condition)
+    definition.event_kind = "threshold-crossed"
+    definition.trigger_field_id = fields["priority"].id
+    definition.trigger_operator = "="
+    definition.trigger_value_kind = "literal"
+    definition.trigger_literal_value = {"value": high}
+    db.commit()
+
+    record = create_record(
+        RecordCreate(
+            module_id=module.id,
+            data={
+                str(fields["request-number"].id): "REQ-VALUES",
+                str(fields["priority"].id): low,
+                str(fields["status"].id): option_id(fields["status"], "Open"),
+            },
+        ),
+        actor,
+        db,
+    )
+    db.commit()
+    created = claim_due_events(db)[0]
+    db.commit()
+    assert execute_claim(db, created)
+    db.commit()
+    update_record(
+        record.id,
+        RecordUpdate(data={**record.data, str(fields["priority"].id): high}),
+        actor,
+        db,
+        if_match=record_version(db, record.id),
+    )
+    db.commit()
+
+    claim = claim_due_events(db)[0]
+    db.commit()
+    with monkeypatch.context() as patched:
+        patched.setattr(runner, "_apply_definition", Mock(side_effect=RuntimeError("stopped")))
+        with pytest.raises(RuntimeError, match="stopped"):
+            execute_claim(db, claim)
+    db.rollback()
+    assert mark_claim_failed(db, claim) is False
+    db.commit()
+    event = db.get(RecordTriggerEvent, claim.id)
+    assert event is not None
+    db.refresh(event)
+    assert event.state == TriggerEventState.PENDING
+    assert event.values[str(fields["priority"].id)] == high
+    assert event.previous_values[str(fields["priority"].id)] == low
+
+    row = db.get(Record, record.id)
+    assert row is not None
+    db.refresh(row)
+    row.data = {**row.data, str(fields["priority"].id): low}
+    event.next_attempt_at = utc_now()
+    db.commit()
+
+    retry = claim_due_events(db)[0]
+    db.commit()
+    assert retry.id == claim.id
+    assert execute_claim(db, retry)
+    db.commit()
+
+    db.refresh(row)
+    assert row.data[str(fields["status"].id)] == option_id(fields["status"], "In progress")
+    db.refresh(event)
+    assert event.state == TriggerEventState.SUCCEEDED
+    assert event.values == {}
+    assert event.previous_values == {}
 
 
 def test_failed_claim_retries_exactly_five_times(integration_owner_db: Session) -> None:
@@ -256,6 +410,7 @@ def test_failed_claim_retries_exactly_five_times(integration_owner_db: Session) 
     integration_owner_db.refresh(crashed_fifth_attempt)
     assert crashed_fifth_attempt.state == TriggerEventState.FAILED
     assert crashed_fifth_attempt.attempt_count == 5
+    assert crashed_fifth_attempt.values == record.data
 
 
 def test_releasing_an_unprocessed_claim_does_not_spend_an_attempt(

@@ -208,7 +208,6 @@ def test_api_created_record_purge_removes_owned_completed_history_and_records_co
     audit = list(api.db.scalars(select(AuditLog).where(AuditLog.request_id == request_id)))
     assert {(row.entity_type, row.entity_id) for row in audit} == {
         ("records", record.id),
-        *[("record_trigger_events", event_id) for event_id in owned_events],
         *[("record_trigger_runs", run_id) for run_id in owned_runs],
     }
     assert all(

@@ -114,7 +114,7 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
 
         link_pid: list[int] = []
         outcomes: dict[str, object] = {}
-        pause = StatementPause(worker_engine, "UPDATE RECORD_TRIGGER_EVENTS SET STATE")
+        pause = StatementPause(worker_engine, "UPDATE RECORD_TRIGGER_EVENTS SET VALUES")
 
         def run_worker() -> None:
             with AuditSession(bind=worker_engine) as session:

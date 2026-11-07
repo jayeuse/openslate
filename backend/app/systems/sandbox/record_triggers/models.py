@@ -180,7 +180,8 @@ class RecordTriggerEvent(BaseModel):
         ),
         Index("ix_record_trigger_events_due", "state", "next_attempt_at", "id"),
     )
-    __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"values", "previous_values"})
+    # Queue state only (decision D2): runs, notifications and record changes keep their audit.
+    __audit_enabled__: ClassVar[bool] = False
     org_id: Mapped[UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
