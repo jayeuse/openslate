@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from app.core.base_model import utc_now
 from app.core.config import Settings
 from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
 from app.core.observability import failure_cause, log_event
 from app.systems.manage.audit.retention import ensure_audit_partitions
+from app.systems.manage.audit.seals import seal_audit
 from app.systems.manage.health import signals
 from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.platform.scheduling.execution import execute_due_report_runs
@@ -26,6 +28,8 @@ from app.systems.platform.scheduling.retention import sweep_organization
 _POLL_SECONDS = 1
 _RETENTION_SECONDS = 300
 _PARTITION_SECONDS = 3600
+_SEAL_SECONDS = 3600
+_SEAL_BACKLOG_SECONDS = 60
 _MAX_RETRY_SECONDS = 60
 _SHUTDOWN_SECONDS = 5
 
@@ -93,6 +97,8 @@ class ReportSchedulingWorker:
         self._comms_failure_reported = False
         self._retention_failure_reported = False
         self._partition_failure_reported = False
+        self._seal_backlog = False
+        self._seal_failure_reported = False
 
     @property
     def running(self) -> bool:
@@ -153,6 +159,12 @@ class ReportSchedulingWorker:
 
         self._poll_audit_partitions()
 
+    def seal_audit_once(self, *, now: datetime | None = None) -> bool:
+        """Seal every audit chain up to the horizon; True when a backlog remains."""
+
+        self._poll_audit_seals(now=now)
+        return self._seal_backlog
+
     def _poll(
         self,
         *,
@@ -163,6 +175,7 @@ class ReportSchedulingWorker:
         comms: bool = False,
         retention: bool = False,
         partitions: bool = False,
+        seals: bool = False,
     ) -> list[UUID]:
         completed: list[UUID] = []
         if reports:
@@ -186,6 +199,8 @@ class ReportSchedulingWorker:
             self._poll_retention(now=now)
         if partitions and not self._stop.is_set():
             self._poll_audit_partitions()
+        if seals and not self._stop.is_set():
+            self._poll_audit_seals(now=now)
         return completed
 
     def _poll_reports(self, *, now: datetime | None) -> list[UUID]:
@@ -254,6 +269,25 @@ class ReportSchedulingWorker:
             return
         self._partition_failure_reported = False
 
+    def _poll_audit_seals(self, *, now: datetime | None) -> None:
+        """Bind each organization in turn; the installation chain binds none."""
+
+        failure: _PollFailure | None = None
+        try:
+            result = seal_audit(get_engine(), now=now or utc_now())
+        except Exception as error:
+            self._seal_backlog = False
+            failure = _PollFailure(None, failure_cause(error), 1)
+        else:
+            self._seal_backlog = result.backlog
+            if result.failures:
+                failure = _PollFailure(result.failed, result.cause or "", result.failures)
+        if failure is None:
+            self._seal_failure_reported = False
+        elif not self._seal_failure_reported:
+            _report_failure("audit_seal_failed", "audit-seals", failure)
+            self._seal_failure_reported = True
+
     def _report_partition_problem(self, reason_code: str, failure: _PollFailure) -> None:
         if not self._partition_failure_reported:
             _report_failure(reason_code, "audit-partitions", failure)
@@ -267,6 +301,7 @@ class ReportSchedulingWorker:
         next_comms_poll = next_report_poll
         next_retention_poll = next_report_poll + _RETENTION_SECONDS
         next_partition_poll = next_report_poll
+        next_seal_poll = next_report_poll
         try:
             while not self._stop.is_set():
                 current = time.monotonic()
@@ -276,6 +311,7 @@ class ReportSchedulingWorker:
                 comms_due = self._comms_poll is not None and current >= next_comms_poll
                 retention_due = current >= next_retention_poll
                 partitions_due = current >= next_partition_poll
+                seals_due = current >= next_seal_poll
                 self._poll(
                     now=None,
                     reports=reports_due,
@@ -284,6 +320,7 @@ class ReportSchedulingWorker:
                     comms=comms_due,
                     retention=retention_due,
                     partitions=partitions_due,
+                    seals=seals_due,
                 )
                 # Outside any organization binding: the heartbeats are installation-wide.
                 if reports_due:
@@ -303,6 +340,10 @@ class ReportSchedulingWorker:
                     next_retention_poll = completed_at + _RETENTION_SECONDS
                 if partitions_due:
                     next_partition_poll = completed_at + _PARTITION_SECONDS
+                if seals_due:
+                    next_seal_poll = completed_at + (
+                        _SEAL_BACKLOG_SECONDS if self._seal_backlog else _SEAL_SECONDS
+                    )
                 wait_seconds = max(
                     0.0,
                     min(
@@ -312,6 +353,7 @@ class ReportSchedulingWorker:
                         next_comms_poll if self._comms_poll is not None else float("inf"),
                         next_retention_poll,
                         next_partition_poll,
+                        next_seal_poll,
                     )
                     - time.monotonic(),
                 )
