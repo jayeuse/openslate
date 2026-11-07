@@ -167,7 +167,7 @@ def test_s6_c2_i17_the_installation_owner_downloads_the_whole_installation(world
     ]
     assert body["summary"]["kind"] == "installation"
     assert body["versions"]["application"] == "0.1.0"
-    assert body["versions"]["schema_revision"] == "f43c7d0ee160"
+    assert body["versions"]["schema_revision"] == "b1b3908e844b"
     assert body["versions"]["postgresql"]
     assert body["database"]["bytes"] == 4096
     assert [worker["key"] for worker in body["workers"]] == [

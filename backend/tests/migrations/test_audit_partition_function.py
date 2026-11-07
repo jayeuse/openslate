@@ -154,11 +154,11 @@ def test_two_callers_create_a_month_once_and_security_retention_does_not_stop_th
     [
         # Reads `audit_logs_default`, because nothing prunes it, and ATTACH locks that table.
         "SELECT count(*) FROM public.audit_logs",
-        # The cloned foreign keys of ATTACH conflict with a write to `users`.
-        "INSERT INTO public.users (id, email, username, status) VALUES "
-        "(gen_random_uuid(), 'partition-lock@example.test', 'partition_lock', 'active')",
+        # The cloned organization key of ATTACH conflicts with a write lock on `organizations`.
+        # Since D21 no audit key refers to `users`.
+        "UPDATE public.organizations SET locale = locale WHERE false",
     ],
-    ids=["a read of default", "a write to users"],
+    ids=["a read of default", "a write to organizations"],
 )
 def test_the_routine_gives_way_while_an_audited_insert_commits(
     audit_engines: AuditEngines, months: list[str], holder: str
