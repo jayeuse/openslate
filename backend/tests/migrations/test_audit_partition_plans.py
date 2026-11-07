@@ -4,6 +4,7 @@ Pages and plan shape only, with parallel workers off (plan rules 9 and 10). The 
 come from the real list service and are replayed in a runtime session.
 """
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,16 +13,23 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import Connection, event, text
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
 from app.common.listing import StandardListRequest
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.models import AuditAction
 from app.systems.manage.audit.service import AuditLogSortField, list_audit_logs
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.models import RelationshipEdge
+from tests.conftest import alembic_heads, create_member, guarded_create_engine
+from tests.database_pool import dispose_process_engines
 from tests.migrations.audit_partition_support import (
     AuditEngines,
     month_starts,
@@ -30,6 +38,8 @@ from tests.migrations.audit_partition_support import (
 from tests.migrations.audit_partition_support import (
     audit_engines as audit_engines,
 )
+from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
@@ -38,6 +48,13 @@ SMALL_ROWS_PER_MONTH = 10
 # A small organization's list reads 15 pages here; without an index that leads with org_id,
 # each statement reads all the pages of the three loaded months, which is about 1,400.
 SMALL_ORGANIZATION_PAGE_CEILING = 60
+# More audit entries than links, as on a real installation: each link has a long history.
+LINKS = 300
+LINK_ENTRIES = 9_000
+# The department's other entries, which have no link to look for.
+OTHER_ENTRIES = 9_000
+FEW_MONTHS, MANY_MONTHS = 2, 6
+LINK_TABLES = {"relationship_edges", "records"}
 PARENT_INDEX = {
     "department_id": "ix_audit_logs_department_created_at_id",
     "performed_by": "ix_audit_logs_actor",
@@ -157,7 +174,7 @@ def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
 
 
 def _captured_list(
-    world: _Plans, org_id: UUID, admin_id: UUID, **filters: Any
+    world: Any, org_id: UUID, reader_id: UUID, **filters: Any
 ) -> list[dict[str, Any]]:
     """Run the real list, then read the plan of each of its audit statements as the runtime."""
 
@@ -170,7 +187,7 @@ def _captured_list(
     runtime = world.engines.runtime
     with AuditSession(bind=runtime) as db:
         scope_session(db, org_id)
-        reader = db.get_one(User, admin_id)
+        reader = db.get_one(User, reader_id)
         event.listen(runtime, "before_cursor_execute", capture)
         try:
             list_audit_logs(
@@ -290,3 +307,140 @@ def test_a_date_range_removes_the_other_months(plans: _Plans) -> None:
             if str(node.get("Relation Name", "")).startswith("audit_logs_")
         }
         assert touched == {world.leaves[1]}
+
+
+@dataclass(frozen=True)
+class _LinkHistory:
+    engines: AuditEngines
+    org: UUID
+    manager: UUID
+    department: UUID
+    edges: list[UUID]
+    months: list[str]
+
+
+@pytest.fixture
+def link_history() -> Iterator[_LinkHistory]:
+    """A department manager who reads every link. Committed rows leave with `downgrade base`."""
+
+    environment = guarded_migration_environment()
+    [head] = alembic_heads()
+    dispose_process_engines()
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"], poolclass=NullPool)
+    runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with Session(bind=owner, expire_on_commit=False) as db:
+            department = add_department(db)
+            module = add_module(db, department)
+            manager = add_user(db, role=UserRole.MEMBER)
+            make_group_access(db, [manager], department, level=AccessLevel.MANAGE)
+            field = Field(
+                org_id=department.org_id,
+                module_id=module.id,
+                name="Link",
+                type=FieldType.RELATIONSHIP,
+                position=0,
+                relationship_target_module_id=module.id,
+                relationship_multiple_targets=True,
+                relationship_multiple_sources=True,
+            )
+            source = Record(org_id=department.org_id, module_id=module.id, data={})
+            targets = [
+                Record(org_id=department.org_id, module_id=module.id, data={})
+                for _target in range(LINKS)
+            ]
+            db.add_all([field, source, *targets])
+            db.flush()
+            edges = [
+                RelationshipEdge(
+                    org_id=department.org_id,
+                    field_id=field.id,
+                    source_record_id=source.id,
+                    target_record_id=target.id,
+                )
+                for target in targets
+            ]
+            db.add_all(edges)
+            db.commit()
+            months = month_starts(db.connection(), MANY_MONTHS)
+            for first_day in months:
+                db.execute(
+                    text("SELECT public.create_audit_partition(CAST(:day AS date))"),
+                    {"day": first_day},
+                )
+            db.commit()
+            yield _LinkHistory(
+                AuditEngines(owner, runtime),
+                department.org_id,
+                manager.id,
+                department.id,
+                [edge.id for edge in edges],
+                months,
+            )
+    finally:
+        run_alembic(environment, "downgrade", "base")
+        run_alembic(environment, "upgrade", head)
+        owner.dispose()
+        runtime.dispose()
+
+
+def _spread_entries(world: _LinkHistory, month_count: int) -> None:
+    """The same audit entries, now over `month_count` months."""
+
+    with world.engines.owner.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM public.audit_logs WHERE org_id = :org "
+                "AND entity_type IN ('relationship_edges', 'reports')"
+            ),
+            {"org": world.org},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO public.audit_logs (id, org_id, created_at, action, entity_type, "
+                "entity_id, department_id) "
+                "SELECT gen_random_uuid(), :org, "
+                "  (CAST(:months AS timestamptz[]))[1 + step % :month_count] "
+                "  + make_interval(mins => step), 'update', "
+                "  CASE WHEN step < :entries THEN 'relationship_edges' ELSE 'reports' END, "
+                "  CASE WHEN step < :entries THEN (CAST(:edges AS uuid[]))[1 + step % :links] "
+                "       ELSE gen_random_uuid() END, :department "
+                "FROM generate_series(0, :entries + :others - 1) AS step"
+            ),
+            {
+                "org": world.org,
+                "months": world.months,
+                "month_count": month_count,
+                "edges": world.edges,
+                "links": LINKS,
+                "department": world.department,
+                "entries": LINK_ENTRIES,
+                "others": OTHER_ENTRIES,
+            },
+        )
+        connection.execute(text("ANALYZE public.audit_logs"))
+
+
+def _link_pages(plan: dict[str, Any]) -> int:
+    """The pages that the link check reads; the audit tables do not count."""
+
+    return sum(_pages(node) for node in _nodes(plan) if node.get("Relation Name") in LINK_TABLES)
+
+
+def test_the_link_check_of_a_member_list_reads_the_same_pages_at_any_month_count(
+    link_history: _LinkHistory,
+) -> None:
+    # REQ-0006: each populated month built its own hash of the link set, so the cost of a
+    # manager's list grew with the months. The check runs once for the statement. Pages, not
+    # plan shape, because the planner can pick a hash or a probe for each entry.
+    world = link_history
+    pages = {}
+    for month_count in (FEW_MONTHS, MANY_MONTHS):
+        _spread_entries(world, month_count)
+        statements = _captured_list(
+            world, world.org, world.manager, department_id=world.department
+        )
+        pages[month_count] = max(_link_pages(plan) for plan in statements)
+
+    assert pages[FEW_MONTHS] >= LINKS, pages
+    assert pages[MANY_MONTHS] <= pages[FEW_MONTHS] * 5 // 4, pages

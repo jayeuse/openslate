@@ -1,12 +1,12 @@
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, String, and_, exists, func, literal, or_, select
+from sqlalchemy import Select, String, and_, exists, func, literal, or_, select, true
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.exc import SQLAlchemyError
@@ -170,11 +170,22 @@ def _security_events_of_bound_organization(*, operator: bool = False) -> ColumnE
     )
 
 
-def _reader_conditions(db: Session, reader: User | None) -> list[ColumnElement[bool]]:
+def _reader_scope(db: Session, reader: User | None) -> Callable[[Select[Any]], Select[Any]]:
+    """Narrow an audit statement to the rows that the reader sees.
+
+    PostgreSQL copies a condition on `audit_logs` into each partition, and each copy builds
+    its own hash of the readable links. The condition must run once, above the partitions, so
+    it also names a joined row. That arm of the condition is false for every row, so it decides
+    nothing, and it can never show a row that the rest of the condition hides.
+    """
+
     organization = _audit_rows_of_bound_organization()
     if reader is None or require_current_membership(db, reader).role == UserRole.ADMIN.value:
-        return [organization]
-    return [organization, readable_audit_entries(db, reader)]
+        return lambda statement: statement.where(organization)
+    # OFFSET keeps PostgreSQL from folding the subquery into the statement.
+    joined = select(literal(True).label("row_exists")).offset(0).subquery("above_partitions")
+    readable = or_(joined.c.row_exists.is_(False), readable_audit_entries(db, reader))
+    return lambda statement: statement.outerjoin(joined, true()).where(organization, readable)
 
 
 def audit_log_statement(
@@ -237,8 +248,10 @@ def list_audit_logs(
         created_after=created_after,
         created_before=created_before,
         reference=reference,
-    ).where(*_reader_conditions(db, reader))
-    return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
+    )
+    return execute_standard_list(
+        db, _reader_scope(db, reader)(statement), params, AUDIT_LOG_LIST_SPEC
+    )
 
 
 def export_audit_log_rows(
@@ -285,7 +298,8 @@ def list_audit_log_options(
     reader: User | None = None,
     search: str | None = None,
 ) -> tuple[list[str], list[tuple[UUID, str | None]]]:
-    conditions = _reader_conditions(db, reader)
+    narrow = _reader_scope(db, reader)
+    conditions: list[ColumnElement[bool]] = []
     if department_id is not None:
         conditions.append(AuditLog.department_id == department_id)
 
@@ -298,7 +312,7 @@ def list_audit_log_options(
 
     entity_types = list(
         db.scalars(
-            select(AuditLog.entity_type)
+            narrow(select(AuditLog.entity_type))
             .where(*entity_conditions)
             .group_by(AuditLog.entity_type)
             .order_by(func.max(AuditLog.created_at).desc(), AuditLog.entity_type.asc())
@@ -315,11 +329,13 @@ def list_audit_log_options(
         .label("actor_rank")
     )
     recent_actor_rows = (
-        select(
-            AuditLog.performed_by,
-            AuditLog.actor_label,
-            AuditLog.created_at.label("last_used"),
-            actor_rank,
+        narrow(
+            select(
+                AuditLog.performed_by,
+                AuditLog.actor_label,
+                AuditLog.created_at.label("last_used"),
+                actor_rank,
+            )
         )
         .where(*conditions, AuditLog.performed_by.is_not(None))
         .subquery()
