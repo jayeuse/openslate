@@ -1,5 +1,6 @@
 """Private Report recipe routes on runner-owned PostgreSQL."""
 
+import hashlib
 from datetime import UTC, datetime, time
 from uuid import UUID
 
@@ -209,6 +210,7 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
         headings=["Category"],
         row_count=1,
         csv_bytes=b"Category\r\nReady\r\n",
+        csv_sha256=hashlib.sha256(b"Category\r\nReady\r\n").hexdigest(),
     )
     db.add(run)
     db.flush()
@@ -331,9 +333,9 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
             AuditLog.action == AuditAction.DELETE,
         )
     ).all()
+    # The output row is outside audit (D9), so its deletion writes no row.
     assert {entry.entity_id for entry in child_deletions} == {
         run.id,
-        row.id,
         notification.id,
         schedule.id,
     }
@@ -374,6 +376,7 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
         headings=["Category"],
         row_count=1,
         csv_bytes=b"Category\r\nReady\r\n",
+        csv_sha256=hashlib.sha256(b"Category\r\nReady\r\n").hexdigest(),
     )
     db.add(run)
     db.flush()
@@ -450,6 +453,7 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
         headings=["Category"],
         row_count=0,
         csv_bytes=b"Category\r\n",
+        csv_sha256=hashlib.sha256(b"Category\r\n").hexdigest(),
     )
     db.add(run)
     db.flush()

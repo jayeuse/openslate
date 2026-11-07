@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import Engine, create_engine, delete, func, select, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.config import Settings
@@ -216,22 +217,24 @@ def _longest_delay(owner: Engine, record_ids: list[UUID]) -> float:
     return max((row.updated_at - row.created_at).total_seconds() for row in rows)
 
 
-def _timed_runs(
-    worker: worker_module.TriggerWorker, monkeypatch: pytest.MonkeyPatch
-) -> list[tuple[float, float, UUID]]:
-    """Record when each claimed event started and finished running, commit included."""
+def _timed_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, float, UUID]]:
+    """Record when each claimed event started running and reached its commit.
+
+    The commit is what lets another lane claim the record's next event. A stamp taken after
+    the commit can fall behind that claim with no overlap at all, so the run ends before it.
+    """
 
     runs: list[tuple[float, float, UUID]] = []
     guard = threading.Lock()
-    run_claim = worker._run_claim
 
-    def timed(claim: ClaimedTriggerEvent) -> None:
+    def timed(db: Session, claim: ClaimedTriggerEvent) -> bool:
         started = time.perf_counter()
-        run_claim(claim)
+        ran = execute_claim(db, claim)
         with guard:
             runs.append((started, time.perf_counter(), claim.id))
+        return ran
 
-    monkeypatch.setattr(worker, "_run_claim", timed)
+    monkeypatch.setattr(worker_module, "execute_claim", timed)
     return runs
 
 
@@ -273,7 +276,7 @@ def test_lanes_share_a_burst_of_record_changes(
     ]
 
     with _lanes(runtime, org_ids, monkeypatch) as worker:
-        runs = _timed_runs(worker, monkeypatch)
+        runs = _timed_runs(monkeypatch)
         worker.start()
         _wait_until_drained(owner, org_ids)
 
@@ -361,7 +364,7 @@ def test_four_lanes_run_one_records_events_in_creation_order_without_overlap(
     hot, *_others = _queue(owner, organization, 40, edits=8)
 
     with _lanes(runtime, [organization.org_id], monkeypatch) as worker:
-        runs = _timed_runs(worker, monkeypatch)
+        runs = _timed_runs(monkeypatch)
         worker.start()
         _wait_until_drained(owner, [organization.org_id])
 
@@ -441,7 +444,7 @@ def test_two_runs_in_one_module_overlap_and_a_publication_still_waits_for_them(
         first, second = claim_due_events(db)
         db.commit()
     holder_engine = create_engine(os.environ["TEST_DATABASE_URL"], pool_size=1, max_overflow=0)
-    pause = StatementPause(holder_engine, "UPDATE RECORD_TRIGGER_EVENTS SET STATE")
+    pause = StatementPause(holder_engine, "UPDATE RECORD_TRIGGER_EVENTS SET VALUES")
     held: list[Any] = []
 
     def run_first() -> None:

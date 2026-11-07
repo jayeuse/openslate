@@ -229,6 +229,63 @@ def test_post_backoff_does_not_delay_healthy_report_polls(monkeypatch) -> None:
     assert not worker.running
 
 
+def test_retention_wakes_every_five_minutes_and_reports_a_failure_once(monkeypatch) -> None:
+    from app.systems.platform.scheduling import worker as module
+
+    worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
+    clock = SimpleNamespace(value=0.0)
+    wakes: list[float] = []
+
+    class ControlledStop:
+        def is_set(self) -> bool:
+            return clock.value > 600
+
+        def wait(self, seconds: float) -> bool:
+            clock.value += seconds
+            return self.is_set()
+
+    def fail_sweep(*_args, **_kwargs) -> None:
+        wakes.append(clock.value)
+        raise RuntimeError("temporary retention fault")
+
+    worker._stop = ControlledStop()
+    monkeypatch.setattr(
+        module, "time", SimpleNamespace(monotonic=lambda: clock.value), raising=False
+    )
+    monkeypatch.setattr(module, "get_engine", lambda: object())
+    monkeypatch.setattr(module, "execute_due_report_runs", Mock(return_value=[]))
+    monkeypatch.setattr(module, "execute_due_post_publications", Mock(return_value=[]))
+    monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
+    monkeypatch.setattr(module, "sweep_organization", fail_sweep)
+    logger = Mock()
+    monkeypatch.setattr(module, "log_event", logger)
+
+    worker._run()
+
+    assert wakes == [300, 600]
+    assert [call.kwargs["reason_code"] for call in logger.call_args_list] == [
+        "retention_sweep_failed"
+    ]
+
+
+def test_run_once_leaves_retention_to_its_own_timer(monkeypatch) -> None:
+    from app.systems.platform.scheduling import worker as module
+
+    worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
+    sweep = Mock()
+    monkeypatch.setattr(module, "get_engine", lambda: object())
+    monkeypatch.setattr(module, "execute_due_report_runs", Mock(return_value=[]))
+    monkeypatch.setattr(module, "execute_due_post_publications", Mock(return_value=[]))
+    monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
+    monkeypatch.setattr(module, "sweep_organization", sweep)
+
+    worker.run_once(now=NOW)
+    sweep.assert_not_called()
+
+    worker.run_retention_once(now=NOW)
+    assert sweep.call_args.kwargs["now"] == NOW
+
+
 def test_stop_timeout_retains_thread_and_prevents_database_disposal(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 

@@ -1,5 +1,6 @@
 """Revisioned Report schedule routes against runner-owned PostgreSQL."""
 
+import hashlib
 import os
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -228,6 +229,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
         headings=["Status"],
         row_count=0,
         csv_bytes=b"Status\r\n",
+        csv_sha256=hashlib.sha256(b"Status\r\n").hexdigest(),
     )
     db.add(completed_run)
     db.flush()
@@ -357,6 +359,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 headings=["Status"],
                 row_count=0,
                 csv_bytes=b"Status\r\n",
+                csv_sha256=hashlib.sha256(b"Status\r\n").hexdigest(),
             )
             setup.add(run)
             setup.commit()

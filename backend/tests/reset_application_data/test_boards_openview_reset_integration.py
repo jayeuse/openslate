@@ -244,9 +244,10 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             cursor.execute(
                 "INSERT INTO public.report_runs "
                 "(org_id, id, report_id, module_id, idempotency_key, recipe_revision, "
-                "recipe, headings, row_count, csv_bytes) "
-                "VALUES (%s, %s, %s, %s, %s, 1, '{}'::jsonb, '[\"Name\"]'::jsonb, 1, %s)",
-                (org_id, run_id, report_id, module_id, uuid4(), b"Name\r\nReady\r\n"),
+                "recipe, headings, row_count, csv_bytes, csv_sha256) "
+                "VALUES (%s, %s, %s, %s, %s, 1, '{}'::jsonb, '[\"Name\"]'::jsonb, 1, %s, "
+                "encode(sha256(%s), 'hex'))",
+                (org_id, run_id, report_id, module_id, uuid4(), *[b"Name\r\nReady\r\n"] * 2),
             )
             cursor.execute(
                 "INSERT INTO public.report_run_rows "

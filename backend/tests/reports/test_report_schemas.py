@@ -170,7 +170,8 @@ def test_report_run_mapping_freezes_output_and_restricts_source_purge() -> None:
         for key in ("report_id", "module_id", "idempotency_key", "recipe_revision")
     )
     assert ReportRun.__audit_redacted_fields__ == frozenset({"recipe", "headings", "csv_bytes"})
-    assert ReportRunRow.__audit_redacted_fields__ == frozenset({"cells"})
+    assert ReportRunRow.__audit_enabled__ is False
+    assert run_columns["csv_sha256"].nullable is False
     assert not row_columns["record_id"].nullable
     assert {key.target_fullname for key in row_columns["record_id"].foreign_keys} == {"records.id"}
     assert {key.ondelete for key in row_columns["record_id"].foreign_keys} == {"RESTRICT"}

@@ -12,6 +12,8 @@ Audit entries and security events can be found by the full `request_id` or by it
 
 Audit capture includes application data mutated through FastAPI. It excludes Alembic, administrative direct SQL, database provisioning, and filesystem byte operations. These boundaries must remain explicit in operational reporting.
 
+Some models set `__audit_enabled__ = False`, so their row changes write no audit row and queue no invalidation. Bulk mutations stay rejected on them. Queue and job state is outside audit: [`ScheduledWork`](../../backend/app/systems/platform/scheduling/models.py), the [Comms job models](../../backend/app/systems/comms/jobs/models.py), and [`RecordTriggerEvent`](../../backend/app/systems/sandbox/record_triggers/models.py). A trigger's runs, its record changes and its notifications stay audited. The output rows of a report are also outside audit: [`ReportRunRow`](../../backend/app/systems/openview/reports/models.py) and `ReportRunEligibleUser`. The audited `ReportRun` holds the row count and an unredacted `csv_sha256`, so a saved copy of the CSV can be proved after the sweep removes the run.
+
 After a successful audited commit, the listener queues one or more opaque invalidation events and publishes them through PostgreSQL notification. The event payload identifies only safe entity scope and never contains row snapshots, credentials, filenames, or file bytes. Delivery is best effort: database and audit state remain canonical if an SSE listener is unavailable.
 
 Audit history is not a backup, a security-information event stream, or a complete

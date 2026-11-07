@@ -4,6 +4,7 @@ A scheduled run acts as the workspace: no user decides whether it runs, and
 every module reader at run time may open it and gets one notification.
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -334,6 +335,7 @@ def test_existing_run_key_collision_does_not_notify_unrelated_output(scheduled_r
                     headings=snapshot.headings,
                     row_count=0,
                     csv_bytes=b"unrelated output",
+                    csv_sha256=hashlib.sha256(b"unrelated output").hexdigest(),
                 )
             )
             db.commit()

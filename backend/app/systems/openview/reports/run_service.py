@@ -1,6 +1,7 @@
 """Complete, bounded Report output captured from one PostgreSQL read snapshot."""
 
 import csv
+import hashlib
 import io
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +48,7 @@ class ReportSnapshot:
     headings: list[str]
     rows: list[tuple[UUID, list[str]]]
     csv_bytes: bytes
+    csv_sha256: str
 
 
 REPORT_RUN_METADATA_COLUMNS = (
@@ -280,6 +282,7 @@ def capture_report_snapshot(
             if recipe.include_row_count:
                 append_row(summary_row(f"Grand total: {len(frozen_rows)}"))
 
+            csv_bytes = bytes(output)
             return ReportSnapshot(
                 report_id=report.id,
                 module_id=report.module_id,
@@ -287,5 +290,6 @@ def capture_report_snapshot(
                 recipe=dict(report.recipe),
                 headings=headings,
                 rows=frozen_rows,
-                csv_bytes=bytes(output),
+                csv_bytes=csv_bytes,
+                csv_sha256=hashlib.sha256(csv_bytes).hexdigest(),
             )

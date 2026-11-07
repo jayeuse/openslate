@@ -1,5 +1,6 @@
 """Retained Reports and run rows block physical source purges in preview."""
 
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
@@ -65,6 +66,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
         headings=["Name"],
         row_count=1,
         csv_bytes=b"Name\r\nReady\r\n",
+        csv_sha256=hashlib.sha256(b"Name\r\nReady\r\n").hexdigest(),
         is_deleted=True,
         deleted_at=now,
     )
@@ -121,6 +123,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
         headings=["Name"],
         row_count=1,
         csv_bytes=b"Name\r\nLater\r\n",
+        csv_sha256=hashlib.sha256(b"Name\r\nLater\r\n").hexdigest(),
     )
     db.add(later_run)
     db.flush()
