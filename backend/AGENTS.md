@@ -4,7 +4,7 @@ FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, a
 
 The deployment profile is one full stack per client (micro–medium SMB, on-premise first, cloud second). One installation holds several organizations: shared tables with `org_id`, membership-based authorization in the bound organization, and RLS on `slateops.org_id` as a backstop (decision D01, `docs/plans/supabase-foundation.md`).
 
-Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or per-organization schemas without an explicit decision.
+Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Exception (K38): the audit seal job and `operations/verify_audit_seals.py` read every `organizations` row, so a chain never stops when an organization changes state. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or per-organization schemas without an explicit decision.
 
 ## Layout
 

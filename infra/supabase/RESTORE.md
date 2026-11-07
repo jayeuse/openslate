@@ -215,6 +215,23 @@ On a development installation, run `uv run python operations/check_file_storage.
 
 Exit 0 means that each ready file has its object, with the recorded size. Exit 1 lists each missing object, extra object, and size difference with its bucket and file ID. Keep ingress closed and investigate each one before you continue. Exit 2 means that the check could not read the database or Storage. The check changes nothing.
 
+Check that the restored audit rows still match their seals and the chain heads of the backup. A backup that the host runner made holds the heads in its bundle as `audit/seal-heads.json`; a manual archive run has none. With the source repository's Restic environment, find the path with `restic ls SNAPSHOT_ID` (it ends in `bundle/audit/seal-heads.json`) and write it to a file with `restic dump SNAPSHOT_ID THAT_PATH > HEADS_FILE`. The container runs as user 10001, so make the file readable by that user: `sudo chown 10001:10001 HEADS_FILE` and `chmod 0400 HEADS_FILE`. The file holds organization IDs and hashes only, no secret. Then run the read-only check in the same kind of short-lived container, with the file mounted read-only:
+
+```sh
+docker run --rm --pull=never --network NEW_TARGET_PROJECT_provider \
+  --env-file TARGET_APPLICATION_ENV --env SLATEOPS_ENV_SOURCE=process \
+  --user 10001:10001 --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001 \
+  --cap-drop ALL --security-opt no-new-privileges --no-healthcheck \
+  --volume HEADS_FILE:/heads/seal-heads.json:ro \
+  --entrypoint python SLATEOPS_SERVER_IMAGE operations/verify_audit_seals.py \
+  --heads /heads/seal-heads.json
+```
+
+On a development installation, run `uv run python operations/verify_audit_seals.py --heads HEADS_FILE` from `backend/` instead. Without a heads file, omit `--heads`; the check then proves only that rows and seals agree with each other.
+
+Exit 0 means that every sealed hour and every head matches. Exit 1 lists each finding with its organization, hour and kind. `unsealed` hours after the backup's time are expected until the worker seals them, and `chain_absent` is expected for an organization that was removed after an older head. Keep ingress closed and investigate any other finding. Exit 2 means that the check could not run. The check changes nothing.
+
 Bring up public Caddy only after target TLS, origin, ports, application health, and the absence of source routes have been checked:
 
 ```sh
