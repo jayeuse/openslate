@@ -365,9 +365,10 @@ def test_child_audit_department_survives_same_flush_parent_hard_delete(
         (module, module.id),
         (record, record.id),
     ):
-        assert integration_db.get(AuditLog, created_ids[entity.__tablename__]).department_id == (
-            department_id
+        created = integration_db.scalar(
+            select(AuditLog).where(AuditLog.id == created_ids[entity.__tablename__])
         )
+        assert created.department_id == department_id
         deleted = integration_db.scalar(
             select(AuditLog).where(
                 AuditLog.entity_type == entity.__tablename__,

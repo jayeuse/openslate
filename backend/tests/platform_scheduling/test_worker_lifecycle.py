@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, call
@@ -257,6 +258,7 @@ def test_retention_wakes_every_five_minutes_and_reports_a_failure_once(monkeypat
     monkeypatch.setattr(module, "execute_due_post_publications", Mock(return_value=[]))
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "sweep_organization", fail_sweep)
+    monkeypatch.setattr(module, "ensure_audit_partitions", Mock(return_value=0))
     logger = Mock()
     monkeypatch.setattr(module, "log_event", logger)
 
@@ -266,6 +268,96 @@ def test_retention_wakes_every_five_minutes_and_reports_a_failure_once(monkeypat
     assert [call.kwargs["reason_code"] for call in logger.call_args_list] == [
         "retention_sweep_failed"
     ]
+
+
+def _partition_worker(monkeypatch, *, until: float, outcomes):
+    """A worker on a controlled clock; each timer call takes the next item of ``outcomes``."""
+
+    from app.systems.platform.scheduling import worker as module
+
+    worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
+    clock = SimpleNamespace(value=0.0)
+    wakes: list[tuple[float, bool]] = []
+    remaining = iter(outcomes)
+    binding = SimpleNamespace(active=False)
+
+    @contextmanager
+    def bound_organization(_org_id):
+        binding.active = True
+        try:
+            yield
+        finally:
+            binding.active = False
+
+    class ControlledStop:
+        def is_set(self) -> bool:
+            return clock.value > until
+
+        def wait(self, seconds: float) -> bool:
+            clock.value += seconds
+            return self.is_set()
+
+    def ensure(_db) -> int:
+        wakes.append((clock.value, binding.active))
+        outcome = next(remaining)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    worker._stop = ControlledStop()
+    monkeypatch.setattr(
+        module, "time", SimpleNamespace(monotonic=lambda: clock.value), raising=False
+    )
+    monkeypatch.setattr(module, "get_engine", lambda: None)
+    reports = Mock(return_value=[])
+    monkeypatch.setattr(module, "execute_due_report_runs", reports)
+    monkeypatch.setattr(module, "execute_due_post_publications", Mock(return_value=[]))
+    monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
+    monkeypatch.setattr(module, "sweep_organization", Mock())
+    monkeypatch.setattr(module, "ensure_audit_partitions", ensure)
+    monkeypatch.setattr(module, "worker_organization", bound_organization)
+    logger = Mock()
+    monkeypatch.setattr(module, "log_event", logger)
+    return worker, wakes, logger, reports
+
+
+def test_audit_partitions_run_at_start_and_hourly_outside_any_organization(monkeypatch) -> None:
+    worker, wakes, _logger, _reports = _partition_worker(
+        monkeypatch, until=7200, outcomes=[0, 0, 0]
+    )
+
+    worker._run()
+
+    assert wakes == [(0, False), (3600, False), (7200, False)]
+
+
+def test_a_partition_failure_logs_once_for_a_streak_and_other_polls_go_on(monkeypatch) -> None:
+    fault = RuntimeError("temporary partition fault")
+    worker, wakes, logger, reports = _partition_worker(
+        monkeypatch, until=14400, outcomes=[fault, fault, 0, fault, 1]
+    )
+
+    worker._run()
+
+    assert [wake for wake, _organization in wakes] == [0, 3600, 7200, 10800, 14400]
+    assert [call.kwargs["reason_code"] for call in logger.call_args_list] == [
+        "audit_partition_failed",
+        "audit_partition_failed",
+    ]
+    assert reports.call_count > len(wakes)
+
+
+def test_a_skipped_month_logs_once_until_it_clears(monkeypatch) -> None:
+    worker, _wakes, logger, _reports = _partition_worker(
+        monkeypatch, until=10800, outcomes=[2, 2, 0, 1]
+    )
+
+    worker._run()
+
+    reported = [
+        (call.kwargs["reason_code"], call.kwargs["count"]) for call in logger.call_args_list
+    ]
+    assert reported == [("audit_partition_skipped", 2), ("audit_partition_skipped", 1)]
 
 
 def test_run_once_leaves_retention_to_its_own_timer(monkeypatch) -> None:

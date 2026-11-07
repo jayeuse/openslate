@@ -181,7 +181,9 @@ def test_account_event_details_match_collection_visibility(
     db.commit()
     audits = [db.scalars(select(AuditLog).where(
         AuditLog.entity_type == "users", AuditLog.entity_id == person.id,
-    )).one() for person in (shared, foreign)] + [db.get(AuditLog, platform_audit_id)]
+    )).one() for person in (shared, foreign)] + [db.scalars(
+        select(AuditLog).where(AuditLog.id == platform_audit_id)
+    ).one()]
     with _client(db, actor, home) as client:
         for prefix, rows in (("security-events", events), ("audit-logs", audits)):
             listed = client.get(f"/api/{prefix}?limit=100")

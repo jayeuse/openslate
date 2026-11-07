@@ -59,13 +59,18 @@ MIXED_TABLES = frozenset(
     {"audit_logs", "files", "security_events", "in_app_notifications", "server_errors"}
 )
 # Keyed by something other than ``id``, and no other table refers to them by organization.
-WITHOUT_ID_KEY = frozenset({"report_run_eligible_users", "server_errors"})
+# ``audit_logs`` is partitioned: a unique key must hold ``created_at`` (decision D4).
+WITHOUT_ID_KEY = frozenset({"audit_logs", "report_run_eligible_users", "server_errors"})
 
 
 def test_root_schema_has_scoped_keys_without_organization_seeds(integration_owner_db):
     connection = integration_owner_db.connection()
     inspector = inspect(connection)
-    tables = set(inspector.get_table_names(schema="public"))
+    partitions = connection.scalars(text(
+        "SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace "
+        "AND relispartition AND relkind = 'r'"
+    ))
+    tables = set(inspector.get_table_names(schema="public")) - set(partitions)
     assert {"organizations", "platform_settings", "platform_operators"} <= tables
     assert "workspace_profiles" not in tables
 

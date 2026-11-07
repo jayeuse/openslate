@@ -65,7 +65,7 @@ SELECT source.relname, column_name.attname, reference.confdeltype,
   JOIN pg_catalog.pg_attribute AS column_name
     ON column_name.attrelid = reference.conrelid AND column_name.attnum = reference.conkey[1]
  WHERE reference.contype = 'f' AND reference.confrelid = 'public.users'::regclass
-   AND namespace.nspname = 'public'
+   AND namespace.nspname = 'public' AND reference.conparentid = 0
  ORDER BY 1, 2
 """
 _LINKED_ACCOUNTS_STATEMENT = (

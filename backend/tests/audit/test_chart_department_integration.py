@@ -64,7 +64,8 @@ def test_new_and_detached_chart_audit_derives_actual_module_department_and_redac
     db.flush()
     updated = _log(db, identifier, AuditAction.UPDATE)
     assert updated.department_id == department_id
-    assert db.get(AuditLog, created_id).department_id == department_id
+    created = db.scalar(select(AuditLog).where(AuditLog.id == created_id))
+    assert created.department_id == department_id
 
 
 def test_same_flush_module_move_and_parent_delete_preserve_chart_audit_ancestry(integration_db):
@@ -87,5 +88,6 @@ def test_same_flush_module_move_and_parent_delete_preserve_chart_audit_ancestry(
     db.flush()
     deleted = _log(db, identifier, AuditAction.DELETE)
     assert deleted.department_id == new_department
-    assert db.get(AuditLog, created.id).department_id == old_department
+    first = db.scalar(select(AuditLog).where(AuditLog.id == created.id))
+    assert first.department_id == old_department
     assert deleted.before["query"] == REDACTED

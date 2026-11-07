@@ -126,6 +126,7 @@ Organization settings, audit/security events, backups and job monitoring. Backen
 | Organization settings | `WorkspaceProfile`, `/api/workspace`, Manage → Organization | The name, mark, contact details, time zone, and look of the organization. | Customer |
 | Organization mark | `workspace_logo`, "logo" | The image that represents the organization in the app. | Customer |
 | Audit log | `AuditLog`, `/api/audit-logs`, "Audit", "Record history" | The record of who changed what in application data. `AuditSession` writes it in the same transaction as the change. Alembic and direct SQL are outside it. | Customer ("Audit") |
+| Audit partition | `audit_logs_y2026m11`, `audit_logs_default`, `ensure_audit_partitions()` | The table that holds the audit log rows of one month, or of no month. Readers and writers use the parent `audit_logs`. | Internal |
 | Security event | `SecurityEvent` | A sign-in or security action, kept in a table separate from the audit log. | Internal |
 | Job | `/api/jobs`, Manage → Jobs, `JobResponse` | Administrator-visible work metadata for report runs, scheduled post publication, event reminders and backups. Manual Retry is available only for eligible failed work and is not automatic replay of an uncertain command. | Customer |
 | Backup | `/api/backups`, "Backup history", "Encrypted export" | An encrypted copy of the installation data. **Status:** partially implemented. A guarded backup and manual restore exist; customer restore and automatic schedules are pending. | Customer |

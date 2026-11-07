@@ -44,7 +44,7 @@ def test_history_projects_real_audit_and_restores_complete_prior_configuration(t
     assert entry["after"]["settings"] == {"slow_mode_seconds": 7, "allow_export": True}
     assert entry["scope"] == {"kind": "workspace"}
     with case.world.session(org) as db:
-        assert db.get(AuditLog, UUID(entry["id"])) is not None
+        assert db.scalar(select(AuditLog).where(AuditLog.id == UUID(entry["id"]))) is not None
     assert _ok(api.get(ROOT + "/history/" + entry["id"])) == entry
     assert case.client(org.peer, org.id).get(ROOT + "/history").status_code == 403
     request = {"history_id": entry["id"], "password": "owned-test-password"}

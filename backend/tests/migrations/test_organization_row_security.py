@@ -81,7 +81,8 @@ def _department_ids(connection, world: _TwoOrganizations) -> set[UUID]:
 def test_every_organization_table_has_row_security_except_memberships(integration_owner_db):
     rows = integration_owner_db.connection().execute(text(
         "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class "
-        "WHERE relnamespace = 'public'::regnamespace AND relkind = 'r'"
+        "WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') "
+        "AND NOT relispartition"
     )).all()
     protected = {name for name, enabled, _ in rows if enabled}
     assert protected == ORGANIZATION_TABLES - {"memberships"}
