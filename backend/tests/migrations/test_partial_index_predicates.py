@@ -34,6 +34,9 @@ importlib.import_module("app.core.database.model_registry")
 
 integration = pytest.mark.integration
 PREVIOUS = "f8852c638a76"
+# The revision that swapped these indexes. Later revisions change other indexes, so a test
+# that compares the whole catalog works here and not at the head.
+REVISION = "65bf3d1eb512"
 ORG = UUID("00000000-0000-7000-8000-000000000001")
 FIELD = UUID("00000000-0000-7000-8000-000000000002")
 TARGET = UUID("00000000-0000-7000-8000-000000000003")
@@ -204,11 +207,12 @@ def test_a_boolean_filter_reads_the_partial_index_and_filters_nothing_again(
 
 @pytest.fixture
 def migration() -> Iterator[tuple[dict[str, str], Engine]]:
-    """Each test starts at the head and hands the database back at the head."""
+    """Each test starts at the swap revision and hands the database back at the head."""
     environment = guarded_migration_environment()
     [head] = alembic_heads()
     dispose_process_engines()
     engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"], poolclass=NullPool)
+    run_alembic(environment, "downgrade", REVISION)
     try:
         yield environment, engine
     finally:
@@ -245,14 +249,13 @@ def test_upgrade_and_downgrade_change_only_the_predicates(
     migration: tuple[dict[str, str], Engine],
 ) -> None:
     environment, engine = migration
-    [head] = alembic_heads()
-    at_head = _read_catalog(engine)
+    swapped = _read_catalog(engine)
 
     run_alembic(environment, "downgrade", PREVIOUS)
     restored = _read_catalog(engine)
-    assert sorted(_soft_delete_predicates(restored)) == sorted(_soft_delete_predicates(at_head))
+    assert sorted(_soft_delete_predicates(restored)) == sorted(_soft_delete_predicates(swapped))
     assert all(_WRONG_FORM.search(where) for where in _soft_delete_predicates(restored).values())
-    assert _without_predicate(restored) == _without_predicate(at_head)
+    assert _without_predicate(restored) == _without_predicate(swapped)
 
     # The old revisions, not this file's own text, say what the downgrade must restore.
     run_alembic(environment, "downgrade", "base")
@@ -262,11 +265,10 @@ def test_upgrade_and_downgrade_change_only_the_predicates(
         name: index.definition for name, index in original.items()
     }
 
-    run_alembic(environment, "upgrade", head)
+    run_alembic(environment, "upgrade", REVISION)
     assert {name: index.definition for name, index in _read_catalog(engine).items()} == {
-        name: index.definition for name, index in at_head.items()
+        name: index.definition for name, index in swapped.items()
     }
-    run_alembic(environment, "check")
 
 
 @integration
@@ -274,12 +276,11 @@ def test_each_index_is_built_concurrently_before_its_old_index_is_dropped(
     migration: tuple[dict[str, str], Engine],
 ) -> None:
     environment, engine = migration
-    [head] = alembic_heads()
     run_alembic(environment, "downgrade", PREVIOUS)
     names = sorted(_soft_delete_predicates(_read_catalog(engine)))
 
     with _statements() as seen:
-        run_alembic(environment, "upgrade", head)
+        run_alembic(environment, "upgrade", REVISION)
 
     index_statements = [
         statement
@@ -314,8 +315,7 @@ def test_a_stopped_upgrade_keeps_every_unique_rule_and_a_rerun_finishes(
     # A real stop: the writer on `modules` outlasts the 5 s lock limit, so the concurrent
     # build fails after its catalog row exists and leaves an INVALID index.
     environment, engine = migration
-    [head] = alembic_heads()
-    at_head = _read_catalog(engine)
+    swapped = _read_catalog(engine)
     run_alembic(environment, "downgrade", PREVIOUS)
     before = _read_catalog(engine)
 
@@ -324,7 +324,7 @@ def test_a_stopped_upgrade_keeps_every_unique_rule_and_a_rerun_finishes(
         holder.commit()
         holder.execute(text("LOCK TABLE public.modules IN ROW EXCLUSIVE MODE"))
         with pytest.raises(subprocess.CalledProcessError) as failure:
-            run_alembic(environment, "upgrade", head)
+            run_alembic(environment, "upgrade", REVISION)
         holder.rollback()
     assert "lock timeout" in failure.value.stderr
 
@@ -344,12 +344,12 @@ def test_a_stopped_upgrade_keeps_every_unique_rule_and_a_rerun_finishes(
     }
     assert finished
 
-    run_alembic(environment, "upgrade", head)
+    run_alembic(environment, "upgrade", REVISION)
 
     rerun = _read_catalog(engine)
-    assert _version(engine) == head
+    assert _version(engine) == REVISION
     assert {name: index.definition for name, index in rerun.items()} == {
-        name: index.definition for name, index in at_head.items()
+        name: index.definition for name, index in swapped.items()
     }
     assert {name: rerun[name].oid for name in finished} == {
         name: stopped[name].oid for name in finished
@@ -362,7 +362,6 @@ def test_a_rerun_keeps_a_valid_swap_index_and_only_renames_it(
     migration: tuple[dict[str, str], Engine], old_index_is_gone: bool
 ) -> None:
     environment, engine = migration
-    [head] = alembic_heads()
     name = "uq_departments_name_active"
     run_alembic(environment, "downgrade", PREVIOUS)
 
@@ -377,7 +376,7 @@ def test_a_rerun_keeps_a_valid_swap_index_and_only_renames_it(
             connection.execute(text(f"DROP INDEX public.{name}"))
     swap = _read_catalog(engine)[f"{name}_swap"]
 
-    run_alembic(environment, "upgrade", head)
+    run_alembic(environment, "upgrade", REVISION)
 
     indexes = _read_catalog(engine)
     assert f"{name}_swap" not in indexes

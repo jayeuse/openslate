@@ -51,6 +51,24 @@ def test_each_table_has_its_storage_parameters(integration_owner_db: Session) ->
     assert _storage_parameters(integration_owner_db.connection()) == EXPECTED
 
 
+def test_each_audit_partition_has_its_own_storage_parameters(
+    integration_owner_db: Session,
+) -> None:
+    # A partitioned parent holds no storage parameters, and a partition inherits none.
+    rows = integration_owner_db.connection().execute(
+        text(
+            "SELECT child.relname, child.reloptions FROM pg_inherits AS link "
+            "JOIN pg_class AS child ON child.oid = link.inhrelid "
+            "WHERE link.inhparent = 'public.audit_logs'::regclass"
+        )
+    )
+    leaves = {
+        name: dict(option.split("=", 1) for option in options or []) for name, options in rows
+    }
+    assert "audit_logs_default" in leaves
+    assert leaves == dict.fromkeys(leaves, QUEUE_TABLE)
+
+
 @pytest.fixture
 def migration() -> Iterator[tuple[dict[str, str], Engine]]:
     """The test starts at the head and hands the database back at the head."""

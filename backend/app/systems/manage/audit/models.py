@@ -40,7 +40,6 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
-        UniqueConstraint("org_id", "id", name="uq_audit_logs_org_id_id"),
         CheckConstraint(
             "action IN ('create', 'update', 'delete')",
             name="ck_audit_logs_action",
@@ -56,20 +55,39 @@ class AuditLog(Base):
             "\"before\") ->> 'kind' = 'backup-failed'))), false)",
             name="ck_audit_logs_organization",
         ),
+        # Row-level security reads this one: it is the only index that leads with org_id.
+        Index("ix_audit_logs_org_created_at_id", "org_id", "created_at", "id"),
         Index("ix_audit_logs_created_at_id", "created_at", "id"),
-        Index("ix_audit_logs_department_created_at_id", "department_id", "created_at", "id"),
+        Index(
+            "ix_audit_logs_department_created_at_id",
+            "department_id",
+            "created_at",
+            "id",
+            postgresql_where=text("department_id IS NOT NULL"),
+        ),
         Index("ix_audit_logs_entity", "entity_type", "entity_id", "created_at"),
-        Index("ix_audit_logs_actor", "performed_by", "created_at"),
-        Index("ix_audit_logs_request", "request_id"),
+        Index(
+            "ix_audit_logs_actor",
+            "performed_by",
+            "created_at",
+            postgresql_where=text("performed_by IS NOT NULL"),
+        ),
+        Index(
+            "ix_audit_logs_request",
+            "request_id",
+            postgresql_where=text("request_id IS NOT NULL"),
+        ),
         Index("ix_audit_logs_action", "action"),
+        {"postgresql_partition_by": "RANGE (created_at)"},
     )
 
     org_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
+    # In the key because a partitioned table's key must hold its partition column.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
+        DateTime(timezone=True), primary_key=True, default=utc_now
     )
     performed_by: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
