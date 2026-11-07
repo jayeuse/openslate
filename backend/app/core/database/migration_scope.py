@@ -17,6 +17,7 @@ def application_migration_scope(connection: Connection, metadata: MetaData) -> I
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND NOT c.relispartition
     """)).all()
     if any(name in model_names and not owned for name, owned in rows):
         raise RuntimeError("A model table is not owned by the application migration role")

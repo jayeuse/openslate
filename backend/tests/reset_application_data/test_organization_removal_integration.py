@@ -9,7 +9,11 @@ import pytest
 from psycopg import Cursor, connect
 
 from operations.reset.models import ResetError
-from operations.reset.organization import AuthAccount, build_organization_removal_plan
+from operations.reset.organization import (
+    AuthAccount,
+    build_organization_removal_plan,
+    read_user_references,
+)
 from operations.reset.organization_execution import apply_organization_removal
 from tests.reset_application_data.reset_integration_support import (
     SecondOrganization,
@@ -36,6 +40,15 @@ def _second_org_counts(cursor: Cursor, second: SecondOrganization) -> dict[str, 
         cursor.execute(f"SELECT count(*) FROM public.{table} WHERE org_id = %s", (second.org_id,))
         counts[table] = cursor.fetchone()[0]
     return counts
+
+
+@pytest.mark.integration
+def test_user_references_name_the_audit_table_and_not_its_partitions(monkeypatch) -> None:
+    database_target = guarded_reset_database(monkeypatch)
+    with connect(database_target.url) as connection:
+        references = read_user_references(connection)
+    assert references.referencing["audit_logs"] == ("performed_by",)
+    assert not [table for table in references.referencing if table.startswith("audit_logs_")]
 
 
 @pytest.mark.integration

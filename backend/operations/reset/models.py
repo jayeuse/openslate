@@ -225,9 +225,15 @@ _RESET_ADVISORY_LOCK_KEY = 8_341_721
 _COUNT_STATEMENTS = tuple(
     (table, f"SELECT count(*) FROM public.{table}") for table in APPLICATION_TABLES
 )
+# A partition is a BASE TABLE to information_schema; only its parent is an application table.
 _PUBLIC_TABLES_STATEMENT = """
-SELECT table_name FROM information_schema.tables
- WHERE table_schema = %s AND table_type = 'BASE TABLE'
+SELECT listed.table_name
+  FROM information_schema.tables AS listed
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = listed.table_schema
+  JOIN pg_catalog.pg_class AS relation
+    ON relation.relnamespace = namespace.oid AND relation.relname = listed.table_name
+ WHERE listed.table_schema = %s AND listed.table_type = 'BASE TABLE'
+   AND NOT relation.relispartition
 """
 _ALEMBIC_HEAD_STATEMENT = "SELECT version_num FROM public.alembic_version"
 _PROFILE_STATEMENT = """
